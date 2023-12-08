@@ -1,9 +1,26 @@
+/*
+ * client.rs
+ *
+ * This is a part of a simple ZeroMQ-based MPEG-TS capture and playback system.
+ * This file contains the client-side code that receives MPEG-TS chunks from the
+ * server and writes them to a file.
+ *
+ * Author: Chris Kennedy (C) 2023 LTN Global
+ *
+ * License: LGPL v2.1
+ *
+ */
+
 extern crate zmq;
 use log::{error};
 use tokio;
 use std::fs::File;
 use std::io::Write;
 //use ffmpeg_next as ffmpeg; // You might need to configure FFmpeg flags
+
+const SOURCE_PORT: i32 = 5556; // TODO: change to your target port
+const SOURCE_IP: &str = "127.0.0.1";
+const OUTPUT_FILE: &str = "output.ts";
 
 #[tokio::main]
 async fn main() {
@@ -14,14 +31,15 @@ async fn main() {
     // Setup ZeroMQ subscriber
     let context = zmq::Context::new();
     let zmq_sub = context.socket(zmq::SUB).unwrap();
-    if let Err(e) = zmq_sub.connect("tcp://127.0.0.1:5556") {
+    let source_port_ip = format!("tcp://{}:{}", SOURCE_IP, SOURCE_PORT);
+    if let Err(e) = zmq_sub.connect(&source_port_ip) {
         error!("Failed to connect ZeroMQ subscriber: {:?}", e);
         return;
     }
 
     zmq_sub.set_subscribe(b"").unwrap();
 
-    let mut file = File::create("output.ts").unwrap();
+    let mut file = File::create(OUTPUT_FILE).unwrap();
 
     let mut total_bytes = 0;
     let mut count = 0;
