@@ -1,4 +1,4 @@
-# RsCap: Rust based capture of mpegts using pcap
+# rsCap: Rust based capture of mpegts using pcap
 
 Proxy an MpegTS network stream over ZeroMQ. Capture
 the TS using pcap with filter rules for specifying
