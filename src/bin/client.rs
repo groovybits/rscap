@@ -30,6 +30,7 @@ async fn main() {
     let debug_on: bool = env::var("DEBUG").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for DEBUG"));
     let silent: bool = env::var("SILENT").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for SILENT"));
     let output_file: &str = &env::var("OUTPUT_FILE").unwrap_or("output.ts".to_string());
+    let send_json_header: bool = env::var("SEND_JSON_HEADER").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for SEND_JSON_HEADER"));
 
     info!("Starting rscap client");
 
@@ -58,11 +59,20 @@ async fn main() {
 
     let mut total_bytes = 0;
     let mut count = 0;
+    let mut mpeg_packets = 0;
     while let Ok(msg) = zmq_sub.recv_bytes(0) {
+        // Check for JSON header if enabled, it will alternate as the first message before each MPEG-TS chunk
+        if send_json_header && count % 2 == 0 {
+            count += 1;
+            let json_header = String::from_utf8(msg.clone()).unwrap();
+            info!("#{} Received JSON header: {}", mpeg_packets + 1, json_header);
+            continue;
+        }
         total_bytes += msg.len();
         count += 1;
+        mpeg_packets += 1;
         if debug_on {
-            debug!("#{} Received {}/{} bytes", count, msg.len(), total_bytes);
+            debug!("#{} Received {}/{} bytes", mpeg_packets, msg.len(), total_bytes);
         } else if !silent {
             print!(".");
             std::io::stdout().flush().unwrap();
