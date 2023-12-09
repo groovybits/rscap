@@ -51,6 +51,14 @@ Install Rust via Homebrew on MacOS or from Rust main website (preferred)...
 <https://www.rust-lang.org/tools/install>
 
 ```text
+# CentOS 7.9
+sudo yum group install "Development Tools"
+sudo yum install centos-release-scl
+sudo yum install devtoolset-11
+scl enable devtoolset-11 bash
+# End of CentOS 7.9
+
+# MacOS Brew
 brew install rust
 # better...
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh

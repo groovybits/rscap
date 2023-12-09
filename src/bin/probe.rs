@@ -42,6 +42,7 @@ async fn main() {
     let debug_on: bool = env::var("DEBUG").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for DEBUG"));
     let silent: bool = env::var("SILENT").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for SILENT"));
 
+    #[cfg(not(target_os = "linux"))]
     let use_wireless: bool = env::var("USE_WIRELESS").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for USE_WIRELESS"));
 
     let send_json_header: bool = env::var("SEND_JSON_HEADER").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for SEND_JSON_HEADER"));
@@ -58,8 +59,21 @@ async fn main() {
     // Get the selected device's details
     let mut target_device_found = false;
     let devices = pcap::Device::list().unwrap();
-    let mut target_device = devices.clone().into_iter().find(|d| d.flags.is_up() && !d.flags.is_loopback() && d.flags.is_running())
+    // List all devices and their flags
+    for device in &devices {
+        println!("Device: {:?}, Flags: {:?}", device.name, device.flags);
+    }
+    #[cfg(target_os = "linux")]
+    let mut target_device = devices.clone().into_iter()
+        .find(|d| d.name != "lo") // Exclude loopback device
+        .expect("No valid devices found");
+
+    #[cfg(not(target_os = "linux"))]
+    let mut target_device = devices.clone().into_iter()
+        .find(|d| d.flags.is_up() && !d.flags.is_loopback() && d.flags.is_running() && (!d.flags.is_wireless() || use_wireless))
         .expect(&format!("No valid devices found {}", devices.len()));
+
+    println!("Default device: {:?}", target_device.name);
 
     // If source_device is auto, find the first valid device
     if source_device == "auto" || source_device == "" {
@@ -70,20 +84,24 @@ async fn main() {
             debug!("Device {:?}", device);
 
             // check flags for device up
+            #[cfg(not(target_os = "linux"))]
             if !device.flags.is_up() {
                 continue;
             }
             // check if device is loopback
+            #[cfg(not(target_os = "linux"))]
             if device.flags.is_loopback() {
                 continue;
             }
             // check if device is ethernet
+            #[cfg(not(target_os = "linux"))]
             if device.flags.is_wireless() {
                 if !use_wireless {
                     continue;
                 }
             }
             // check if device is running
+            #[cfg(not(target_os = "linux"))]
             if !device.flags.is_running() {
                 continue;
             }
@@ -114,7 +132,12 @@ async fn main() {
         info!("Using specified device {}", source_device);
 
         // Find the specified device
+        #[cfg(not(target_os = "linux"))]
         let target_device_discovered = devices.into_iter().find(|d| d.name == source_device && d.flags.is_up() && d.flags.is_running() && (!d.flags.is_wireless() || use_wireless))
+            .expect(&format!("Target device not found {}", source_device));
+
+        #[cfg(target_os = "linux")]
+        let target_device_discovered = devices.into_iter().find(|d| d.name == source_device)
             .expect(&format!("Target device not found {}", source_device));
 
         // Check if device has an IPv4 address
@@ -144,9 +167,16 @@ async fn main() {
     socket.join_multicast_v4(&multicast_addr, &interface_addr)
     .expect(&format!("Failed to join multicast group on interface {}", source_device));
 
+    #[cfg(not(target_os = "linux"))]
+    let promiscuous: bool = false;
+
+    #[cfg(target_os = "linux")]
+    let promiscuous: bool = true;
+
     // Setup packet capture
     let mut cap = Capture::from_device(target_device).unwrap()
-        .promisc(false)
+        .promisc(promiscuous)
+        .timeout(60000)
         .snaplen(READ_SIZE) // Adjust this based on network configuration
         .open().unwrap();
 
@@ -221,40 +251,48 @@ async fn main() {
 
     // Start packet capture
     let mut batch = Vec::new();
-    while let Ok(packet) = cap.next_packet() {
-        if debug_on{
-            debug!("Received packet! {:?}", packet.header);
-        }
-        let chunks = if is_mpegts {
-            process_mpegts_packet(&packet)
-        } else {
-            process_smpte2110_packet(&packet)
-        };
-
-        // Process each chunk
-        for chunk in chunks {
-            if debug_on {
-                hexdump(&chunk);
-            }
-
-            // Check if chunk is MPEG-TS or SMPTE 2110
-            let chunk_type = is_mpegts_or_smpte2110(&chunk);
-            if chunk_type == 1 || chunk_type == 2 {
-                batch.push(chunk);
-                if chunk_type == 2 {
-                    debug!("SMPTE 2110 packet detected");
-                    is_mpegts = false;
+    loop {
+        match cap.next_packet() {
+            Ok(packet) => {
+                if debug_on{
+                    debug!("Received packet! {:?}", packet.header);
                 }
+                let chunks = if is_mpegts {
+                    process_mpegts_packet(&packet)
+                } else {
+                    process_smpte2110_packet(&packet)
+                };
 
-                // Check if batch is full
-                if batch.len() >= BATCH_SIZE {
-                    // Send the batch to the channel
-                    tx.send(batch.clone()).unwrap();
-                    batch.clear();
+                // Process each chunk
+                for chunk in chunks {
+                    if debug_on {
+                        hexdump(&chunk);
+                    }
+
+                    // Check if chunk is MPEG-TS or SMPTE 2110
+                    let chunk_type = is_mpegts_or_smpte2110(&chunk);
+                    if chunk_type == 1 || chunk_type == 2 {
+                        batch.push(chunk);
+                        if chunk_type == 2 {
+                            debug!("SMPTE 2110 packet detected");
+                            is_mpegts = false;
+                        }
+
+                        // Check if batch is full
+                        if batch.len() >= BATCH_SIZE {
+                            // Send the batch to the channel
+                            tx.send(batch.clone()).unwrap();
+                            batch.clear();
+                        }
+                    } else {
+                        hexdump(&chunk);
+                        error!("Not MPEG-TS or SMPTE 2110");
+                    }
                 }
-            } else {
-                hexdump(&chunk);
-                error!("Not MPEG-TS or SMPTE 2110");
+            },
+            Err(e) => {
+                error!("Error capturing packet: {:?}", e);
+                break; // or handle the error as needed
             }
         }
     }
