@@ -244,40 +244,48 @@ async fn main() {
 
     // Start packet capture
     let mut batch = Vec::new();
-    while let Ok(packet) = cap.next_packet() {
-        if debug_on{
-            debug!("Received packet! {:?}", packet.header);
-        }
-        let chunks = if is_mpegts {
-            process_mpegts_packet(&packet)
-        } else {
-            process_smpte2110_packet(&packet)
-        };
-
-        // Process each chunk
-        for chunk in chunks {
-            if debug_on {
-                hexdump(&chunk);
-            }
-
-            // Check if chunk is MPEG-TS or SMPTE 2110
-            let chunk_type = is_mpegts_or_smpte2110(&chunk);
-            if chunk_type == 1 || chunk_type == 2 {
-                batch.push(chunk);
-                if chunk_type == 2 {
-                    debug!("SMPTE 2110 packet detected");
-                    is_mpegts = false;
+    loop {
+        match cap.next_packet() {
+            Ok(packet) => {
+                if debug_on{
+                    debug!("Received packet! {:?}", packet.header);
                 }
+                let chunks = if is_mpegts {
+                    process_mpegts_packet(&packet)
+                } else {
+                    process_smpte2110_packet(&packet)
+                };
 
-                // Check if batch is full
-                if batch.len() >= BATCH_SIZE {
-                    // Send the batch to the channel
-                    tx.send(batch.clone()).unwrap();
-                    batch.clear();
+                // Process each chunk
+                for chunk in chunks {
+                    if debug_on {
+                        hexdump(&chunk);
+                    }
+
+                    // Check if chunk is MPEG-TS or SMPTE 2110
+                    let chunk_type = is_mpegts_or_smpte2110(&chunk);
+                    if chunk_type == 1 || chunk_type == 2 {
+                        batch.push(chunk);
+                        if chunk_type == 2 {
+                            debug!("SMPTE 2110 packet detected");
+                            is_mpegts = false;
+                        }
+
+                        // Check if batch is full
+                        if batch.len() >= BATCH_SIZE {
+                            // Send the batch to the channel
+                            tx.send(batch.clone()).unwrap();
+                            batch.clear();
+                        }
+                    } else {
+                        hexdump(&chunk);
+                        error!("Not MPEG-TS or SMPTE 2110");
+                    }
                 }
-            } else {
-                hexdump(&chunk);
-                error!("Not MPEG-TS or SMPTE 2110");
+            },
+            Err(e) => {
+                error!("Error capturing packet: {:?}", e);
+                break; // or handle the error as needed
             }
         }
     }
