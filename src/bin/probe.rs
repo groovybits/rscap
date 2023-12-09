@@ -9,7 +9,7 @@
 
 extern crate zmq;
 use pcap::{Capture};
-//use serde_json::json;
+use serde_json::json;
 use log::{error, debug, info};
 use tokio;
 use std::net::{Ipv4Addr, UdpSocket};
@@ -42,6 +42,8 @@ async fn main() {
     let silent: bool = env::var("SILENT").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for SILENT"));
 
     let use_wireless: bool = env::var("USE_WIRELESS").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for USE_WIRELESS"));
+
+    let send_json_header: bool = env::var("SEND_JSON_HEADER").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for SEND_JSON_HEADER"));
 
     // Initialize logging
     // env_logger::init(); // FIXME - this doesn't work with log::LevelFilter
@@ -174,15 +176,21 @@ async fn main() {
                 if batch.len() >= BATCH_SIZE {
                     let batched_data = batch.concat();
 
-                    // Construct JSON header for batched data
-                    /*let json_header = json!({
-                        "type": "mpegts_chunk",
-                        "content_length": batched_data.len(),
-                    });
+                    if send_json_header {
+                        // Construct JSON header for batched data
+                        let json_header = json!({
+                            "type": "mpegts_chunk",
+                            "content_length": batched_data.len(),
+                            "total_bytes": total_bytes,
+                            "count": count,
+                            "source_ip": source_ip,
+                            "source_port": source_port,
+                            "source_device": source_device
+                        });
 
-                    // Send JSON header as multipart message
-                    publisher.send(json_header.to_string().as_bytes(), zmq::SNDMORE).unwrap();
-                    */
+                        // Send JSON header as multipart message
+                        publisher.send(json_header.to_string().as_bytes(), zmq::SNDMORE).unwrap();
+                    }
 
                     // Send chunk
                     let chunk_size = batched_data.len();
