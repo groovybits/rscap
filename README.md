@@ -77,24 +77,23 @@ ffmpeg -i capture.ts
 
 ## TODO - roadmap plans
 
-- Thread the pcap capture and queue the packets, also thread zeromq writes to read from the shared queue.
-- Add more information header to the json metadata like system stats, network stats, mediainfo, captions, ancillary data.
+- (WIP) Add more information header to the json metadata like system stats, network stats, mediainfo, captions, ancillary data.
+- (WIP) SMPTE 2110 handling analogous to the MpegTS support.
+- (WIP) PAT/PMT parsing, PES parsing and analysis of streams.
+- (WIP) FFmpeg libzmq protocol compatibility to allow branching off into libav easily.
+- (WIP) Queue and Broker distribution robustness to allow large video streams capture without loss.
+- (WIP) General network analyzer view of network around the streams we know/care about.
 - Have multiple client modes to distribute processing of the stream on the zmq endpoints.
+- Wrap [ltntstools](https://github.com/LTNGlobal-opensource/libltntstools) lib functionality into Rust through C bindings (If possible).
+- SEI metadata decoding various aspects of MpegTS.
+- Logging to file/sqliteDB with stats for simple basic graphing using gnuplot.
 - Use [OpenCV img_hash fingerprinting](https://docs.opencv.org/3.4/d4/d93/group__img__hash.html#ga5eeee1e27bc45caffe3b529ab42568e3) to perceptually align and compare video streams frames.
 - OpenAI Whisper speech to text for caption verfication and insertion. <https://github.com/openai/whisper>
-- SEI metadata decoding various aspects of MpegTS.
-- SMPTE 2110 handling analogous to the MpegTS support.
-- PAT/PMT parsing, PES parsing and analysis of streams.
 - Problem discovery and reporting via LLM/VectorDB analysis detection of anomalies in data.
 - Fine tune LLM model for finding stream issues beyond basic commonly used ones.
 - Multiple streams?
-- Logging to file/sqliteDB with stats for simple basic graphing using gnuplot.
 - Segmentation of captured MpegTS, VOD file writer by various specs.
 - Compression for proxy capture.
-- FFmpeg libzmq protocol compatibility to allow branching off into libav easily.
-- Wrap [ltntstools](https://github.com/LTNGlobal-opensource/libltntstools) lib functionality into Rust through C bindings (If possible).
-- Queue and Broker distribution robustness to allow large video streams capture without loss.
-- General network analyzer view of network around the streams we know/care about.
 
 ### Chris Kennedy (C) 2023 LGPL
 
