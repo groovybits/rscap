@@ -38,7 +38,7 @@ async fn main() {
     let source_port: i32 = env::var("SOURCE_PORT").unwrap_or("10000".to_string()).parse().expect(&format!("Invalid format for SOURCE_PORT"));
     let source_ip: &str = &env::var("SOURCE_IP").unwrap_or("224.0.0.200".to_string());
 
-    let debug: bool = env::var("DEBUG").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for DEBUG"));
+    let debug_on: bool = env::var("DEBUG").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for DEBUG"));
     let silent: bool = env::var("SILENT").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for SILENT"));
 
     // Initialize logging
@@ -126,13 +126,13 @@ async fn main() {
     let mut count = 0;
     let mut batch = Vec::new();
     while let Ok(packet) = cap.next_packet() {
-        if debug{
+        if debug_on{
             debug!("Received packet! {:?}", packet.header);
         }
         let chunks = process_packet(&packet);
 
         for chunk in chunks {
-            if debug {
+            if debug_on {
                 hexdump(&chunk);
             }
 
@@ -159,7 +159,7 @@ async fn main() {
                     count += 1;
                     publisher.send(batched_data, 0).unwrap();
                     
-                    if !debug {
+                    if !debug_on {
                         print!(".");
                         // flush stdout
                         std::io::stdout().flush().unwrap();

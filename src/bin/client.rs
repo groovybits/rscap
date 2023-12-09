@@ -12,26 +12,41 @@
  */
 
 extern crate zmq;
-use log::{error};
+use log::{error, debug, info};
 use tokio;
 use std::fs::File;
 use std::io::Write;
+use std::env;
 //use ffmpeg_next as ffmpeg; // You might need to configure FFmpeg flags
 
-const SOURCE_PORT: i32 = 5556; // TODO: change to your target port
-const SOURCE_IP: &str = "127.0.0.1";
-const OUTPUT_FILE: &str = "output.ts";
 
 #[tokio::main]
-async fn main() {
-    env_logger::Builder::new()
-    .filter_level(log::LevelFilter::Debug)
-    .init();
+async fn main() {    
+    dotenv::dotenv().ok(); // read .env file
+
+    // Get environment variables or use default values, set in .env file
+    let source_port: i32 = env::var("TARGET_PORT").unwrap_or("5556".to_string()).parse().expect(&format!("Invalid format for TARGET_PORT"));
+    let source_ip: &str = &env::var("TARGET_IP").unwrap_or("127.0.0.1".to_string());
+    let debug_on: bool = env::var("DEBUG").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for DEBUG"));
+    let silent: bool = env::var("SILENT").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for SILENT"));
+    let output_file: &str = &env::var("OUTPUT_FILE").unwrap_or("output.ts".to_string());
+
+    info!("Starting rscap client");
+
+    if !silent {
+        let mut log_level: log::LevelFilter = log::LevelFilter::Info;
+        if debug_on {
+            log_level = log::LevelFilter::Debug;
+        }
+        env_logger::Builder::new()
+        .filter_level(log_level)
+        .init();
+    }
 
     // Setup ZeroMQ subscriber
     let context = zmq::Context::new();
     let zmq_sub = context.socket(zmq::SUB).unwrap();
-    let source_port_ip = format!("tcp://{}:{}", SOURCE_IP, SOURCE_PORT);
+    let source_port_ip = format!("tcp://{}:{}", source_ip, source_port);
     if let Err(e) = zmq_sub.connect(&source_port_ip) {
         error!("Failed to connect ZeroMQ subscriber: {:?}", e);
         return;
@@ -39,14 +54,19 @@ async fn main() {
 
     zmq_sub.set_subscribe(b"").unwrap();
 
-    let mut file = File::create(OUTPUT_FILE).unwrap();
+    let mut file = File::create(output_file).unwrap();
 
     let mut total_bytes = 0;
     let mut count = 0;
     while let Ok(msg) = zmq_sub.recv_bytes(0) {
         total_bytes += msg.len();
         count += 1;
-        println!("#{} Received {}/{} bytes", count, msg.len(), total_bytes);
+        if debug_on {
+            debug!("#{} Received {}/{} bytes", count, msg.len(), total_bytes);
+        } else if !silent {
+            print!(".");
+            std::io::stdout().flush().unwrap();
+        }
         // write to file, appending if not first chunk
         file.write_all(&msg).unwrap();
     }
@@ -54,6 +74,8 @@ async fn main() {
     // Now check the file with FFmpeg for MPEG-TS integrity
     // ... FFmpeg checking logic goes here ...
     //check_mpegts_integrity("output.ts");
+
+    info!("Finished rscap client");
 }
 
 /*
