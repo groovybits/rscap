@@ -204,6 +204,7 @@ async fn main() {
         }
     });
 
+    // Start packet capture
     let mut batch = Vec::new();
     while let Ok(packet) = cap.next_packet() {
         if debug_on{
@@ -220,6 +221,7 @@ async fn main() {
             if is_mpegts_or_smpte2110(&chunk) {
                 batch.push(chunk);
 
+                // Check if batch is full
                 if batch.len() >= BATCH_SIZE {
                     // Send the batch to the channel
                     tx.send(batch.clone()).unwrap();
@@ -245,6 +247,11 @@ async fn main() {
 
 fn is_mpegts_or_smpte2110(packet: &[u8]) -> bool {
     // identifying MPEG-TS, TODO: check for SMPTE 2110
+
+    if packet.len() < PAYLOAD_OFFSET {
+        return false;
+    }
+    // SMPTE 2110 detection TODO...
 
     // MPEG-TS typically starts with a 0x47 sync byte.
     return packet.starts_with(&[0x47]);
