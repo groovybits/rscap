@@ -1,10 +1,11 @@
-## rsCap: packet capture of MpegTS/SMPTE2110 streams for proxy as ZeroMQ
+## rscap: Packet Capture MpegTS/SMPTE2110 for ZeroMQ Distributed Processing
 
-Proxy an MpegTS network stream over ZeroMQ. Capture
+Distribute an MpegTS network stream over ZeroMQ. Capture
 the TS using pcap with filter rules for specifying
 which stream. Validate the stream for conformance
 keeping the ZeroMQ output clean without any non-legal
 TS packets. Store metadata extracted in zeromq json headers.
+Share out multicast to many clients for distributed stream processing.
 
 ## This consists of two programs, a probe and a client.
 
