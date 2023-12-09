@@ -257,15 +257,20 @@ async fn main() {
 
 // Check if the packet is MPEG-TS or SMPTE 2110
 fn is_mpegts_or_smpte2110(packet: &[u8]) -> bool {
-    // identifying MPEG-TS, TODO: check for SMPTE 2110
-
-    if packet.len() < PAYLOAD_OFFSET {
-        return false;
+    // Check for MPEG-TS (starts with 0x47 sync byte)
+    if packet.starts_with(&[0x47]) {
+        return true;
     }
-    // SMPTE 2110 detection TODO...
 
-    // MPEG-TS typically starts with a 0x47 sync byte.
-    return packet.starts_with(&[0x47]);
+    // Basic check for RTP (which SMPTE ST 2110 uses)
+    // This checks if the first byte is 0x80 or 0x81
+    // This might need more robust checks based on requirements
+    if packet.len() > 12 && (packet[0] == 0x80 || packet[0] == 0x81) {
+        // TODO: Check payload type or other RTP header fields here if necessary
+        return true; // Assuming it's SMPTE ST 2110 for now
+    }
+
+    false
 }
 
 // Process the packet and return a vector of MPEG-TS packets
