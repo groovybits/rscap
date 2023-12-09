@@ -255,12 +255,12 @@ fn process_packet(packet: &[u8]) -> Vec<Vec<u8>> {
     let mut mpeg_ts_packets = Vec::new();
     let mut start = PAYLOAD_OFFSET;
 
-    while start + 188 <= packet.len() {
+    while start + PACKET_SIZE <= packet.len() {
         let chunk = &packet[start..start + PACKET_SIZE];
         if chunk[0] == 0x47 { // Check for MPEG-TS sync byte
             mpeg_ts_packets.push(chunk.to_vec());
         }
-        start += 188;
+        start += PACKET_SIZE;
     }
 
     mpeg_ts_packets
@@ -269,7 +269,7 @@ fn process_packet(packet: &[u8]) -> Vec<Vec<u8>> {
 fn hexdump(packet: &[u8]) {
     // print in rows of 16 bytes
     println!("Packet length: {}", packet.len());
-    for (i, chunk) in packet.iter().take(188).enumerate() {
+    for (i, chunk) in packet.iter().take(PACKET_SIZE).enumerate() {
         if i % 16 == 0 {
             print!("\n{:04x}: ", i);
         }
