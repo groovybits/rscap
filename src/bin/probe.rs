@@ -308,6 +308,21 @@ fn process_smpte2110_packet(packet: &[u8]) -> Vec<Vec<u8>> {
             // Extract the marker bit from the RTP header
             let marker_bit = (packet[start + 1] & 0x80) >> 7;
 
+            // Check if interlaced video
+            let interlaced = (packet[start + 12] & 0x80) >> 7;
+
+            // Check if UHD
+            let uhd = (packet[start + 12] & 0x40) >> 6;
+
+            // Check if 10-bit
+            let ten_bit = (packet[start + 12] & 0x20) >> 5;
+
+            // Check if 422
+            let four_two_two = (packet[start + 12] & 0x10) >> 4;
+
+            // Check if 444
+            let four_four_four = (packet[start + 12] & 0x08) >> 3;
+
             // Construct JSON object with RTP header information
             let rtp_header_info = json!({
                 "sequence_number": sequence_number,
@@ -315,6 +330,11 @@ fn process_smpte2110_packet(packet: &[u8]) -> Vec<Vec<u8>> {
                 "ssrc": ssrc,
                 "payload_type": payload_type,
                 "marker_bit": marker_bit,
+                "interlaced": interlaced,
+                "uhd": uhd,
+                "ten_bit": ten_bit,
+                "four_two_two": four_two_two,
+                "four_four_four": four_four_four
             });
 
             // Print out the JSON structure
@@ -363,6 +383,23 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<Vec<u8>> {
             // extract the timestamp from the MPEG-TS header
             let timestamp = ((chunk[4] as u64) << 25) | ((chunk[5] as u64) << 17) | ((chunk[6] as u64) << 9) | ((chunk[7] as u64) << 1) | ((chunk[8] as u64) >> 7);
 
+            /*
+            // extrace the interlaced status from the MPEG-TS header
+            let interlaced = chunk[8] & 0x40;
+
+            // extract the uhd status from the MPEG-TS header
+            let uhd = chunk[8] & 0x20;
+
+            // extract the 10-bit status from the MPEG-TS header
+            let ten_bit = chunk[8] & 0x10;
+
+            // extract the 422 status from the MPEG-TS header
+            let four_two_two = chunk[8] & 0x08;
+
+            // extract the 444 status from the MPEG-TS header
+            let four_four_four = chunk[8] & 0x04;
+            */
+
             // Construct JSON object with MPEG-TS header information
             let mpegts_header_info = json!({
                 "pid": pid,
@@ -373,7 +410,12 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<Vec<u8>> {
                 "transport_error_indicator": transport_error_indicator,
                 "transport_priority": transport_priority,
                 "transport_private_data": transport_private_data,
-                "timestamp": timestamp
+                "timestamp": timestamp,
+                /*"interlaced": interlaced,
+                "uhd": uhd,
+                "ten_bit": ten_bit,
+                "four_two_two": four_two_two,
+                "four_four_four": four_four_four*/
             });
 
             // Print out the JSON structure
