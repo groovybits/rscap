@@ -24,7 +24,7 @@ const PAYLOAD_OFFSET: usize = 14 + 20 + 8; // Ethernet (14 bytes) + IP (20 bytes
 const PACKET_SIZE: usize = 188; // MPEG-TS packet size
 const READ_SIZE: i32 = (PACKET_SIZE as i32 * BATCH_SIZE as i32) + PAYLOAD_OFFSET as i32; // pcap read size
 
-
+// MAIN
 #[tokio::main]
 async fn main() {
     info!("Starting rscap probe");
@@ -70,6 +70,7 @@ async fn main() {
     if source_device == "auto" || source_device == "" {
         info!("Auto-selecting device...");
 
+        // Find the first valid device
         for device in pcap::Device::list().unwrap() {
             debug!("Device {:?}", device);
 
@@ -92,6 +93,7 @@ async fn main() {
                 continue;
             }
             
+            // check if device has an IPv4 address
             for addr in device.addresses.iter() {
                 if let std::net::IpAddr::V4(ipv4_addr) = addr.addr {
                     // check if loopback
@@ -100,22 +102,27 @@ async fn main() {
                     }
                     target_device_found = true;
 
+                    // Found through auto-detection, set interface_addr
                     info!("Found IPv4 target device {} with ip {}", source_device, ipv4_addr);
                     interface_addr = ipv4_addr;
                     target_device = device;
                     break;
                 }
             }
+            // break out of loop if target device is found
             if target_device_found {
                 break;
             }   
         }
     } else {
+        // Use the specified device instead of auto-detection
         info!("Using specified device {}", source_device);
 
+        // Find the specified device
         let target_device_discovered = devices.into_iter().find(|d| d.name == source_device && d.flags.is_up() && !d.flags.is_loopback() && d.flags.is_running() && (!d.flags.is_wireless() || use_wireless))
             .expect(&format!("Target device not found {}", source_device));
 
+        // Check if device has an IPv4 address
         info!("Target Device: {:?}", target_device_discovered);
         for addr in target_device_discovered.addresses.iter() {
             if let std::net::IpAddr::V4(ipv4_addr) = addr.addr {
@@ -134,6 +141,7 @@ async fn main() {
         return;
     }
 
+    // Join multicast group
     let multicast_addr = source_ip.parse::<Ipv4Addr>()
         .expect(&format!("Invalid IP address format in source_ip {}", source_ip));
 
@@ -172,6 +180,7 @@ async fn main() {
             // ... ZeroMQ sending logic ...
             let batched_data = batch.concat();
 
+            // Check if JSON header is enabled
             if send_json_header {
                 // Construct JSON header for batched data
                 let json_header = json!({
@@ -188,12 +197,13 @@ async fn main() {
                 publisher.send(json_header.to_string().as_bytes(), zmq::SNDMORE).unwrap();
             }
 
-            // Send chunk
+            // Send chunk of data as multipart message
             let chunk_size = batched_data.len();
             total_bytes += chunk_size;
             count += 1;
             publisher.send(batched_data, 0).unwrap();
             
+            // Print progress
             if !debug_on {
                 print!(".");
                 // flush stdout
@@ -212,6 +222,7 @@ async fn main() {
         }
         let chunks = process_packet(&packet);
 
+        // Process each chunk
         for chunk in chunks {
             if debug_on {
                 hexdump(&chunk);
@@ -244,6 +255,7 @@ async fn main() {
     zmq_thread.join().unwrap();
 }
 
+// Check if the packet is MPEG-TS or SMPTE 2110
 fn is_mpegts_or_smpte2110(packet: &[u8]) -> bool {
     // identifying MPEG-TS, TODO: check for SMPTE 2110
 
@@ -256,6 +268,7 @@ fn is_mpegts_or_smpte2110(packet: &[u8]) -> bool {
     return packet.starts_with(&[0x47]);
 }
 
+// Process the packet and return a vector of MPEG-TS packets
 fn process_packet(packet: &[u8]) -> Vec<Vec<u8>> {
     // Strip off network headers to get to the MPEG-TS payload
     let mut mpeg_ts_packets = Vec::new();
@@ -272,6 +285,7 @@ fn process_packet(packet: &[u8]) -> Vec<Vec<u8>> {
     mpeg_ts_packets
 }
 
+// Print a hexdump of the packet
 fn hexdump(packet: &[u8]) {
     // print in rows of 16 bytes
     println!("Packet length: {}", packet.len());
