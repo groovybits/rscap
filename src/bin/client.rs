@@ -65,7 +65,9 @@ async fn main() {
         if send_json_header && count % 2 == 0 {
             count += 1;
             let json_header = String::from_utf8(msg.clone()).unwrap();
-            info!("#{} Received JSON header: {}", mpeg_packets + 1, json_header);
+            if debug_on {
+                info!("#{} Received JSON header: {}", mpeg_packets + 1, json_header);
+            }
             continue;
         }
         total_bytes += msg.len();
