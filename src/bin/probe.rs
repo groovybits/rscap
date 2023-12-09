@@ -69,7 +69,7 @@ async fn main() {
 
     #[cfg(not(target_os = "linux"))]
     let mut target_device = devices.clone().into_iter()
-        .find(|d| d.flags.is_up() && !d.flags.is_loopback() && d.flags.is_running())
+        .find(|d| d.flags.is_up() && !d.flags.is_loopback() && d.flags.is_running() && (!d.flags.is_wireless() || use_wireless))
         .expect(&format!("No valid devices found {}", devices.len()));
 
     println!("Default device: {:?}", target_device.name);
