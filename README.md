@@ -1,4 +1,4 @@
-# rsCap: proxy pcap captured mpegts packets to zeromq pub/sub
+## rsCap: packet capture of MpegTS/SMPTE2110 streams for proxy as ZeroMQ
 
 Proxy an MpegTS network stream over ZeroMQ. Capture
 the TS using pcap with filter rules for specifying
