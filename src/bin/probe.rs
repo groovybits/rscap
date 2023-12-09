@@ -33,13 +33,15 @@ async fn main() {
     let target_ip: &str = &env::var("TARGET_IP").unwrap_or("127.0.0.1".to_string());
 
     let source_device: &str = &env::var("SOURCE_DEVICE").unwrap_or("en0".to_string());
-    let source_device_ip: &str = &env::var("SOURCE_DEVICE_IP").unwrap_or("0.0.0.0".to_string());
 
     let source_port: i32 = env::var("SOURCE_PORT").unwrap_or("10000".to_string()).parse().expect(&format!("Invalid format for SOURCE_PORT"));
     let source_ip: &str = &env::var("SOURCE_IP").unwrap_or("224.0.0.200".to_string());
+    let source_device_ip: &str = "0.0.0.0";
 
     let debug_on: bool = env::var("DEBUG").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for DEBUG"));
     let silent: bool = env::var("SILENT").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for SILENT"));
+
+    let use_wireless: bool = env::var("USE_WIRELESS").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for USE_WIRELESS"));
 
     // Initialize logging
     // env_logger::init(); // FIXME - this doesn't work with log::LevelFilter
@@ -61,30 +63,40 @@ async fn main() {
         .expect(&format!("Invalid IP address format in source_device_ip {}", source_device_ip));
 
     // Get the selected device's details
-    let devices = pcap::Device::list().unwrap();
-    let target_device = devices.into_iter().find(|d| d.name == source_device)
-        .expect(&format!("Target device not found {}", source_device));
-
-    info!("Target Device: {:?}", target_device);
     let mut target_device_found = false;
-    for addr in target_device.addresses.iter() {
-        if let std::net::IpAddr::V4(ipv4_addr) = addr.addr {
-            info!("Found ipv4_addr: {:?}", ipv4_addr);
-            interface_addr = ipv4_addr;
-            target_device_found = true;
-            break;
-        }
-    }
+    let devices = pcap::Device::list().unwrap();
+    let mut target_device = devices.clone().into_iter().find(|d| d.flags.is_up() && !d.flags.is_loopback() && d.flags.is_running())
+        .expect(&format!("No valid devices found {}", devices.len()));
 
-    // If the device is not found, search for it
-    if !target_device_found {
-        info!("Target device {} not found, searching...", source_device);
+    // If source_device is auto, find the first valid device
+    if source_device == "auto" || source_device == "" {
+        info!("Auto-selecting device...");
+
         for device in pcap::Device::list().unwrap() {
             debug!("Device {:?}", device);
+
+            // check flags for device up
+            if !device.flags.is_up() {
+                continue;
+            }
+            // check if device is loopback
+            if device.flags.is_loopback() {
+                continue;
+            }
+            // check if device is ethernet
+            if device.flags.is_wireless() {
+                if !use_wireless {
+                    continue;
+                }
+            }
+            // check if device is running
+            if !device.flags.is_running() {
+                continue;
+            }
             
             for addr in device.addresses.iter() {
                 if let std::net::IpAddr::V4(ipv4_addr) = addr.addr {
-                    // check if localhost
+                    // check if loopback
                     if ipv4_addr.is_loopback() {
                         continue;
                     }
@@ -92,6 +104,7 @@ async fn main() {
 
                     info!("Found IPv4 target device {} with ip {}", source_device, ipv4_addr);
                     interface_addr = ipv4_addr;
+                    target_device = device;
                     break;
                 }
             }
@@ -99,7 +112,25 @@ async fn main() {
                 break;
             }   
         }
+    } else {
+        info!("Using specified device {}", source_device);
+
+        let target_device_discovered = devices.into_iter().find(|d| d.name == source_device && d.flags.is_up() && !d.flags.is_loopback() && d.flags.is_running() && (!d.flags.is_wireless() || use_wireless))
+            .expect(&format!("Target device not found {}", source_device));
+
+        info!("Target Device: {:?}", target_device_discovered);
+        for addr in target_device_discovered.addresses.iter() {
+            if let std::net::IpAddr::V4(ipv4_addr) = addr.addr {
+                info!("Found ipv4_addr: {:?}", ipv4_addr);
+                interface_addr = ipv4_addr;
+                target_device_found = true;
+                target_device = target_device_discovered;
+                break;
+            }
+        }
     }
+
+    // Device not found
     if !target_device_found {
         error!("Target device {} not found", source_device);
         return;
