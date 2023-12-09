@@ -18,7 +18,7 @@ use std::io::Write;
 use std::sync::mpsc;
 use std::thread;
 
-// Able to keep up with 1080i50 422 10-bit 30 Mbps MPEG-TS stream (not long-term tested)
+// Able to keep up with 1080p60 420/422 8/10-bit 20+ Mbps MPEG-TS stream (not long-term tested)
 const BATCH_SIZE: usize = 1000; // N MPEG-TS packets per batch
 const PAYLOAD_OFFSET: usize = 14 + 20 + 8; // Ethernet (14 bytes) + IP (20 bytes) + UDP (8 bytes)
 const PACKET_SIZE: usize = 188; // MPEG-TS packet size
