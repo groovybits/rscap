@@ -49,14 +49,7 @@ async fn main() {
     let mut is_mpegts = true; // Default to true, update based on actual packet type
 
     // Initialize logging
-    // env_logger::init(); // FIXME - this doesn't work with log::LevelFilter
-    let mut log_level: log::LevelFilter = log::LevelFilter::Info;
-    if !silent {
-        log_level = log::LevelFilter::Debug;
-    }
-    env_logger::Builder::new()
-    .filter_level(log_level)
-    .init();
+    env_logger::init(); // set RUST_LOG environment variable to debug for more verbose logging
 
     // device ip address
     let mut interface_addr = source_device_ip.parse::<Ipv4Addr>()
@@ -216,11 +209,11 @@ async fn main() {
             publisher.send(batched_data, 0).unwrap();
             
             // Print progress
-            if !debug_on {
+            if !debug_on && !silent{
                 print!(".");
                 // flush stdout
                 std::io::stdout().flush().unwrap();
-            } else {
+            } else if !silent {
                 debug!("#{} Sent chunk of {}/{} bytes", count, chunk_size, total_bytes);
             }
         }
@@ -296,24 +289,37 @@ fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
 
 // Process the packet and return a vector of SMPTE ST 2110 packets
 fn process_smpte2110_packet(packet: &[u8]) -> Vec<Vec<u8>> {
-    // Strip off network headers to get to the SMPTE ST 2110 payload
     let mut smpte2110_packets = Vec::new();
-    let mut start = PAYLOAD_OFFSET;
+    let start = PAYLOAD_OFFSET;
 
-    while start + PACKET_SIZE <= packet.len() {
-        let chunk = &packet[start..start + PACKET_SIZE];
-        if chunk[0] == 0x80 || chunk[0] == 0x81 { // Check for RTP version 2
-            smpte2110_packets.push(chunk.to_vec());
+    if packet.len() > start + 12 {
+        if packet[start] == 0x80 || packet[start] == 0x81 {
+            let rtp_packet = &packet[start..];
+            smpte2110_packets.push(rtp_packet.to_vec());
+
+            // Extract RTP header information
+            let sequence_number = u16::from_be_bytes([packet[start + 2], packet[start + 3]]);
+            let timestamp = u32::from_be_bytes([packet[start + 4], packet[start + 5], packet[start + 6], packet[start + 7]]);
+            let ssrc = u32::from_be_bytes([packet[start + 8], packet[start + 9], packet[start + 10], packet[start + 11]]);
+
+            // Construct JSON object with RTP header information
+            let rtp_header_info = json!({
+                "sequence_number": sequence_number,
+                "timestamp": timestamp,
+                "ssrc": ssrc
+            });
+
+            // Print out the JSON structure
+            debug!("RTP Header Info: {}", rtp_header_info.to_string());
         }
-        start += PACKET_SIZE;
     }
 
     smpte2110_packets
 }
 
+
 // Process the packet and return a vector of MPEG-TS packets
 fn process_mpegts_packet(packet: &[u8]) -> Vec<Vec<u8>> {
-    // Strip off network headers to get to the MPEG-TS payload
     let mut mpeg_ts_packets = Vec::new();
     let mut start = PAYLOAD_OFFSET;
 
@@ -321,6 +327,17 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<Vec<u8>> {
         let chunk = &packet[start..start + PACKET_SIZE];
         if chunk[0] == 0x47 { // Check for MPEG-TS sync byte
             mpeg_ts_packets.push(chunk.to_vec());
+
+            // Extract the PID from the MPEG-TS header
+            let pid = ((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
+
+            // Construct JSON object with MPEG-TS header information
+            let mpegts_header_info = json!({
+                "pid": pid
+            });
+
+            // Print out the JSON structure
+            debug!("MPEG-TS Header Info: {}", mpegts_header_info.to_string());
         }
         start += PACKET_SIZE;
     }
