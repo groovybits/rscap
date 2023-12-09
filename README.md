@@ -1,4 +1,4 @@
-## rscap: Packet Capture MpegTS/SMPTE2110 for ZeroMQ Distributed Processing
+## Packet Capture MpegTS/SMPTE2110 for ZeroMQ Distributed Processing
 
 Distribute an MpegTS network stream over ZeroMQ. Capture
 the TS using pcap with filter rules for specifying
@@ -6,6 +6,8 @@ which stream. Validate the stream for conformance
 keeping the ZeroMQ output clean without any non-legal
 TS packets. Store metadata extracted in zeromq json headers.
 Share out multicast to many clients for distributed stream processing.
+
+![rscap](https://storage.googleapis.com/gaib/2/rscap/rscap.png)
 
 ## This consists of two programs, a probe and a client.
 
