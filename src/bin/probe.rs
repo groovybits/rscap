@@ -331,9 +331,41 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<Vec<u8>> {
             // Extract the PID from the MPEG-TS header
             let pid = ((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
 
+            // Extract the continuity counter from the MPEG-TS header
+            let continuity_counter = chunk[3] & 0x0F;
+
+            // Extract the adaptation field control from the MPEG-TS header
+            let adaptation_field_control = (chunk[3] & 0x30) >> 4;
+
+            // Extract the payload unit start indicator from the MPEG-TS header
+            let payload_unit_start_indicator = chunk[1] & 0x40;
+
+            // Extract the transport scrambling control from the MPEG-TS header
+            let transport_scrambling_control = (chunk[3] & 0xC0) >> 6;
+
+            // Extract the transport error indicator from the MPEG-TS header
+            let transport_error_indicator = chunk[1] & 0x80;
+
+            // Extract the transport priority from the MPEG-TS header
+            let transport_priority = chunk[2] & 0x20;
+
+            // Extract the transport private data from the MPEG-TS header
+            let transport_private_data = chunk[2] & 0x80;
+
+            // extract the timestamp from the MPEG-TS header
+            let timestamp = ((chunk[4] as u64) << 25) | ((chunk[5] as u64) << 17) | ((chunk[6] as u64) << 9) | ((chunk[7] as u64) << 1) | ((chunk[8] as u64) >> 7);
+
             // Construct JSON object with MPEG-TS header information
             let mpegts_header_info = json!({
-                "pid": pid
+                "pid": pid,
+                "continuity_counter": continuity_counter,
+                "adaptation_field_control": adaptation_field_control,
+                "payload_unit_start_indicator": payload_unit_start_indicator,
+                "transport_scrambling_control": transport_scrambling_control,
+                "transport_error_indicator": transport_error_indicator,
+                "transport_priority": transport_priority,
+                "transport_private_data": transport_private_data,
+                "timestamp": timestamp
             });
 
             // Print out the JSON structure
