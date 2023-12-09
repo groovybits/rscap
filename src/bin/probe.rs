@@ -58,8 +58,21 @@ async fn main() {
     // Get the selected device's details
     let mut target_device_found = false;
     let devices = pcap::Device::list().unwrap();
-    let mut target_device = devices.clone().into_iter().find(|d| d.flags.is_up() && !d.flags.is_loopback() && d.flags.is_running())
+    // List all devices and their flags
+    for device in &devices {
+        println!("Device: {:?}, Flags: {:?}", device.name, device.flags);
+    }
+    #[cfg(target_os = "linux")]
+    let mut target_device = devices.clone().into_iter()
+        .find(|d| d.name != "lo") // Exclude loopback device
+        .expect("No valid devices found");
+
+    #[cfg(not(target_os = "linux"))]
+    let mut target_device = devices.clone().into_iter()
+        .find(|d| d.flags.is_up() && !d.flags.is_loopback() && d.flags.is_running())
         .expect(&format!("No valid devices found {}", devices.len()));
+
+    println!("Default device: {:?}", target_device.name);
 
     // If source_device is auto, find the first valid device
     if source_device == "auto" || source_device == "" {
@@ -70,20 +83,24 @@ async fn main() {
             debug!("Device {:?}", device);
 
             // check flags for device up
+            #[cfg(not(target_os = "linux"))]
             if !device.flags.is_up() {
                 continue;
             }
             // check if device is loopback
+            #[cfg(not(target_os = "linux"))]
             if device.flags.is_loopback() {
                 continue;
             }
             // check if device is ethernet
+            #[cfg(not(target_os = "linux"))]
             if device.flags.is_wireless() {
                 if !use_wireless {
                     continue;
                 }
             }
             // check if device is running
+            #[cfg(not(target_os = "linux"))]
             if !device.flags.is_running() {
                 continue;
             }
@@ -114,7 +131,12 @@ async fn main() {
         info!("Using specified device {}", source_device);
 
         // Find the specified device
+        #[cfg(not(target_os = "linux"))]
         let target_device_discovered = devices.into_iter().find(|d| d.name == source_device && d.flags.is_up() && d.flags.is_running() && (!d.flags.is_wireless() || use_wireless))
+            .expect(&format!("Target device not found {}", source_device));
+
+        #[cfg(target_os = "linux")]
+        let target_device_discovered = devices.into_iter().find(|d| d.name == source_device)
             .expect(&format!("Target device not found {}", source_device));
 
         // Check if device has an IPv4 address
