@@ -64,17 +64,50 @@ brew install rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
+On Linux update libpcap to the newest version (optional)...
+
+```text
+sudo yum -y install flex                                                                                                                                       |
+sudo yum -y install bison byacc yacc
+
+wget https://www.tcpdump.org/release/libpcap-1.10.4.tar.gz
+tar xfz libpcap-1.10.4.tar.gz
+
+cd libpcap-1.10.4
+./configure --prefix=/usr --libdir=/usr/lib64 --includedir=/usr/include --exec_prefix=/usr
+make
+sudo make install
+```
+
 Build and run the pcap stream probe...
 
 ```text
-cargo build
-sudo target/debug/probe
+cargo build --release
+
+sudo RUST_LOG=debug \
+     DEBUG=false \
+     SILENT=false \
+     SOURCE_IP="224.0.0.1" \
+     SOURCE_PORT=10000 \
+     TARGET_IP="127.0.0.1" \
+     TARGET_PORT="5556" \
+     SEND_JSON_HEADER=true \
+     SOURCE_DEVICE="en0" \
+                target/release/probe
 ```
 
 Build and run the zmq capture client...
 
 ```text
-target/debug/client
+DEBUG=true \
+      RUST_LOG=debug \
+      DEBUG=true \
+      SILENT=false \
+      TARGET_IP="127.0.0.1" \
+      TARGET_PORT="5556" \
+      SEND_JSON_HEADER=true \
+      OUTPUT_FILE=capture.ts \
+                  target/release/client
 ```
 
 Check the output file capture.ts (or what you set in .env or environment variables)
@@ -99,9 +132,10 @@ ffmpeg -i capture.ts
 - OpenAI Whisper speech to text for caption verfication and insertion. <https://github.com/openai/whisper>
 - Problem discovery and reporting via LLM/VectorDB analysis detection of anomalies in data.
 - Fine tune LLM model for finding stream issues beyond basic commonly used ones.
-- Multiple streams?
 - Segmentation of captured MpegTS, VOD file writer by various specs.
-- Compression for proxy capture.
+- Compression for proxy capture. Encode bitrate ladders realtime in parallel?
+- Multiple streams per probe? Seems better to separate each probe to avoid a mess.
+- Audio analysis, capture, sampling.
 
 ### Chris Kennedy (C) 2023 LGPL
 
