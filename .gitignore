@@ -1,1 +1,7 @@
 /target
+capture.ts
+Cargo.lock
+src/bin/probe.rs.main
+src/bin/probe.rs.staging
+.env
+
