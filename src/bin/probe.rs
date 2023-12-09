@@ -32,7 +32,7 @@ async fn main() {
     let target_port: i32 = env::var("TARGET_PORT").unwrap_or("5556".to_string()).parse().expect(&format!("Invalid format for TARGET_PORT"));
     let target_ip: &str = &env::var("TARGET_IP").unwrap_or("127.0.0.1".to_string());
 
-    let source_device: &str = &env::var("SOURCE_DEVICE").unwrap_or("en0".to_string());
+    let source_device: &str = &env::var("SOURCE_DEVICE").unwrap_or("".to_string());
 
     let source_port: i32 = env::var("SOURCE_PORT").unwrap_or("10000".to_string()).parse().expect(&format!("Invalid format for SOURCE_PORT"));
     let source_ip: &str = &env::var("SOURCE_IP").unwrap_or("224.0.0.200".to_string());
