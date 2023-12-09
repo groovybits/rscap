@@ -119,7 +119,7 @@ async fn main() {
         info!("Using specified device {}", source_device);
 
         // Find the specified device
-        let target_device_discovered = devices.into_iter().find(|d| d.name == source_device && d.flags.is_up() && !d.flags.is_loopback() && d.flags.is_running() && (!d.flags.is_wireless() || use_wireless))
+        let target_device_discovered = devices.into_iter().find(|d| d.name == source_device && d.flags.is_up() && d.flags.is_running() && (!d.flags.is_wireless() || use_wireless))
             .expect(&format!("Target device not found {}", source_device));
 
         // Check if device has an IPv4 address
