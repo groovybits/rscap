@@ -12,6 +12,8 @@ use pcap::{Capture, Device};
 //use serde_json::json;
 //use log::{error, debug, info};
 use tokio;
+use std::net::{Ipv4Addr};
+use std::io;
 
 // Able to keep up with 1080i50 422 10-bit 30 Mbps MPEG-TS stream (not long-term tested)
 const BATCH_SIZE: usize = 1000; // N MPEG-TS packets per batch
@@ -70,6 +72,30 @@ async fn main() {
     // Filter pcap
     let source_host_and_port = format!("udp dst port {} and ip dst host {}", SOURCE_PORT, SOURCE_IP);
     cap.filter(&source_host_and_port, true).unwrap();
+
+    // Parse the SOURCE_IP string into an Ipv4Addr
+    let group_address = match SOURCE_IP.parse::<Ipv4Addr>() {
+        Ok(addr) => addr,
+        Err(_) => {
+            eprintln!("Invalid IP address format in SOURCE_IP");
+            return;
+        }
+    };
+
+    let igmp_packet = create_igmp_join_request(group_address);
+    match igmp_packet {
+        Ok(packet) => {
+            // Send IGMP join request
+            /*let mut socket = zmq::Socket::new(&context, zmq::SocketType::REQ).unwrap();
+            socket.connect(&source_port_ip).unwrap();
+            socket.send(&packet, 0).unwrap();*/
+            println!("(Not Implemented, Use external program) Sent IGMP join request {}", packet.len());
+        }
+        Err(e) => {
+            eprintln!("Failed to create IGMP join request: {:?}", e);
+            return;
+        }
+    }
 
     let mut total_bytes = 0;
     let mut count = 0;
@@ -152,3 +178,33 @@ fn hexdump(packet: &[u8]) {
     }
     println!();
 }
+
+fn create_igmp_join_request(group_address: Ipv4Addr) -> Result<Vec<u8>, io::Error> {
+    let mut packet = vec![0u8; 8]; // IGMP packet is 8 bytes
+
+    packet[0] = 0x16; // Type: Membership Report for IGMPv2
+    packet[1] = 0x00; // Max Response Time: 0 for Membership Report
+
+    // Insert group address (network order)
+    packet[4..8].copy_from_slice(&group_address.octets());
+
+    // Calculate checksum
+    let checksum = compute_igmp_checksum(&packet);
+    packet[2] = (checksum >> 8) as u8; // Checksum high byte
+    packet[3] = (checksum & 0xFF) as u8; // Checksum low byte
+
+    Ok(packet)
+}
+
+fn compute_igmp_checksum(packet: &[u8]) -> u16 {
+    let mut sum = 0u32;
+
+    for i in (0..packet.len()).step_by(2) {
+        sum += u32::from(u16::from(packet[i]) << 8 | u16::from(packet[i + 1]));
+    }
+    while (sum >> 16) > 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    !sum as u16
+}
+
