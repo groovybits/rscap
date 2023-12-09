@@ -302,11 +302,19 @@ fn process_smpte2110_packet(packet: &[u8]) -> Vec<Vec<u8>> {
             let timestamp = u32::from_be_bytes([packet[start + 4], packet[start + 5], packet[start + 6], packet[start + 7]]);
             let ssrc = u32::from_be_bytes([packet[start + 8], packet[start + 9], packet[start + 10], packet[start + 11]]);
 
+            // Extract the payload type from the RTP header
+            let payload_type = packet[start + 1] & 0x7F;
+
+            // Extract the marker bit from the RTP header
+            let marker_bit = (packet[start + 1] & 0x80) >> 7;
+
             // Construct JSON object with RTP header information
             let rtp_header_info = json!({
                 "sequence_number": sequence_number,
                 "timestamp": timestamp,
-                "ssrc": ssrc
+                "ssrc": ssrc,
+                "payload_type": payload_type,
+                "marker_bit": marker_bit,
             });
 
             // Print out the JSON structure
