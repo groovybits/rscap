@@ -46,6 +46,8 @@ async fn main() {
 
     let send_json_header: bool = env::var("SEND_JSON_HEADER").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for SEND_JSON_HEADER"));
 
+    let mut is_mpegts = true; // Default to true, update based on actual packet type
+
     // Initialize logging
     // env_logger::init(); // FIXME - this doesn't work with log::LevelFilter
     let mut log_level: log::LevelFilter = log::LevelFilter::Info;
@@ -180,6 +182,13 @@ async fn main() {
             // ... ZeroMQ sending logic ...
             let batched_data = batch.concat();
 
+            let mut format_str = "unknown";
+            let format_index = is_mpegts_or_smpte2110(&batched_data);
+            if format_index == 1 {
+                format_str = "mpegts";
+            } else if format_index == 2 {
+                format_str = "smpte2110";
+            }
             // Check if JSON header is enabled
             if send_json_header {
                 // Construct JSON header for batched data
@@ -190,7 +199,10 @@ async fn main() {
                     "count": count,
                     "source_ip": source_ip,
                     "source_port": source_port,
-                    "source_device": source_device
+                    "source_device": source_device,
+                    "target_ip": target_ip,
+                    "target_port": target_port,
+                    "format": format_str,
                 });
 
                 // Send JSON header as multipart message
@@ -220,7 +232,11 @@ async fn main() {
         if debug_on{
             debug!("Received packet! {:?}", packet.header);
         }
-        let chunks = process_packet(&packet);
+        let chunks = if is_mpegts {
+            process_mpegts_packet(&packet)
+        } else {
+            process_smpte2110_packet(&packet)
+        };
 
         // Process each chunk
         for chunk in chunks {
@@ -229,8 +245,13 @@ async fn main() {
             }
 
             // Check if chunk is MPEG-TS or SMPTE 2110
-            if is_mpegts_or_smpte2110(&chunk) {
+            let chunk_type = is_mpegts_or_smpte2110(&chunk);
+            if chunk_type == 1 || chunk_type == 2 {
                 batch.push(chunk);
+                if chunk_type == 2 {
+                    debug!("SMPTE 2110 packet detected");
+                    is_mpegts = false;
+                }
 
                 // Check if batch is full
                 if batch.len() >= BATCH_SIZE {
@@ -256,10 +277,10 @@ async fn main() {
 }
 
 // Check if the packet is MPEG-TS or SMPTE 2110
-fn is_mpegts_or_smpte2110(packet: &[u8]) -> bool {
+fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
     // Check for MPEG-TS (starts with 0x47 sync byte)
     if packet.starts_with(&[0x47]) {
-        return true;
+        return 1;
     }
 
     // Basic check for RTP (which SMPTE ST 2110 uses)
@@ -267,14 +288,31 @@ fn is_mpegts_or_smpte2110(packet: &[u8]) -> bool {
     // This might need more robust checks based on requirements
     if packet.len() > 12 && (packet[0] == 0x80 || packet[0] == 0x81) {
         // TODO: Check payload type or other RTP header fields here if necessary
-        return true; // Assuming it's SMPTE ST 2110 for now
+        return 2; // Assuming it's SMPTE ST 2110 for now
     }
 
-    false
+    0 // Not MPEG-TS or SMPTE 2110
+}
+
+// Process the packet and return a vector of SMPTE ST 2110 packets
+fn process_smpte2110_packet(packet: &[u8]) -> Vec<Vec<u8>> {
+    // Strip off network headers to get to the SMPTE ST 2110 payload
+    let mut smpte2110_packets = Vec::new();
+    let mut start = PAYLOAD_OFFSET;
+
+    while start + PACKET_SIZE <= packet.len() {
+        let chunk = &packet[start..start + PACKET_SIZE];
+        if chunk[0] == 0x80 || chunk[0] == 0x81 { // Check for RTP version 2
+            smpte2110_packets.push(chunk.to_vec());
+        }
+        start += PACKET_SIZE;
+    }
+
+    smpte2110_packets
 }
 
 // Process the packet and return a vector of MPEG-TS packets
-fn process_packet(packet: &[u8]) -> Vec<Vec<u8>> {
+fn process_mpegts_packet(packet: &[u8]) -> Vec<Vec<u8>> {
     // Strip off network headers to get to the MPEG-TS payload
     let mut mpeg_ts_packets = Vec::new();
     let mut start = PAYLOAD_OFFSET;
