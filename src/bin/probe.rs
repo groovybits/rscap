@@ -232,7 +232,6 @@ async fn main() {
                 error!("Not MPEG-TS or SMPTE 2110");
             }
         }
-        
     }
 
     info!("Exiting rscap probe");
