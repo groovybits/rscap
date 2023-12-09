@@ -167,9 +167,16 @@ async fn main() {
     socket.join_multicast_v4(&multicast_addr, &interface_addr)
     .expect(&format!("Failed to join multicast group on interface {}", source_device));
 
+    #[cfg(not(target_os = "linux"))]
+    let promiscuous: bool = false;
+
+    #[cfg(target_os = "linux")]
+    let promiscuous: bool = true;
+
     // Setup packet capture
     let mut cap = Capture::from_device(target_device).unwrap()
-        .promisc(false)
+        .promisc(promiscuous)
+        .timeout(60000)
         .snaplen(READ_SIZE) // Adjust this based on network configuration
         .open().unwrap();
 
