@@ -186,7 +186,7 @@ fn update_pid_map(pmt_packet: &[u8]) {
 
         // Ensure the current PMT packet matches the PMT PID from the PAT
         if extract_pid(pmt_packet) == pmt_pid {
-            let pmt = parse_pmt(pmt_packet, program_number);
+            let pmt = parse_pmt(pmt_packet, pmt_pid);
 
             for pmt_entry in pmt.entries.iter() {
                 let stream_pid = pmt_entry.stream_pid;
