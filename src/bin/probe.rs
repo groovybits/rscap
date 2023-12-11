@@ -34,6 +34,8 @@ const PAT_PID: u16 = 0;
 // global variable to store PMT PID (initially set to an invalid PID)
 static mut PMT_PID: u16 = 0xFFFF;
 
+static mut LAST_PAT_PACKET: Option<Vec<u8>> = None;
+
 lazy_static! {
     static ref PID_MAP: Mutex<HashMap<u16, String>> = Mutex::new(HashMap::new());
 }
@@ -118,24 +120,24 @@ fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
     }
 }
 
-fn update_pid_map_from_pat_pmt(pat_packet: &[u8], pmt_packet: &[u8]) {
+// Modify the function to use the stored PAT packet
+fn update_pid_map_from_pat_pmt(pmt_packet: &[u8]) {
     let mut pid_map = PID_MAP.lock().unwrap();
 
-    // Parse PAT to get program numbers and corresponding PMT PIDs
-    let program_pids = parse_pat(pat_packet); // Implement parse_pat to return a map
+    unsafe {
+        if let Some(pat_packet) = &LAST_PAT_PACKET {
+            let program_pids = parse_pat(pat_packet);
 
-    for pat_entry in program_pids.iter() {
-        // Now `pat_entry` is a reference to `PatEntry`
-        let program_number = pat_entry.program_number;
-        let _pmt_pid = pat_entry.pmt_pid;
+            for pat_entry in program_pids.iter() {
+                let program_number = pat_entry.program_number;
+                let stream_types = parse_pmt(pmt_packet, program_number);
 
-        // Parse PMT to get stream PIDs and their types
-        let stream_types = parse_pmt(pmt_packet, program_number); // Implement parse_pmt
-
-        for pmt_entry in stream_types.entries.iter() {
-            let stream_pid = pmt_entry.stream_pid;
-            let stream_type = pmt_entry.stream_type;
-            pid_map.insert(stream_pid, stream_type.to_string());
+                for pmt_entry in stream_types.entries.iter() {
+                    let stream_pid = pmt_entry.stream_pid;
+                    let stream_type = pmt_entry.stream_type;
+                    pid_map.insert(stream_pid, stream_type.to_string());
+                }
+            }
         }
     }
 }
@@ -509,23 +511,29 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
             mpeg_ts_packets.push(chunk.to_vec());
 
             // Extract the PID from the MPEG-TS header
-            let pid = ((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
+            let pid = extract_pid(chunk); //((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
 
             // Check for PAT packet
             if pid == PAT_PID {
+                log::info!("PAT packet detected with pid {}", pid);
                 let pat_entries = parse_pat(&packet);
                 unsafe {
                     // Assuming there's only one program for simplicity
                     PMT_PID = pat_entries.first().map_or(0xFFFF, |entry| entry.pmt_pid);
+                    log::info!("PMT PID: {}", PMT_PID);
+                    LAST_PAT_PACKET = Some(packet[start..start + PACKET_SIZE].to_vec());
                 }
             }
 
             // Check for PMT packet
             unsafe {
                 if pid == PMT_PID {
+                    log::info!("PMT packet detected with pid {}", pid);
                     let pmt = parse_pmt(&packet, PMT_PID);
                     // Update PID_MAP with new stream types
                     update_pid_map_from_pmt(pmt);
+
+                    update_pid_map_from_pat_pmt(&packet);
                 }
             }
 
@@ -553,23 +561,6 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
             // extract the timestamp from the MPEG-TS header
             let timestamp = ((chunk[4] as u64) << 25) | ((chunk[5] as u64) << 17) | ((chunk[6] as u64) << 9) | ((chunk[7] as u64) << 1) | ((chunk[8] as u64) >> 7);
 
-            /*
-            // extrace the interlaced status from the MPEG-TS header
-            let interlaced = chunk[8] & 0x40;
-
-            // extract the uhd status from the MPEG-TS header
-            let uhd = chunk[8] & 0x20;
-
-            // extract the 10-bit status from the MPEG-TS header
-            let ten_bit = chunk[8] & 0x10;
-
-            // extract the 422 status from the MPEG-TS header
-            let four_two_two = chunk[8] & 0x08;
-
-            // extract the 444 status from the MPEG-TS header
-            let four_four_four = chunk[8] & 0x04;
-            */
-
             // Construct JSON object with MPEG-TS header information
             let mpegts_header_info = json!({
                 "pid": pid,
@@ -581,11 +572,6 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
                 "transport_priority": transport_priority,
                 "transport_private_data": transport_private_data,
                 "timestamp": timestamp,
-                /*"interlaced": interlaced,
-                "uhd": uhd,
-                "ten_bit": ten_bit,
-                "four_two_two": four_two_two,
-                "four_four_four": four_four_four*/
             });
 
             // Print out the JSON structure
