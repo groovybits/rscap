@@ -28,6 +28,12 @@ const PAYLOAD_OFFSET: usize = 14 + 20 + 8; // Ethernet (14 bytes) + IP (20 bytes
 const PACKET_SIZE: usize = 188; // MPEG-TS packet size
 const READ_SIZE: i32 = (PACKET_SIZE as i32 * BATCH_SIZE as i32) + PAYLOAD_OFFSET as i32; // pcap read size
 
+// constant for PAT PID
+const PAT_PID: u16 = 0;
+
+// global variable to store PMT PID (initially set to an invalid PID)
+static mut PMT_PID: u16 = 0xFFFF;
+
 lazy_static! {
     static ref PID_MAP: Mutex<HashMap<u16, String>> = Mutex::new(HashMap::new());
 }
@@ -446,6 +452,29 @@ fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
     0 // Not MPEG-TS or SMPTE 2110
 }
 
+// Implement a function to extract PID from a packet
+fn extract_pid(packet: &[u8]) -> u16 {
+    // Extract PID from packet
+    // (You'll need to adjust the indices according to your packet format)
+    ((packet[1] as u16 & 0x1F) << 8) | packet[2] as u16
+}
+
+// Update the update_pid_map_from_pat_pmt function to handle PMT data
+fn update_pid_map_from_pmt(pmt: Pmt) {
+    let mut pid_map = PID_MAP.lock().unwrap();
+    for pmt_entry in pmt.entries.iter() {
+        let stream_pid = pmt_entry.stream_pid;
+        // Convert stream_type to a human-readable format
+        let stream_type = match pmt_entry.stream_type {
+            // Add cases for different stream types
+            0x02 => "MPEG Video",
+            // ... other types ...
+            _ => "Unknown",
+        };
+        pid_map.insert(stream_pid, stream_type.to_string());
+    }
+}
+
 // Process the packet and return a vector of SMPTE ST 2110 packets
 fn process_smpte2110_packet(packet: &[u8]) -> Vec<StreamData> {
     let mut smpte2110_packets = Vec::new();
@@ -481,6 +510,24 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
 
             // Extract the PID from the MPEG-TS header
             let pid = ((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
+
+            // Check for PAT packet
+            if pid == PAT_PID {
+                let pat_entries = parse_pat(&packet);
+                unsafe {
+                    // Assuming there's only one program for simplicity
+                    PMT_PID = pat_entries.first().map_or(0xFFFF, |entry| entry.pmt_pid);
+                }
+            }
+
+            // Check for PMT packet
+            unsafe {
+                if pid == PMT_PID {
+                    let pmt = parse_pmt(&packet, PMT_PID);
+                    // Update PID_MAP with new stream types
+                    update_pid_map_from_pmt(pmt);
+                }
+            }
 
             // Extract the continuity counter from the MPEG-TS header
             let continuity_counter = chunk[3] & 0x0F;
