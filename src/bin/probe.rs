@@ -164,7 +164,10 @@ fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
 fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
     let mut entries = Vec::new();
     let program_number = ((packet[8] as u16) << 8) | (packet[9] as u16);
-    let mut i = 17 + packet[15] as usize; // Starting index of the first stream in the PMT
+
+    // Calculate the starting position for stream entries
+    let program_info_length = (((packet[15] as usize) & 0x0F) << 8) | packet[16] as usize;
+    let mut i = 17 + program_info_length; // Starting index of the first stream in the PMT
 
     hexdump(&packet);
 
