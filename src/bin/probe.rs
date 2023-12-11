@@ -97,18 +97,48 @@ fn extract_pid(packet: &[u8]) -> u16 {
 }
 
 fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
-    // Skipping error checking and assuming payload starts at a fixed position
     let mut entries = Vec::new();
-    let mut i = 8; // Starting index of the first program in the PAT
+
+    // Check if Payload Unit Start Indicator (PUSI) is set
+    let pusi = (packet[1] & 0x40) != 0;
+    let adaptation_field_control = (packet[3] & 0x30) >> 4;
+    let mut pat_start = 4; // start after TS header
+    
+    if adaptation_field_control == 0x02 || adaptation_field_control == 0x03 {
+        let adaptation_field_length = packet[4] as usize;
+        pat_start += 1 + adaptation_field_length; // +1 for the length byte itself
+        debug!("ParsePAT: Adaptation Field Length: {}", adaptation_field_length);
+    } else {
+        debug!("ParsePAT: Skipping Adaptation Field Control: {}", adaptation_field_control);
+    }
+
+    if pusi {
+        // PUSI is set, so the first byte after the TS header is the pointer field
+        let pointer_field = packet[pat_start] as usize;
+        //pat_start += 1 + pointer_field; // Skip pointer field
+        debug!("ParsePAT: PUSI set as {}, skipping pointer field {} as packet value {} {}", pusi, pointer_field, packet[0], packet[1]);
+    } else {
+        debug!("ParsePAT: PUSI not set as {}", pusi);
+    }
+
+    debug!("ParsePAT: PAT start: {}", pat_start);
+
+    // Check for the presence of a pointer field
+    let pointer_field = packet[pat_start] as usize;
+    pat_start += 1 + pointer_field; // Move past the pointer field
+
+    let mut i = pat_start; // Starting index of the PAT data
 
     while i + 4 <= packet.len() {
         let program_number = ((packet[i] as u16) << 8) | (packet[i + 1] as u16);
+        // Mask the lower 13 bits for the PMT PID
         let pmt_pid = (((packet[i + 2] as u16) & 0x1F) << 8) | (packet[i + 3] as u16);
 
-        if program_number != 0 {
-            println!("ParsePAT: Program Number: {} PMT PID: {}", program_number, pmt_pid);
+        debug!("ParsePAT: Packet1 {}, Packet2 {}, Packet3 {}, Packet4 {}", packet[i], packet[i + 1], packet[i + 2], packet[i + 3]);
+
+        if program_number != 0 && program_number != 65535 {
+            info!("ParsePAT: Program Number: {} PMT PID: {}", program_number, pmt_pid);
             entries.push(PatEntry { program_number, pmt_pid });
-            //break; // Assuming there's only one program for simplicity
         }
 
         i += 4;
@@ -123,12 +153,12 @@ fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
     let mut entries = Vec::new();
     let mut i = 17 + packet[15] as usize; // Starting index of the first stream in the PMT
 
-    println!("ParsePMT: Program Number: {} PMT PID: {}", program_number, pmt_pid);
+    info!("ParsePMT: Program Number: {} PMT PID: {}", program_number, pmt_pid);
     while i + 5 <= packet.len() {
         let stream_type = packet[i];
         let stream_pid = (((packet[i + 1] as u16) & 0x1F) << 8) | (packet[i + 2] as u16);
         entries.push(PmtEntry { stream_pid, stream_type });
-        println!("ParsePMT: Stream PID: {}, Stream Type: {}", stream_pid, stream_type);
+        info!("ParsePMT: Stream PID: {}, Stream Type: {}", stream_pid, stream_type);
 
         i += 5 + ((packet[i + 3] as usize) << 8 | packet[i + 4] as usize);
     }
@@ -225,7 +255,7 @@ async fn main() {
     let devices = pcap::Device::list().unwrap();
     // List all devices and their flags
     for device in &devices {
-        println!("Device: {:?}, Flags: {:?}", device.name, device.flags);
+        info!("Device: {:?}, Flags: {:?}", device.name, device.flags);
     }
     #[cfg(target_os = "linux")]
     let mut target_device = devices.clone().into_iter()
@@ -237,7 +267,7 @@ async fn main() {
         .find(|d| d.flags.is_up() && !d.flags.is_loopback() && d.flags.is_running() && (!d.flags.is_wireless() || use_wireless))
         .expect(&format!("No valid devices found {}", devices.len()));
 
-    println!("Default device: {:?}", target_device.name);
+    info!("Default device: {:?}", target_device.name);
 
     // If source_device is auto, find the first valid device
     if source_device == "auto" || source_device == "" {
@@ -458,7 +488,7 @@ async fn main() {
                     }
                 }
                 let stats = cap.stats().unwrap();
-                println!(
+                debug!(
                     "Received: {}, dropped: {}, if_dropped: {}",
                     stats.received, stats.dropped, stats.if_dropped
                 );
@@ -520,8 +550,8 @@ fn process_smpte2110_packet(packet: &[u8]) -> Vec<StreamData> {
     let mut streams = Vec::new();
 
     for chunk in smpte2110_packets.iter() {
-        let pid = 1; //((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
-        let stream_type = "smpte2110".to_string(); // determine_stream_type(pid); // Implement this function based on PAT/PMT parsing
+        let pid = 1;
+        let stream_type = "smpte2110".to_string();
 
         // get current time
         match current_unix_timestamp_ms() {
@@ -529,7 +559,7 @@ fn process_smpte2110_packet(packet: &[u8]) -> Vec<StreamData> {
                 let stream_data = StreamData::new(chunk, pid, stream_type, timestamp, 1);
                 streams.push(stream_data);            
             },
-            Err(e) => eprintln!("Error: {}", e),
+            Err(e) => error!("Error: {}", e),
         }
     }
 
@@ -540,86 +570,50 @@ fn process_smpte2110_packet(packet: &[u8]) -> Vec<StreamData> {
 fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
     let mut mpeg_ts_packets = Vec::new();
     let mut start = PAYLOAD_OFFSET;
+    let mut read_size = PACKET_SIZE;
 
-    while start + PACKET_SIZE <= packet.len() {
-        let chunk = &packet[start..start + PACKET_SIZE];
+    while start + read_size <= packet.len() {
+        let chunk = &packet[start..start + read_size];
         if chunk[0] == 0x47 { // Check for MPEG-TS sync byte
             mpeg_ts_packets.push(chunk.to_vec());
-
-            // Extract the PID from the MPEG-TS header
-            let pid = extract_pid(chunk); //((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
-
-            // Extract the continuity counter from the MPEG-TS header
-            let continuity_counter = chunk[3] & 0x0F;
-
-            // Extract the adaptation field control from the MPEG-TS header
-            let adaptation_field_control = (chunk[3] & 0x30) >> 4;
-
-            // Extract the payload unit start indicator from the MPEG-TS header
-            let payload_unit_start_indicator = chunk[1] & 0x40;
-
-            // Extract the transport scrambling control from the MPEG-TS header
-            let transport_scrambling_control = (chunk[3] & 0xC0) >> 6;
-
-            // Extract the transport error indicator from the MPEG-TS header
-            let transport_error_indicator = chunk[1] & 0x80;
-
-            // Extract the transport priority from the MPEG-TS header
-            let transport_priority = chunk[2] & 0x20;
-
-            // Extract the transport private data from the MPEG-TS header
-            let transport_private_data = chunk[2] & 0x80;
-
-            // extract the timestamp from the MPEG-TS header
-            let timestamp = ((chunk[4] as u64) << 25) | ((chunk[5] as u64) << 17) | ((chunk[6] as u64) << 9) | ((chunk[7] as u64) << 1) | ((chunk[8] as u64) >> 7);
-
-            // Check for PAT packet
-            if pid == PAT_PID {
-                log::info!("PAT packet detected with pid {}", pid);
-                let pat_entries = parse_pat(chunk); // Use 'chunk' instead of 'packet'
-                unsafe {
-                    // Assuming there's only one program for simplicity
-                    PMT_PID = pat_entries.first().map_or(0xFFFF, |entry| entry.pmt_pid);
-                    log::info!("PMT PID: {}", PMT_PID);
-                    LAST_PAT_PACKET = Some(chunk.to_vec()); // Store the specific PAT chunk
-                }
-            }
-
-            // Check for PMT packet
-            unsafe {
-                if pid == PMT_PID {
-                    log::info!("PMT packet detected with pid {}", pid);
-                    // Update PID_MAP with new stream types
-                    update_pid_map(chunk);
-                }
-            }
-
-            // Construct JSON object with MPEG-TS header information
-            let mpegts_header_info = json!({
-                "pid": pid,
-                "continuity_counter": continuity_counter,
-                "adaptation_field_control": adaptation_field_control,
-                "payload_unit_start_indicator": payload_unit_start_indicator,
-                "transport_scrambling_control": transport_scrambling_control,
-                "transport_error_indicator": transport_error_indicator,
-                "transport_priority": transport_priority,
-                "transport_private_data": transport_private_data,
-                "timestamp": timestamp,
-            });
-
-            // Print out the JSON structure
-            debug!("MPEG-TS Header Info: {}", mpegts_header_info.to_string());
+            read_size = PACKET_SIZE; // reset read_size
         } else {
-            error!("Not MPEG-TS");
+            error!("ProcessPacket: Not MPEG-TS");
             hexdump(&packet);
+            read_size = 1; // Skip to the next byte
         }
-        start += PACKET_SIZE;
+        start += read_size;
     }
 
     let mut streams = Vec::new();
 
     for chunk in mpeg_ts_packets.iter() {
         let pid = ((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
+
+        // Check for PAT packet
+        if pid == PAT_PID {
+            log::info!("ProcessPacket: PAT packet detected with pid {}", pid);
+            let pat_entries = parse_pat(chunk); // Use 'chunk' instead of 'packet'
+            unsafe {
+                // Assuming there's only one program for simplicity
+                PMT_PID = pat_entries.first().map_or(0xFFFF, |entry| entry.pmt_pid);
+                log::info!("ProcessPacket: PMT PID: {}", PMT_PID);
+                LAST_PAT_PACKET = Some(chunk.to_vec()); // Store the specific PAT chunk
+            }
+        } else {
+            log::info!("ProcessPacket: PID: {}", pid);
+        }
+
+        // Check for PMT packet
+        unsafe {
+            // convert PMT_PID to u16
+            if pid == PMT_PID {
+                log::info!("ProcessPacket: PMT packet detected with pid {}/{}", pid, PMT_PID);
+                // Update PID_MAP with new stream types
+                update_pid_map(chunk);
+            }
+        }
+
         let stream_type = determine_stream_type(pid); // Implement this function based on PAT/PMT parsing
         let timestamp = ((chunk[4] as u64) << 25) | ((chunk[5] as u64) << 17) | ((chunk[6] as u64) << 9) | ((chunk[7] as u64) << 1) | ((chunk[8] as u64) >> 7);
         let continuity_counter = chunk[3] & 0x0F;
@@ -633,15 +627,19 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
 
 // Print a hexdump of the packet
 fn hexdump(packet: &[u8]) {
+    let pid = extract_pid(packet);
+    debug!("--------------------------------------------------");
     // print in rows of 16 bytes
-    println!("Packet length: {}", packet.len());
+    debug!("PacketDump: PID {} Packet length: {}", pid, packet.len());
+    let mut packet_dump = String::new();
     for (i, chunk) in packet.iter().take(packet.len()).enumerate() {
         if i % 16 == 0 {
-            print!("\n{:04x}: ", i);
+            packet_dump.push_str(&format!("\n{:04x}: ", i));
         }
-        print!("{:02x} ", chunk);
+        packet_dump.push_str(&format!("{:02x} ", chunk));
     }
-    println!("");
-    println!("--------------------------------------------------");
+    debug!("{}", packet_dump);
+    debug!("");
+    debug!("--------------------------------------------------");
 }
 
