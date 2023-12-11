@@ -108,7 +108,7 @@ fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
         if program_number != 0 {
             println!("ParsePAT: Program Number: {} PMT PID: {}", program_number, pmt_pid);
             entries.push(PatEntry { program_number, pmt_pid });
-            break; // Assuming there's only one program for simplicity
+            //break; // Assuming there's only one program for simplicity
         }
 
         i += 4;
