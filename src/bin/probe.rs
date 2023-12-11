@@ -136,7 +136,7 @@ fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
 
         debug!("ParsePAT: Packet1 {}, Packet2 {}, Packet3 {}, Packet4 {}", packet[i], packet[i + 1], packet[i + 2], packet[i + 3]);
 
-        if program_number != 0 && program_number != 65535 && pmt_pid != 0 {
+        if program_number != 0 && program_number != 65535 && pmt_pid != 0 && program_number < 30 /* FIXME: kludge fix for now */ {
             info!("ParsePAT: Program Number: {} PMT PID: {}", program_number, pmt_pid);
             entries.push(PatEntry { program_number, pmt_pid });
         }
