@@ -17,12 +17,127 @@ use std::env;
 use std::io::Write;
 use std::sync::mpsc;
 use std::thread;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use lazy_static::lazy_static;
+
 
 // Able to keep up with 1080p60 420/422 8/10-bit 20+ Mbps MPEG-TS stream (not long-term tested)
 const BATCH_SIZE: usize = 1000; // N MPEG-TS packets per batch
 const PAYLOAD_OFFSET: usize = 14 + 20 + 8; // Ethernet (14 bytes) + IP (20 bytes) + UDP (8 bytes)
 const PACKET_SIZE: usize = 188; // MPEG-TS packet size
 const READ_SIZE: i32 = (PACKET_SIZE as i32 * BATCH_SIZE as i32) + PAYLOAD_OFFSET as i32; // pcap read size
+
+lazy_static! {
+    static ref PID_MAP: Mutex<HashMap<u16, String>> = Mutex::new(HashMap::new());
+}
+
+struct PatEntry {
+    program_number: u16,
+    pmt_pid: u16,
+}
+
+struct PmtEntry {
+    stream_pid: u16,
+    stream_type: u8, // Stream type (e.g., 0x02 for MPEG video)
+}
+
+struct Pmt {
+    pmt_pid: u16,
+    program_number: u16,
+    entries: Vec<PmtEntry>,
+}
+
+// StreamData struct
+struct StreamData {
+    pid: u16,
+    stream_type: String, // "video", "audio", "text"
+    continuity_counter: u8,
+    timestamp: u64,
+    data: Vec<u8>, // The actual MPEG-TS packet data
+}
+
+// StreamData implementation
+impl StreamData {
+    fn new(packet: &[u8], pid: u16, stream_type: String) -> Self {
+        let continuity_counter = packet[3] & 0x0F;
+        let timestamp = ((packet[4] as u64) << 25) | ((packet[5] as u64) << 17) | ((packet[6] as u64) << 9) | ((packet[7] as u64) << 1) | ((packet[8] as u64) >> 7);
+        StreamData {
+            pid,
+            stream_type,
+            continuity_counter,
+            timestamp,
+            data: packet.to_vec(),
+        }
+    }
+}
+
+fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
+    // Skipping error checking and assuming payload starts at a fixed position
+    let mut entries = Vec::new();
+    let mut i = 8; // Starting index of the first program in the PAT
+
+    while i + 4 <= packet.len() {
+        let program_number = ((packet[i] as u16) << 8) | (packet[i + 1] as u16);
+        let pmt_pid = (((packet[i + 2] as u16) & 0x1F) << 8) | (packet[i + 3] as u16);
+
+        if program_number != 0 {
+            entries.push(PatEntry { program_number, pmt_pid });
+        }
+
+        i += 4;
+    }
+
+    entries
+}
+
+fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
+    // Skipping error checking and assuming payload starts at a fixed position
+    let program_number = ((packet[8] as u16) << 8) | (packet[9] as u16);
+    let mut entries = Vec::new();
+    let mut i = 17 + packet[15] as usize; // Starting index of the first stream in the PMT
+
+    while i + 5 <= packet.len() {
+        let stream_type = packet[i];
+        let stream_pid = (((packet[i + 1] as u16) & 0x1F) << 8) | (packet[i + 2] as u16);
+        entries.push(PmtEntry { stream_pid, stream_type });
+
+        i += 5 + ((packet[i + 3] as usize) << 8 | packet[i + 4] as usize);
+    }
+
+    Pmt {
+        pmt_pid,
+        program_number,
+        entries,
+    }
+}
+
+fn update_pid_map_from_pat_pmt(pat_packet: &[u8], pmt_packet: &[u8]) {
+    let mut pid_map = PID_MAP.lock().unwrap();
+
+    // Parse PAT to get program numbers and corresponding PMT PIDs
+    let program_pids = parse_pat(pat_packet); // Implement parse_pat to return a map
+
+    for pat_entry in program_pids.iter() {
+        // Now `pat_entry` is a reference to `PatEntry`
+        let program_number = pat_entry.program_number;
+        let pmt_pid = pat_entry.pmt_pid;
+
+        // Parse PMT to get stream PIDs and their types
+        let stream_types = parse_pmt(pmt_packet, program_number); // Implement parse_pmt
+
+        for pmt_entry in stream_types.entries.iter() {
+            let stream_pid = pmt_entry.stream_pid;
+            let stream_type = pmt_entry.stream_type;
+            pid_map.insert(stream_pid, stream_type.to_string());
+        }
+    }
+}
+
+fn determine_stream_type(pid: u16) -> String {
+    let pid_map = PID_MAP.lock().unwrap();
+    pid_map.get(&pid).cloned().unwrap_or_else(|| "unknown".to_string())
+}
 
 // MAIN
 #[tokio::main]
@@ -264,15 +379,16 @@ async fn main() {
                 };
 
                 // Process each chunk
-                for chunk in chunks {
+                for stream_data in chunks {
                     if debug_on {
-                        hexdump(&chunk);
+                        hexdump(&stream_data.data); // Use stream_data.data to access the raw packet data
                     }
 
                     // Check if chunk is MPEG-TS or SMPTE 2110
-                    let chunk_type = is_mpegts_or_smpte2110(&chunk);
+                    let chunk_type = is_mpegts_or_smpte2110(&stream_data.data);
+
                     if chunk_type == 1 || chunk_type == 2 {
-                        batch.push(chunk);
+                        batch.push(stream_data.data.clone());
                         if chunk_type == 2 {
                             debug!("SMPTE 2110 packet detected");
                             is_mpegts = false;
@@ -285,10 +401,15 @@ async fn main() {
                             batch.clear();
                         }
                     } else {
-                        hexdump(&chunk);
+                        hexdump(&stream_data.data);
                         error!("Not MPEG-TS or SMPTE 2110");
                     }
                 }
+                let stats = cap.stats().unwrap();
+                println!(
+                    "Received: {}, dropped: {}, if_dropped: {}",
+                    stats.received, stats.dropped, stats.if_dropped
+                );
             },
             Err(e) => {
                 error!("Error capturing packet: {:?}", e);
@@ -326,66 +447,30 @@ fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
 }
 
 // Process the packet and return a vector of SMPTE ST 2110 packets
-fn process_smpte2110_packet(packet: &[u8]) -> Vec<Vec<u8>> {
+fn process_smpte2110_packet(packet: &[u8]) -> Vec<StreamData> {
     let mut smpte2110_packets = Vec::new();
     let start = PAYLOAD_OFFSET;
 
     if packet.len() > start + 12 {
         if packet[start] == 0x80 || packet[start] == 0x81 {
             let rtp_packet = &packet[start..];
-            smpte2110_packets.push(rtp_packet.to_vec());
-
-            // Extract RTP header information
-            let sequence_number = u16::from_be_bytes([packet[start + 2], packet[start + 3]]);
-            let timestamp = u32::from_be_bytes([packet[start + 4], packet[start + 5], packet[start + 6], packet[start + 7]]);
-            let ssrc = u32::from_be_bytes([packet[start + 8], packet[start + 9], packet[start + 10], packet[start + 11]]);
-
-            // Extract the payload type from the RTP header
-            let payload_type = packet[start + 1] & 0x7F;
-
-            // Extract the marker bit from the RTP header
-            let marker_bit = (packet[start + 1] & 0x80) >> 7;
-
-            // Check if interlaced video
-            let interlaced = (packet[start + 12] & 0x80) >> 7;
-
-            // Check if UHD
-            let uhd = (packet[start + 12] & 0x40) >> 6;
-
-            // Check if 10-bit
-            let ten_bit = (packet[start + 12] & 0x20) >> 5;
-
-            // Check if 422
-            let four_two_two = (packet[start + 12] & 0x10) >> 4;
-
-            // Check if 444
-            let four_four_four = (packet[start + 12] & 0x08) >> 3;
-
-            // Construct JSON object with RTP header information
-            let rtp_header_info = json!({
-                "sequence_number": sequence_number,
-                "timestamp": timestamp,
-                "ssrc": ssrc,
-                "payload_type": payload_type,
-                "marker_bit": marker_bit,
-                "interlaced": interlaced,
-                "uhd": uhd,
-                "ten_bit": ten_bit,
-                "four_two_two": four_two_two,
-                "four_four_four": four_four_four
-            });
-
-            // Print out the JSON structure
-            debug!("RTP Header Info: {}", rtp_header_info.to_string());
+            // Create StreamData for each SMPTE 2110 packet
+            let stream_data = StreamData {
+                pid: 0, // Placeholder PID
+                stream_type: "smpte2110".to_string(), // Placeholder stream type
+                continuity_counter: 0, // Placeholder continuity counter
+                timestamp: 0, // Placeholder timestamp
+                data: rtp_packet.to_vec(),
+            };
+            smpte2110_packets.push(stream_data);
         }
     }
 
     smpte2110_packets
 }
 
-
 // Process the packet and return a vector of MPEG-TS packets
-fn process_mpegts_packet(packet: &[u8]) -> Vec<Vec<u8>> {
+fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
     let mut mpeg_ts_packets = Vec::new();
     let mut start = PAYLOAD_OFFSET;
 
@@ -462,7 +547,17 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<Vec<u8>> {
         start += PACKET_SIZE;
     }
 
-    mpeg_ts_packets
+    let mut streams = Vec::new();
+
+    for chunk in mpeg_ts_packets.iter() {
+        let pid = ((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
+        let stream_type = determine_stream_type(pid); // Implement this function based on PAT/PMT parsing
+
+        let stream_data = StreamData::new(chunk, pid, stream_type);
+        streams.push(stream_data);
+    }
+
+    streams
 }
 
 // Print a hexdump of the packet
