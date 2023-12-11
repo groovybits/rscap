@@ -158,6 +158,7 @@ async fn main() {
     let target_ip: String = env::var("TARGET_IP").unwrap_or("127.0.0.1".to_string());
     let source_device: String = env::var("SOURCE_DEVICE").unwrap_or("".to_string());
     let source_ip: String = env::var("SOURCE_IP").unwrap_or("224.0.0.200".to_string());
+    let source_protocol: String = env::var("SOURCE_PROTOCOL").unwrap_or("udp".to_string());
 
     let source_port: i32 = env::var("SOURCE_PORT").unwrap_or("10000".to_string()).parse().expect(&format!("Invalid format for SOURCE_PORT"));
     let source_device_ip: &str = "0.0.0.0";
@@ -304,7 +305,7 @@ async fn main() {
         .open().unwrap();
 
     // Filter pcap
-    let source_host_and_port = format!("udp dst port {} and ip dst host {}", source_port, source_ip);
+    let source_host_and_port = format!("{} dst port {} and ip dst host {}", source_protocol, source_port, source_ip);
     cap.filter(&source_host_and_port, true).unwrap();
 
     // Setup channel for passing data between threads
