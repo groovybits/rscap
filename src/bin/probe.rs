@@ -167,7 +167,9 @@ fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
     let mut entries = Vec::new();
     let mut i = 17 + packet[15] as usize; // Starting index of the first stream in the PMT
 
-    info!("ParsePMT: Program Number: {} PMT PID: {}", program_number, pmt_pid);
+    hexdump(&packet);
+
+    info!("ParsePMT: Program Number: {} PMT PID: {} starting at position {}", program_number, pmt_pid, i);
     while i + 5 <= packet.len() {
         let stream_type = packet[i];
         let stream_pid = (((packet[i + 1] as u16) & 0x1F) << 8) | (packet[i + 2] as u16);
