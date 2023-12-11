@@ -162,9 +162,8 @@ fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
 }
 
 fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
-    // Skipping error checking and assuming payload starts at a fixed position
-    let program_number = ((packet[8] as u16) << 8) | (packet[9] as u16);
     let mut entries = Vec::new();
+    let program_number = ((packet[8] as u16) << 8) | (packet[9] as u16);
     let mut i = 17 + packet[15] as usize; // Starting index of the first stream in the PMT
 
     hexdump(&packet);
@@ -172,16 +171,17 @@ fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
     info!("ParsePMT: Program Number: {} PMT PID: {} starting at position {}", program_number, pmt_pid, i);
     while i + 5 <= packet.len() {
         let stream_type = packet[i];
+        // Correctly masking the PID
         let stream_pid = (((packet[i + 1] as u16) & 0x1F) << 8) | (packet[i + 2] as u16);
         entries.push(PmtEntry { stream_pid, stream_type });
         info!("ParsePMT: Stream PID: {}, Stream Type: {}", stream_pid, stream_type);
 
-        i += 5 + ((packet[i + 3] as usize) << 8 | packet[i + 4] as usize);
+        // Moving past the stream info and its descriptors
+        let es_info_length = ((packet[i + 3] as usize) << 8) | (packet[i + 4] as usize);
+        i += 5 + es_info_length;
     }
 
-    Pmt {
-        entries,
-    }
+    Pmt { entries }
 }
 
 // Modify the function to use the stored PAT packet
