@@ -121,7 +121,7 @@ fn update_pid_map_from_pat_pmt(pat_packet: &[u8], pmt_packet: &[u8]) {
     for pat_entry in program_pids.iter() {
         // Now `pat_entry` is a reference to `PatEntry`
         let program_number = pat_entry.program_number;
-        let pmt_pid = pat_entry.pmt_pid;
+        let _pmt_pid = pat_entry.pmt_pid;
 
         // Parse PMT to get stream PIDs and their types
         let stream_types = parse_pmt(pmt_packet, program_number); // Implement parse_pmt
