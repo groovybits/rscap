@@ -495,6 +495,9 @@ fn process_smpte2110_packet(packet: &[u8]) -> Vec<StreamData> {
                 data: rtp_packet.to_vec(),
             };
             smpte2110_packets.push(stream_data);
+        } else {
+            error!("Not RTP");
+            hexdump(&packet);
         }
     }
 
