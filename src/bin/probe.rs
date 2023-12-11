@@ -101,8 +101,8 @@ fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
         let pmt_pid = (((packet[i + 2] as u16) & 0x1F) << 8) | (packet[i + 3] as u16);
 
         if program_number != 0 {
+            println!("ParsePAT: Program Number: {} PMT PID: {}", program_number, pmt_pid);
             entries.push(PatEntry { program_number, pmt_pid });
-            println!("PAT Entry: Program Number: {}, PMT PID: {}", program_number, pmt_pid);
         }
 
         i += 4;
@@ -117,10 +117,12 @@ fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
     let mut entries = Vec::new();
     let mut i = 17 + packet[15] as usize; // Starting index of the first stream in the PMT
 
+    println!("ParsePMT: Program Number: {} PMT PID: {}", program_number, pmt_pid);
     while i + 5 <= packet.len() {
         let stream_type = packet[i];
         let stream_pid = (((packet[i + 1] as u16) & 0x1F) << 8) | (packet[i + 2] as u16);
         entries.push(PmtEntry { stream_pid, stream_type });
+        println!("ParsePMT: Stream PID: {}, Stream Type: {}", stream_pid, stream_type);
 
         i += 5 + ((packet[i + 3] as usize) << 8 | packet[i + 4] as usize);
     }
@@ -142,11 +144,14 @@ fn update_pid_map_from_pat_pmt(pmt_packet: &[u8]) {
 
             for pat_entry in program_pids.iter() {
                 let program_number = pat_entry.program_number;
+                let pmt_pid = pat_entry.pmt_pid;
                 let stream_types = parse_pmt(pmt_packet, program_number);
 
+                info!("UpdatePIDmap: Program Number: {}", program_number);
                 for pmt_entry in stream_types.entries.iter() {
                     let stream_pid = pmt_entry.stream_pid;
                     let stream_type = pmt_entry.stream_type;
+                    info!("UpdatePIDmap: Program Number {}/{} PMT PID {}/{} Stream PID: {}, Stream Type: {}", program_number, stream_types.program_number, pmt_pid, stream_types.pmt_pid, stream_pid, stream_type);
                     pid_map.insert(stream_pid, stream_type.to_string());
                 }
             }
@@ -393,6 +398,18 @@ async fn main() {
                 if debug_on{
                     debug!("Received packet! {:?}", packet.header);
                 }
+
+                // Check if chunk is MPEG-TS or SMPTE 2110
+                let chunk_type = is_mpegts_or_smpte2110(&packet[PAYLOAD_OFFSET..]);
+                if chunk_type != 1 {
+                    debug!("Not MPEG-TS, type {}", chunk_type);
+                    if chunk_type == 0 {
+                        error!("Not MPEG-TS or SMPTE 2110");
+                        hexdump(&packet);
+                    }
+                    is_mpegts = false;
+                }
+
                 let chunks = if is_mpegts {
                     process_mpegts_packet(&packet)
                 } else {
@@ -408,25 +425,13 @@ async fn main() {
                     // print out the stream data parts outside of the .data
                     debug!("PID: {}, Stream Type: {}, Continuity Counter: {}, Timestamp: {}", stream_data.pid, stream_data.stream_type, stream_data.continuity_counter, stream_data.timestamp);
 
-                    // Check if chunk is MPEG-TS or SMPTE 2110
-                    let chunk_type = is_mpegts_or_smpte2110(&stream_data.data);
+                    batch.push(stream_data.data.clone());
 
-                    if chunk_type == 1 || chunk_type == 2 {
-                        batch.push(stream_data.data.clone());
-                        if chunk_type == 2 {
-                            debug!("SMPTE 2110 packet detected");
-                            is_mpegts = false;
-                        }
-
-                        // Check if batch is full
-                        if batch.len() >= BATCH_SIZE {
-                            // Send the batch to the channel
-                            tx.send(batch.clone()).unwrap();
-                            batch.clear();
-                        }
-                    } else {
-                        hexdump(&stream_data.data);
-                        error!("Not MPEG-TS or SMPTE 2110");
+                    // Check if batch is full
+                    if batch.len() >= BATCH_SIZE {
+                        // Send the batch to the channel
+                        tx.send(batch.clone()).unwrap();
+                        batch.clear();
                     }
                 }
                 let stats = cap.stats().unwrap();
@@ -484,12 +489,19 @@ fn update_pid_map_from_pmt(pmt: Pmt) {
         let stream_pid = pmt_entry.stream_pid;
         // Convert stream_type to a human-readable format
         let stream_type = match pmt_entry.stream_type {
-            // Add cases for different stream types
-            0x02 => "MPEG Video",
+            0x02 => "MPEG-2 Video",
+            0x03 => "MPEG-1 Audio",
+            0x04 => "MPEG-2 Audio",
+            0x0f => "AAC Audio",
+            0x1b => "H.264 Video",
+            0x24 => "HEVC Video",
+            0x80 => "Dolby Digital (AC-3) Audio",
+            0x81 => "Dolby Digital Plus (E-AC-3) Audio",
             // ... other types ...
             _ => "Unknown",
         };
         pid_map.insert(stream_pid, stream_type.to_string());
+        println!("Adding Stream PID: {}, Stream Type: {}", stream_pid, stream_type);
     }
 }
 
