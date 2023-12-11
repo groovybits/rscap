@@ -598,7 +598,7 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
 fn hexdump(packet: &[u8]) {
     // print in rows of 16 bytes
     println!("Packet length: {}", packet.len());
-    for (i, chunk) in packet.iter().take(PACKET_SIZE).enumerate() {
+    for (i, chunk) in packet.iter().take(packet.len()).enumerate() {
         if i % 16 == 0 {
             print!("\n{:04x}: ", i);
         }
