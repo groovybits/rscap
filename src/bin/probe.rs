@@ -96,6 +96,20 @@ fn extract_pid(packet: &[u8]) -> u16 {
     ((packet[1] as u16 & 0x1F) << 8) | packet[2] as u16
 }
 
+// Helper function to parse PAT and update global PAT packet storage
+fn parse_and_store_pat(packet: &[u8]) {
+    let pat_entries = parse_pat(packet);
+    unsafe {
+        // Store the specific PAT chunk for later use
+        LAST_PAT_PACKET = Some(packet.to_vec());
+    }
+
+    // Assuming there's only one program for simplicity, update PMT PID
+    if let Some(first_entry) = pat_entries.first() {
+        unsafe { PMT_PID = first_entry.pmt_pid };
+    }
+}
+
 fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
     let mut entries = Vec::new();
 
@@ -590,27 +604,21 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
     for chunk in mpeg_ts_packets.iter() {
         let pid = ((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
 
-        // Check for PAT packet
-        if pid == PAT_PID {
-            log::info!("ProcessPacket: PAT packet detected with pid {}", pid);
-            let pat_entries = parse_pat(chunk); // Use 'chunk' instead of 'packet'
-            unsafe {
-                // Assuming there's only one program for simplicity
-                PMT_PID = pat_entries.first().map_or(0xFFFF, |entry| entry.pmt_pid);
-                log::info!("ProcessPacket: PMT PID: {}", PMT_PID);
-                LAST_PAT_PACKET = Some(chunk.to_vec()); // Store the specific PAT chunk
+        // Handle PAT and PMT packets
+        match pid {
+            PAT_PID => {
+                log::info!("ProcessPacket: PAT packet detected with PID {}", pid);
+                parse_and_store_pat(chunk);
             }
-        } else {
-            log::info!("ProcessPacket: PID: {}", pid);
-        }
-
-        // Check for PMT packet
-        unsafe {
-            // convert PMT_PID to u16
-            if pid == PMT_PID {
-                log::info!("ProcessPacket: PMT packet detected with pid {}/{}", pid, PMT_PID);
-                // Update PID_MAP with new stream types
-                update_pid_map(chunk);
+            _ => {
+                // Check if this is a PMT packet
+                unsafe {
+                    if pid == PMT_PID {
+                        log::info!("ProcessPacket: PMT packet detected with PID {}", pid);
+                        // Update PID_MAP with new stream types
+                        update_pid_map(chunk);
+                    }
+                }
             }
         }
 
