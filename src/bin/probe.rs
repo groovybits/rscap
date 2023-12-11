@@ -52,8 +52,6 @@ struct PmtEntry {
 }
 
 struct Pmt {
-    pmt_pid: u16,
-    program_number: u16,
     entries: Vec<PmtEntry>,
 }
 
@@ -89,6 +87,13 @@ fn current_unix_timestamp_ms() -> Result<u64, String> {
         }
         Err(e) => Err(format!("System time is before the UNIX epoch: {}", e)),
     }
+}
+
+// Implement a function to extract PID from a packet
+fn extract_pid(packet: &[u8]) -> u16 {
+    // Extract PID from packet
+    // (You'll need to adjust the indices according to your packet format)
+    ((packet[1] as u16 & 0x1F) << 8) | packet[2] as u16
 }
 
 fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
@@ -129,33 +134,50 @@ fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
     }
 
     Pmt {
-        pmt_pid,
-        program_number,
         entries,
     }
 }
 
 // Modify the function to use the stored PAT packet
-fn update_pid_map_from_pat_pmt(pmt_packet: &[u8]) {
+fn update_pid_map(pmt_packet: &[u8]) {
     let mut pid_map = PID_MAP.lock().unwrap();
 
-    unsafe {
-        if let Some(pat_packet) = &LAST_PAT_PACKET {
-            let program_pids = parse_pat(pat_packet);
+    // Process the stored PAT packet to find program numbers and corresponding PMT PIDs
+    let program_pids = unsafe {
+        LAST_PAT_PACKET.as_ref().map_or_else(Vec::new, |pat_packet| parse_pat(pat_packet))
+    };
 
-            for pat_entry in program_pids.iter() {
-                let program_number = pat_entry.program_number;
-                let pmt_pid = pat_entry.pmt_pid;
-                let stream_types = parse_pmt(pmt_packet, program_number);
+    for pat_entry in program_pids.iter() {
+        let program_number = pat_entry.program_number;
+        let pmt_pid = pat_entry.pmt_pid;
 
-                info!("UpdatePIDmap: Program Number: {}", program_number);
-                for pmt_entry in stream_types.entries.iter() {
-                    let stream_pid = pmt_entry.stream_pid;
-                    let stream_type = pmt_entry.stream_type;
-                    info!("UpdatePIDmap: Program Number {}/{} PMT PID {}/{} Stream PID: {}, Stream Type: {}", program_number, stream_types.program_number, pmt_pid, stream_types.pmt_pid, stream_pid, stream_type);
-                    pid_map.insert(stream_pid, stream_type.to_string());
-                }
+        // Log for debugging
+        info!("UpdatePIDmap: Processing Program Number: {}, PMT PID: {}", program_number, pmt_pid);
+
+        // Ensure the current PMT packet matches the PMT PID from the PAT
+        if extract_pid(pmt_packet) == pmt_pid {
+            let pmt = parse_pmt(pmt_packet, program_number);
+
+            for pmt_entry in pmt.entries.iter() {
+                let stream_pid = pmt_entry.stream_pid;
+                let stream_type = match pmt_entry.stream_type {
+                    0x02 => "MPEG-2 Video",
+                    0x03 => "MPEG-1 Audio",
+                    0x04 => "MPEG-2 Audio",
+                    0x0f => "AAC Audio",
+                    0x1b => "H.264 Video",
+                    0x24 => "HEVC Video",
+                    0x80 => "Dolby Digital (AC-3) Audio",
+                    0x81 => "Dolby Digital Plus (E-AC-3) Audio",
+                    // ... other types ...
+                    _ => "Unknown",
+                };
+
+                info!("UpdatePIDmap: Added Stream PID: {}, Stream Type: {}", stream_pid, stream_type);
+                pid_map.insert(stream_pid, stream_type.to_string());
             }
+        } else {
+            info!("UpdatePIDmap: Skipping PMT PID: {} as it does not match with current PMT packet PID", pmt_pid);
         }
     }
 }
@@ -476,36 +498,6 @@ fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
     0 // Not MPEG-TS or SMPTE 2110
 }
 
-// Implement a function to extract PID from a packet
-fn extract_pid(packet: &[u8]) -> u16 {
-    // Extract PID from packet
-    // (You'll need to adjust the indices according to your packet format)
-    ((packet[1] as u16 & 0x1F) << 8) | packet[2] as u16
-}
-
-// Update the update_pid_map_from_pat_pmt function to handle PMT data
-fn update_pid_map_from_pmt(pmt: Pmt) {
-    let mut pid_map = PID_MAP.lock().unwrap();
-    for pmt_entry in pmt.entries.iter() {
-        let stream_pid = pmt_entry.stream_pid;
-        // Convert stream_type to a human-readable format
-        let stream_type = match pmt_entry.stream_type {
-            0x02 => "MPEG-2 Video",
-            0x03 => "MPEG-1 Audio",
-            0x04 => "MPEG-2 Audio",
-            0x0f => "AAC Audio",
-            0x1b => "H.264 Video",
-            0x24 => "HEVC Video",
-            0x80 => "Dolby Digital (AC-3) Audio",
-            0x81 => "Dolby Digital Plus (E-AC-3) Audio",
-            // ... other types ...
-            _ => "Unknown",
-        };
-        pid_map.insert(stream_pid, stream_type.to_string());
-        println!("Adding Stream PID: {}, Stream Type: {}", stream_pid, stream_type);
-    }
-}
-
 // Process the packet and return a vector of SMPTE ST 2110 packets
 fn process_smpte2110_packet(packet: &[u8]) -> Vec<StreamData> {
     let mut smpte2110_packets = Vec::new();
@@ -597,9 +589,8 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
             unsafe {
                 if pid == PMT_PID {
                     log::info!("PMT packet detected with pid {}", pid);
-                    let pmt = parse_pmt(chunk, PMT_PID); // Use 'chunk' instead of 'packet'
                     // Update PID_MAP with new stream types
-                    update_pid_map_from_pmt(pmt);
+                    update_pid_map(chunk);
                 }
             }
 
