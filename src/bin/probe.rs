@@ -20,6 +20,7 @@ use std::thread;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use lazy_static::lazy_static;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 
 // Able to keep up with 1080p60 420/422 8/10-bit 20+ Mbps MPEG-TS stream (not long-term tested)
@@ -67,9 +68,7 @@ struct StreamData {
 
 // StreamData implementation
 impl StreamData {
-    fn new(packet: &[u8], pid: u16, stream_type: String) -> Self {
-        let continuity_counter = packet[3] & 0x0F;
-        let timestamp = ((packet[4] as u64) << 25) | ((packet[5] as u64) << 17) | ((packet[6] as u64) << 9) | ((packet[7] as u64) << 1) | ((packet[8] as u64) >> 7);
+    fn new(packet: &[u8], pid: u16, stream_type: String, timestamp: u64, continuity_counter: u8) -> Self {        
         StreamData {
             pid,
             stream_type,
@@ -77,6 +76,18 @@ impl StreamData {
             timestamp,
             data: packet.to_vec(),
         }
+    }
+}
+
+// Function to get the current Unix timestamp in milliseconds
+fn current_unix_timestamp_ms() -> Result<u64, String> {
+    let now = SystemTime::now();
+    match now.duration_since(UNIX_EPOCH) {
+        Ok(duration) => {
+            let milliseconds = duration.as_secs() * 1000 + u64::from(duration.subsec_millis());
+            Ok(milliseconds)
+        }
+        Err(e) => Err(format!("System time is before the UNIX epoch: {}", e)),
     }
 }
 
@@ -91,6 +102,7 @@ fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
 
         if program_number != 0 {
             entries.push(PatEntry { program_number, pmt_pid });
+            println!("PAT Entry: Program Number: {}, PMT PID: {}", program_number, pmt_pid);
         }
 
         i += 4;
@@ -393,6 +405,9 @@ async fn main() {
                         hexdump(&stream_data.data); // Use stream_data.data to access the raw packet data
                     }
 
+                    // print out the stream data parts outside of the .data
+                    debug!("PID: {}, Stream Type: {}, Continuity Counter: {}, Timestamp: {}", stream_data.pid, stream_data.stream_type, stream_data.continuity_counter, stream_data.timestamp);
+
                     // Check if chunk is MPEG-TS or SMPTE 2110
                     let chunk_type = is_mpegts_or_smpte2110(&stream_data.data);
 
@@ -486,22 +501,34 @@ fn process_smpte2110_packet(packet: &[u8]) -> Vec<StreamData> {
     if packet.len() > start + 12 {
         if packet[start] == 0x80 || packet[start] == 0x81 {
             let rtp_packet = &packet[start..];
-            // Create StreamData for each SMPTE 2110 packet
-            let stream_data = StreamData {
-                pid: 0, // Placeholder PID
-                stream_type: "smpte2110".to_string(), // Placeholder stream type
-                continuity_counter: 0, // Placeholder continuity counter
-                timestamp: 0, // Placeholder timestamp
-                data: rtp_packet.to_vec(),
-            };
-            smpte2110_packets.push(stream_data);
+            let smpte_header_info = json!({
+                "size": rtp_packet.len(),
+            });
+            smpte2110_packets.push(rtp_packet.to_vec());
+            debug!("SMPTE ST 2110 Header Info: {}", smpte_header_info.to_string());
         } else {
             error!("Not RTP");
             hexdump(&packet);
         }
     }
 
-    smpte2110_packets
+    let mut streams = Vec::new();
+
+    for chunk in smpte2110_packets.iter() {
+        let pid = 1; //((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
+        let stream_type = "smpte2110".to_string(); // determine_stream_type(pid); // Implement this function based on PAT/PMT parsing
+
+        // get current time
+        match current_unix_timestamp_ms() {
+            Ok(timestamp) => {
+                let stream_data = StreamData::new(chunk, pid, stream_type, timestamp, 1);
+                streams.push(stream_data);            
+            },
+            Err(e) => eprintln!("Error: {}", e),
+        }
+    }
+
+    streams
 }
 
 // Process the packet and return a vector of MPEG-TS packets
@@ -580,6 +607,9 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
 
             // Print out the JSON structure
             debug!("MPEG-TS Header Info: {}", mpegts_header_info.to_string());
+        } else {
+            error!("Not MPEG-TS");
+            hexdump(&packet);
         }
         start += PACKET_SIZE;
     }
@@ -589,8 +619,10 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
     for chunk in mpeg_ts_packets.iter() {
         let pid = ((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
         let stream_type = determine_stream_type(pid); // Implement this function based on PAT/PMT parsing
+        let timestamp = ((chunk[4] as u64) << 25) | ((chunk[5] as u64) << 17) | ((chunk[6] as u64) << 9) | ((chunk[7] as u64) << 1) | ((chunk[8] as u64) >> 7);
+        let continuity_counter = chunk[3] & 0x0F;
 
-        let stream_data = StreamData::new(chunk, pid, stream_type);
+        let stream_data = StreamData::new(chunk, pid, stream_type, timestamp, continuity_counter);
         streams.push(stream_data);
     }
 
