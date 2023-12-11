@@ -103,6 +103,7 @@ fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
         if program_number != 0 {
             println!("ParsePAT: Program Number: {} PMT PID: {}", program_number, pmt_pid);
             entries.push(PatEntry { program_number, pmt_pid });
+            break; // Assuming there's only one program for simplicity
         }
 
         i += 4;
@@ -556,30 +557,6 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
             // Extract the PID from the MPEG-TS header
             let pid = extract_pid(chunk); //((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
 
-            // Check for PAT packet
-            if pid == PAT_PID {
-                log::info!("PAT packet detected with pid {}", pid);
-                let pat_entries = parse_pat(&packet);
-                unsafe {
-                    // Assuming there's only one program for simplicity
-                    PMT_PID = pat_entries.first().map_or(0xFFFF, |entry| entry.pmt_pid);
-                    log::info!("PMT PID: {}", PMT_PID);
-                    LAST_PAT_PACKET = Some(packet[start..start + PACKET_SIZE].to_vec());
-                }
-            }
-
-            // Check for PMT packet
-            unsafe {
-                if pid == PMT_PID {
-                    log::info!("PMT packet detected with pid {}", pid);
-                    let pmt = parse_pmt(&packet, PMT_PID);
-                    // Update PID_MAP with new stream types
-                    update_pid_map_from_pmt(pmt);
-
-                    update_pid_map_from_pat_pmt(&packet);
-                }
-            }
-
             // Extract the continuity counter from the MPEG-TS header
             let continuity_counter = chunk[3] & 0x0F;
 
@@ -603,6 +580,28 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
 
             // extract the timestamp from the MPEG-TS header
             let timestamp = ((chunk[4] as u64) << 25) | ((chunk[5] as u64) << 17) | ((chunk[6] as u64) << 9) | ((chunk[7] as u64) << 1) | ((chunk[8] as u64) >> 7);
+
+            // Check for PAT packet
+            if pid == PAT_PID {
+                log::info!("PAT packet detected with pid {}", pid);
+                let pat_entries = parse_pat(chunk); // Use 'chunk' instead of 'packet'
+                unsafe {
+                    // Assuming there's only one program for simplicity
+                    PMT_PID = pat_entries.first().map_or(0xFFFF, |entry| entry.pmt_pid);
+                    log::info!("PMT PID: {}", PMT_PID);
+                    LAST_PAT_PACKET = Some(chunk.to_vec()); // Store the specific PAT chunk
+                }
+            }
+
+            // Check for PMT packet
+            unsafe {
+                if pid == PMT_PID {
+                    log::info!("PMT packet detected with pid {}", pid);
+                    let pmt = parse_pmt(chunk, PMT_PID); // Use 'chunk' instead of 'packet'
+                    // Update PID_MAP with new stream types
+                    update_pid_map_from_pmt(pmt);
+                }
+            }
 
             // Construct JSON object with MPEG-TS header information
             let mpegts_header_info = json!({
