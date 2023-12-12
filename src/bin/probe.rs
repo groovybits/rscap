@@ -148,7 +148,7 @@ fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
         // Mask the lower 13 bits for the PMT PID
         let pmt_pid = (((packet[i + 2] as u16) & 0x1F) << 8) | (packet[i + 3] as u16);
 
-        debug!("ParsePAT: Packet1 {}, Packet2 {}, Packet3 {}, Packet4 {}", packet[i], packet[i + 1], packet[i + 2], packet[i + 3]);
+        //debug!("ParsePAT: Packet1 {}, Packet2 {}, Packet3 {}, Packet4 {}", packet[i], packet[i + 1], packet[i + 2], packet[i + 3]);
 
         if program_number != 0 && program_number != 65535 && pmt_pid != 0 && program_number < 30 /* FIXME: kludge fix for now */ {
             info!("ParsePAT: Program Number: {} PMT PID: {}", program_number, pmt_pid);
@@ -214,6 +214,7 @@ fn update_pid_map(pmt_packet: &[u8]) {
                     0x03 => "MPEG-1 Audio",
                     0x04 => "MPEG-2 Audio",
                     0x0f => "AAC Audio",
+                    0x19 => "AC-3 Audio",
                     0x1b => "H.264 Video",
                     0x24 => "HEVC Video",
                     0x80 => "Dolby Digital (AC-3) Audio",
