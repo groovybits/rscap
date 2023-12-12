@@ -8,6 +8,8 @@
  */
 
 extern crate zmq;
+extern crate rtp_rs as rtp;
+use rtp::RtpReader;
 use pcap::{Capture};
 use serde_json::json;
 use log::{error, debug, info};
@@ -350,7 +352,7 @@ async fn main() {
     dotenv::dotenv().ok(); // read .env file
 
     // setup various read/write variables
-    let batch_size: usize = env::var("BATCH_SIZE").unwrap_or("1000".to_string()).parse().expect(&format!("Invalid format for BATCH_SIZE"));
+    let mut batch_size: usize = env::var("BATCH_SIZE").unwrap_or("1000".to_string()).parse().expect(&format!("Invalid format for BATCH_SIZE"));
     let payload_offset: usize = env::var("PAYLOAD_OFFSET").unwrap_or("42".to_string()).parse().expect(&format!("Invalid format for PAYLOAD_OFFSET"));
     let packet_size: usize = env::var("PACKET_SIZE").unwrap_or("188".to_string()).parse().expect(&format!("Invalid format for PACKET_SIZE"));
     let read_time_out: i32 = env::var("READ_TIME_OUT").unwrap_or("300000".to_string()).parse().expect(&format!("Invalid format for READ_TIME_OUT"));
@@ -607,6 +609,10 @@ async fn main() {
                     process_smpte2110_packet(payload_offset, &packet, packet_size)
                 };
 
+                if is_mpegts {
+                    batch_size = 1; // Set batch size to 1 for SMPTE 2110
+                }
+
                 // Process each chunk
                 for stream_data in chunks {
                     if debug_on {
@@ -691,38 +697,54 @@ fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
 
 // Process the packet and return a vector of SMPTE ST 2110 packets
 fn process_smpte2110_packet(payload_offset: usize, packet: &[u8], _packet_size: usize) -> Vec<StreamData> {
-    let mut smpte2110_packets = Vec::new();
     let start = payload_offset;
-    //let mut read_size = packet_size; // TODO: Adjust this for SMPTE ST 2110
+    let mut streams = Vec::new();
 
     if packet.len() > start + 12 {
         if packet[start] == 0x80 || packet[start] == 0x81 {
             let rtp_packet = &packet[start..];
-            let smpte_header_info = json!({
-                "size": rtp_packet.len(),
-            });
-            smpte2110_packets.push(rtp_packet.to_vec());
-            debug!("SMPTE ST 2110 Header Info: {}", smpte_header_info.to_string());
-        } else {
-            error!("Not RTP");
-            hexdump(&packet);
-        }
-    }
 
-    let mut streams = Vec::new();
+            // Create an RtpReader
+            if let Ok(rtp) = RtpReader::new(rtp_packet) {
+                // Extract the sequence number
+                let _sequence_number = rtp.sequence_number();
+        
+                // Extract the timestamp
+                let timestamp = rtp.timestamp();
 
-    for chunk in smpte2110_packets.iter() {
-        let pid = 1;
-        let stream_type = "smpte2110".to_string();
+                // size of packet
+                let chunk_size = rtp.payload().len();
 
-        // get current time
-        match current_unix_timestamp_ms() {
-            Ok(timestamp) => {
-                let stream_data = StreamData::new(chunk, pid, stream_type, timestamp, 1);
+                let payload_type = rtp.payload_type();
+        
+                let smpte_header_info = json!({
+                    "size": chunk_size,
+                    //"sequence_number": sequence_number as u64,
+                    "timestamp": timestamp,
+                    "payload_type": payload_type,
+                });
+
+                let pid = 1; /* FIXME */
+                let stream_type = "smpte2110".to_string();
+                let mut stream_data = StreamData::new(rtp_packet, pid, stream_type, timestamp as u64, 0 /* fix me */);
+                // update streams details in stream_data structure
+                stream_data.update_stats(chunk_size, current_unix_timestamp_ms().unwrap_or(0));
+
                 streams.push(stream_data);            
-            },
-            Err(e) => error!("Error: {}", e),
+
+                //smpte2110_packets.push(rtp_packet.to_vec());
+                debug!("SMPTE ST 2110 Header Info: {}", smpte_header_info.to_string());
+            } else {
+                hexdump(&packet);
+                error!("Error parsing RTP header, not SMPTE ST 2110");
+            }
+        } else {
+            hexdump(&packet);
+            error!("No RTP header detected, not SMPTE ST 2110");
         }
+    } else {
+        hexdump(&packet);
+        error!("Packet too small, not SMPTE ST 2110");
     }
 
     streams

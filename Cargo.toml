@@ -23,3 +23,4 @@ env_logger = "0.9"
 tokio = { version = "1", features = ["full"] }
 dotenv = "0.15"
 lazy_static = "1.4.0"
+rtp-rs = "0.6.0"
