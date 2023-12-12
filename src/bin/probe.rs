@@ -788,7 +788,7 @@ fn process_smpte2110_packet(payload_offset: usize, packet: &[u8], _packet_size: 
 
                 let pid = 1; /* FIXME */
                 let stream_type = "smpte2110".to_string();
-                let mut stream_data = StreamData::new(rtp_packet, pid, stream_type, start_time, timestamp as u64, 0 /* fix me */);
+                let mut stream_data = StreamData::new(payload, pid, stream_type, start_time, timestamp as u64, 0 /* fix me */);
                 // update streams details in stream_data structure
                 stream_data.update_stats(chunk_size, current_unix_timestamp_ms().unwrap_or(0));
 
