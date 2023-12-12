@@ -614,7 +614,7 @@ async fn main() {
                     process_smpte2110_packet(payload_offset, &packet, packet_size, start_time)
                 };
 
-                if is_mpegts {
+                if !is_mpegts {
                     batch_size = 1; // Set batch size to 1 for SMPTE 2110
                 }
 
@@ -689,6 +689,63 @@ fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
     0 // Not MPEG-TS or SMPTE 2110
 }
 
+// ## RFC 4175 SMPTE2110 header functions ##
+const RFC_4175_EXT_SEQ_NUM_LEN: usize = 2;
+const RFC_4175_HEADER_LEN: usize = 6; // Note: extended sequence number not included
+
+fn set_extended_sequence_number(buf: &mut [u8], number: u16) {
+    buf[0] = (number >> 8) as u8;
+    buf[1] = number as u8;
+}
+
+fn get_extended_sequence_number(buf: &[u8]) -> u16 {
+    ((buf[0] as u16) << 8) | buf[1] as u16
+}
+
+fn set_line_length(buf: &mut [u8], length: u16) {
+    buf[0] = (length >> 8) as u8;
+    buf[1] = length as u8;
+}
+
+fn get_line_length(buf: &[u8]) -> u16 {
+    ((buf[0] as u16) << 8) | buf[1] as u16
+}
+
+fn set_line_field_id(buf: &mut [u8], id: u8) {
+    buf[2] |= ((id != 0) as u8) << 7;
+}
+
+fn get_line_field_id(buf: &[u8]) -> u8 {
+    buf[2] >> 7
+}
+
+fn set_line_number(buf: &mut [u8], number: u16) {
+    buf[2] |= (number >> 8) as u8 & 0x7f;
+    buf[3] = number as u8;
+}
+
+fn get_line_number(buf: &[u8]) -> u16 {
+    ((buf[2] as u16 & 0x7f) << 8) | buf[3] as u16
+}
+
+fn set_line_continuation(buf: &mut [u8], continuation: u8) {
+    buf[4] |= ((continuation != 0) as u8) << 7;
+}
+
+fn get_line_continuation(buf: &[u8]) -> u8 {
+    buf[4] >> 7
+}
+
+fn set_line_offset(buf: &mut [u8], offset: u16) {
+    buf[4] |= (offset >> 8) as u8 & 0x7f;
+    buf[5] = offset as u8;
+}
+
+fn get_line_offset(buf: &[u8]) -> u16 {
+    ((buf[4] as u16 & 0x7f) << 8) | buf[5] as u16
+}
+// ## End of RFC 4175 SMPTE2110 header functions ##
+
 // Process the packet and return a vector of SMPTE ST 2110 packets
 fn process_smpte2110_packet(payload_offset: usize, packet: &[u8], _packet_size: usize, start_time: u64) -> Vec<StreamData> {
     let start = payload_offset;
@@ -710,17 +767,30 @@ fn process_smpte2110_packet(payload_offset: usize, packet: &[u8], _packet_size: 
                 let chunk_size = rtp.payload().len();
 
                 let payload_type = rtp.payload_type();
+
+                let payload_offset = rtp.payload_offset();
+
+                let payload = rtp.payload();
+               
+                let line_length = get_line_length(rtp_packet);
+                let line_number = get_line_number(rtp_packet);
+                let line_offset = get_line_offset(rtp_packet);
+                let field_id = get_line_field_id(rtp_packet);
         
                 let smpte_header_info = json!({
                     "size": chunk_size,
                     //"sequence_number": sequence_number as u64,
                     "timestamp": timestamp,
                     "payload_type": payload_type,
+                    "line_length": line_length,
+                    "line_number": line_number,
+                    "line_offset": line_offset,
+                    "field_id": field_id,
                 });
 
                 let pid = 1; /* FIXME */
                 let stream_type = "smpte2110".to_string();
-                let mut stream_data = StreamData::new(rtp_packet, pid, stream_type, start_time, timestamp as u64, 0 /* fix me */);
+                let mut stream_data = StreamData::new(&rtp_packet[payload_offset..], pid, stream_type, start_time, timestamp as u64, 0 /* fix me */);
                 // update streams details in stream_data structure
                 stream_data.update_stats(chunk_size, current_unix_timestamp_ms().unwrap_or(0));
 
