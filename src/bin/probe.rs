@@ -8,6 +8,8 @@
  */
 
 extern crate zmq;
+extern crate rtp_rs as rtp;
+use rtp::RtpReader;
 use pcap::{Capture};
 use serde_json::json;
 use log::{error, debug, info};
@@ -21,13 +23,6 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use lazy_static::lazy_static;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-
-// Able to keep up with 1080p60 420/422 8/10-bit 20+ Mbps MPEG-TS stream (not long-term tested)
-const BATCH_SIZE: usize = 1000; // N MPEG-TS packets per batch
-const PAYLOAD_OFFSET: usize = 14 + 20 + 8; // Ethernet (14 bytes) + IP (20 bytes) + UDP (8 bytes)
-const PACKET_SIZE: usize = 188; // MPEG-TS packet size
-const READ_SIZE: i32 = (PACKET_SIZE as i32 * BATCH_SIZE as i32) + PAYLOAD_OFFSET as i32; // pcap read size
 
 // constant for PAT PID
 const PAT_PID: u16 = 0;
@@ -73,7 +68,7 @@ struct StreamData {
 
 // StreamData implementation
 impl StreamData {
-    fn new(packet: &[u8], pid: u16, stream_type: String, timestamp: u64, continuity_counter: u8) -> Self {      
+    fn new(packet: &[u8], pid: u16, stream_type: String, start_time: u64, timestamp: u64, continuity_counter: u8) -> Self {      
         let bitrate = 0;
         let iat = 0;
         let error_count = 0;
@@ -87,7 +82,7 @@ impl StreamData {
             iat,
             error_count,
             last_arrival_time,
-            start_time: timestamp,         // Initialize start time
+            start_time,         // Initialize start time
             total_bits: 0,                 // Initialize total bits
             data: packet.to_vec(),
         }
@@ -161,36 +156,6 @@ fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors) {
 // Invoke this function for each MPEG-TS packet
 fn process_packet(packet: &[u8], errors: &mut Tr101290Errors) {
     tr101290_p1_check(packet, errors);
-
-    let pid = extract_pid(packet);
-    let arrival_time = current_unix_timestamp_ms().unwrap_or(0);
-
-    // Use a scope to limit the duration of the lock
-    /*{
-        let mut pid_map = PID_MAP.lock().unwrap();
-
-        // Check if the PID map already has an entry for this PID
-        match pid_map.get_mut(&pid) {
-            Some(stream_data) => {
-                // Existing StreamData instance found, update it
-                stream_data.update_stats(packet.len(), arrival_time);
-            },
-            None => {
-                // New StreamData instance needs to be created
-                let stream_type = determine_stream_type(pid); // Determine stream type
-                let new_stream_data = StreamData::new(packet, pid, stream_type, arrival_time, 0);
-                pid_map.insert(pid, new_stream_data);
-            }
-        }
-    }*/
-
-    // Log outside of the lock scope
-    /*let pid_map = PID_MAP.lock().unwrap();
-    if let Some(stream_data) = pid_map.get(&pid) {
-        info!("PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms", 
-            stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.iat, 
-            stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp);
-    }*/
 }
 
 // Function to get the current Unix timestamp in milliseconds
@@ -267,7 +232,7 @@ fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
         //debug!("ParsePAT: Packet1 {}, Packet2 {}, Packet3 {}, Packet4 {}", packet[i], packet[i + 1], packet[i + 2], packet[i + 3]);
 
         if program_number != 0 && program_number != 65535 && pmt_pid != 0 && program_number < 30 /* FIXME: kludge fix for now */ {
-            info!("ParsePAT: Program Number: {} PMT PID: {}", program_number, pmt_pid);
+            debug!("ParsePAT: Program Number: {} PMT PID: {}", program_number, pmt_pid);
             entries.push(PatEntry { program_number, pmt_pid });
         }
 
@@ -363,8 +328,10 @@ fn update_pid_map(pmt_packet: &[u8]) {
                     _ => "User Private",
                 };
 
-                info!("UpdatePIDmap: Added Stream PID: {}, Stream Type: {}/{}", stream_pid, pmt_entry.stream_type, stream_type);
-                let stream_data = StreamData::new(&[], stream_pid, stream_type.to_string(), 0, 0);
+                let timestamp = current_unix_timestamp_ms().unwrap_or(0);
+
+                debug!("UpdatePIDmap: Added Stream PID: {}, Stream Type: {}/{}", stream_pid, pmt_entry.stream_type, stream_type);
+                let stream_data = StreamData::new(&[], stream_pid, stream_type.to_string(), timestamp, timestamp, 0);
                 pid_map.insert(stream_pid, stream_data);
             }
         } else {
@@ -385,6 +352,15 @@ fn determine_stream_type(pid: u16) -> String {
 async fn main() {
     info!("Starting rscap probe");
     dotenv::dotenv().ok(); // read .env file
+
+    // setup various read/write variables
+    let mut batch_size: usize = env::var("BATCH_SIZE").unwrap_or("1000".to_string()).parse().expect(&format!("Invalid format for BATCH_SIZE"));
+    let payload_offset: usize = env::var("PAYLOAD_OFFSET").unwrap_or("42".to_string()).parse().expect(&format!("Invalid format for PAYLOAD_OFFSET"));
+    let packet_size: usize = env::var("PACKET_SIZE").unwrap_or("188".to_string()).parse().expect(&format!("Invalid format for PACKET_SIZE"));
+    let read_time_out: i32 = env::var("READ_TIME_OUT").unwrap_or("300000".to_string()).parse().expect(&format!("Invalid format for READ_TIME_OUT"));
+
+    // calculate read size based on batch size and packet size
+    let read_size: i32 = (packet_size as i32 * batch_size as i32) + payload_offset as i32; // pcap read size
 
     // Get environment variables or use default values, set in .env file
     let target_port: i32 = env::var("TARGET_PORT").unwrap_or("5556".to_string()).parse().expect(&format!("Invalid format for TARGET_PORT"));
@@ -533,8 +509,8 @@ async fn main() {
     // Setup packet capture
     let mut cap = Capture::from_device(target_device).unwrap()
         .promisc(promiscuous)
-        .timeout(60000)
-        .snaplen(READ_SIZE) // Adjust this based on network configuration
+        .timeout(read_time_out)
+        .snaplen(read_size) // Adjust this based on network configuration
         .open().unwrap();
 
     // Filter pcap
@@ -609,6 +585,9 @@ async fn main() {
     // Perform TR 101 290 checks
     let mut tr101290_errors = Tr101290Errors::new();
 
+    // start time
+    let start_time = current_unix_timestamp_ms().unwrap_or(0);
+
     // Start packet capture
     let mut batch = Vec::new();
     loop {
@@ -619,7 +598,7 @@ async fn main() {
                 }
 
                 // Check if chunk is MPEG-TS or SMPTE 2110
-                let chunk_type = is_mpegts_or_smpte2110(&packet[PAYLOAD_OFFSET..]);
+                let chunk_type = is_mpegts_or_smpte2110(&packet[payload_offset..]);
                 if chunk_type != 1 {
                     debug!("Not MPEG-TS, type {}", chunk_type);
                     if chunk_type == 0 {
@@ -630,10 +609,14 @@ async fn main() {
                 }
 
                 let chunks = if is_mpegts {
-                    process_mpegts_packet(&packet)
+                    process_mpegts_packet(payload_offset, &packet, packet_size, start_time)
                 } else {
-                    process_smpte2110_packet(&packet)
+                    process_smpte2110_packet(payload_offset, &packet, packet_size, start_time)
                 };
+
+                if is_mpegts {
+                    batch_size = 1; // Set batch size to 1 for SMPTE 2110
+                }
 
                 // Process each chunk
                 for stream_data in chunks {
@@ -641,33 +624,24 @@ async fn main() {
                         hexdump(&stream_data.data); // Use stream_data.data to access the raw packet data
                     }
 
-                    // Update PID Map and StreamData
-                    let pid = extract_pid(&stream_data.data);
-                    let mut pid_map = PID_MAP.lock().unwrap();
-                    if let Some(stream_data) = pid_map.get_mut(&pid) {
-                        if let Ok(arrival_time) = current_unix_timestamp_ms() {
-                            stream_data.update_stats(stream_data.data.len(), arrival_time);
-                            // Log the updated metrics
-                            info!("PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms", 
-                                stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.iat, 
-                                stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp);
-                        }                    
+                    // Check for TR 101 290 errors, skip for SMPTE 2110
+                    if is_mpegts {
+                        // Check for TR 101 290 errors
+                        process_packet(&stream_data.data, &mut tr101290_errors);
+                        // Periodically, or at the end of the processing:
+                        tr101290_errors.log_errors();
                     }
 
-                    // In your packet processing loop:
-                    process_packet(&stream_data.data, &mut tr101290_errors);
-
-                    // Periodically, or at the end of the processing:
-                    tr101290_errors.log_errors();
-
-                    // print out the stream data parts outside of the .data
-                    debug!("PID: {}, Stream Type: {}, Continuity Counter: {}, Timestamp: {} ms", 
-                        stream_data.pid, stream_data.stream_type, stream_data.continuity_counter, stream_data.timestamp);
+                     // TODO: json output here that we send into zeromq
+                     debug!("STATS: PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms, Stream Type: {}", 
+                                    stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.iat, 
+                                    stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp,
+                                    stream_data.stream_type);
 
                     batch.push(stream_data.data.clone());
 
                     // Check if batch is full
-                    if batch.len() >= BATCH_SIZE {
+                    if batch.len() >= batch_size {
                         // Send the batch to the channel
                         tx.send(batch.clone()).unwrap();
                         batch.clear();
@@ -716,91 +690,106 @@ fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
 }
 
 // Process the packet and return a vector of SMPTE ST 2110 packets
-fn process_smpte2110_packet(packet: &[u8]) -> Vec<StreamData> {
-    let mut smpte2110_packets = Vec::new();
-    let start = PAYLOAD_OFFSET;
+fn process_smpte2110_packet(payload_offset: usize, packet: &[u8], _packet_size: usize, start_time: u64) -> Vec<StreamData> {
+    let start = payload_offset;
+    let mut streams = Vec::new();
 
     if packet.len() > start + 12 {
         if packet[start] == 0x80 || packet[start] == 0x81 {
             let rtp_packet = &packet[start..];
-            let smpte_header_info = json!({
-                "size": rtp_packet.len(),
-            });
-            smpte2110_packets.push(rtp_packet.to_vec());
-            debug!("SMPTE ST 2110 Header Info: {}", smpte_header_info.to_string());
-        } else {
-            error!("Not RTP");
-            hexdump(&packet);
-        }
-    }
 
-    let mut streams = Vec::new();
+            // Create an RtpReader
+            if let Ok(rtp) = RtpReader::new(rtp_packet) {
+                // Extract the sequence number
+                let _sequence_number = rtp.sequence_number();
+        
+                // Extract the timestamp
+                let timestamp = rtp.timestamp();
 
-    for chunk in smpte2110_packets.iter() {
-        let pid = 1;
-        let stream_type = "smpte2110".to_string();
+                // size of packet
+                let chunk_size = rtp.payload().len();
 
-        // get current time
-        match current_unix_timestamp_ms() {
-            Ok(timestamp) => {
-                let stream_data = StreamData::new(chunk, pid, stream_type, timestamp, 1);
+                let payload_type = rtp.payload_type();
+        
+                let smpte_header_info = json!({
+                    "size": chunk_size,
+                    //"sequence_number": sequence_number as u64,
+                    "timestamp": timestamp,
+                    "payload_type": payload_type,
+                });
+
+                let pid = 1; /* FIXME */
+                let stream_type = "smpte2110".to_string();
+                let mut stream_data = StreamData::new(rtp_packet, pid, stream_type, start_time, timestamp as u64, 0 /* fix me */);
+                // update streams details in stream_data structure
+                stream_data.update_stats(chunk_size, current_unix_timestamp_ms().unwrap_or(0));
+
                 streams.push(stream_data);            
-            },
-            Err(e) => error!("Error: {}", e),
+
+                //smpte2110_packets.push(rtp_packet.to_vec());
+                debug!("SMPTE ST 2110 Header Info: {}", smpte_header_info.to_string());
+            } else {
+                hexdump(&packet);
+                error!("Error parsing RTP header, not SMPTE ST 2110");
+            }
+        } else {
+            hexdump(&packet);
+            error!("No RTP header detected, not SMPTE ST 2110");
         }
+    } else {
+        hexdump(&packet);
+        error!("Packet too small, not SMPTE ST 2110");
     }
 
     streams
 }
 
 // Process the packet and return a vector of MPEG-TS packets
-fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
-    let mut mpeg_ts_packets = Vec::new();
-    let mut start = PAYLOAD_OFFSET;
-    let mut read_size = PACKET_SIZE;
+fn process_mpegts_packet(payload_offset: usize, packet: &[u8], packet_size: usize, start_time: u64) -> Vec<StreamData> {
+    //let mut mpeg_ts_packets = Vec::new();
+    let mut start = payload_offset;
+    let mut read_size = packet_size;
+    let mut streams = Vec::new();
 
     while start + read_size <= packet.len() {
         let chunk = &packet[start..start + read_size];
         if chunk[0] == 0x47 { // Check for MPEG-TS sync byte
-            mpeg_ts_packets.push(chunk.to_vec());
-            read_size = PACKET_SIZE; // reset read_size
+            //mpeg_ts_packets.push(chunk.to_vec());
+            read_size = packet_size; // reset read_size
+
+            let pid = ((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
+
+            // Handle PAT and PMT packets
+            match pid {
+                PAT_PID => {
+                    log::debug!("ProcessPacket: PAT packet detected with PID {}", pid);
+                    parse_and_store_pat(chunk);
+                }
+                _ => {
+                    // Check if this is a PMT packet
+                    unsafe {
+                        if pid == PMT_PID {
+                            log::debug!("ProcessPacket: PMT packet detected with PID {}", pid);
+                            // Update PID_MAP with new stream types
+                            update_pid_map(chunk);
+                        }
+                    }
+                }
+            }
+    
+            let stream_type = determine_stream_type(pid); // Implement this function based on PAT/PMT parsing
+            let timestamp = ((chunk[4] as u64) << 25) | ((chunk[5] as u64) << 17) | ((chunk[6] as u64) << 9) | ((chunk[7] as u64) << 1) | ((chunk[8] as u64) >> 7);
+            let continuity_counter = chunk[3] & 0x0F;
+    
+            let mut stream_data = StreamData::new(chunk, pid, stream_type, start_time, timestamp, continuity_counter);
+            stream_data.update_stats(chunk.len(), current_unix_timestamp_ms().unwrap_or(0));
+            streams.push(stream_data);
         } else {
             error!("ProcessPacket: Not MPEG-TS");
             hexdump(&packet);
             read_size = 1; // Skip to the next byte
         }
         start += read_size;
-    }
-
-    let mut streams = Vec::new();
-
-    for chunk in mpeg_ts_packets.iter() {
-        let pid = ((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
-
-        // Handle PAT and PMT packets
-        match pid {
-            PAT_PID => {
-                log::info!("ProcessPacket: PAT packet detected with PID {}", pid);
-                parse_and_store_pat(chunk);
-            }
-            _ => {
-                // Check if this is a PMT packet
-                unsafe {
-                    if pid == PMT_PID {
-                        log::info!("ProcessPacket: PMT packet detected with PID {}", pid);
-                        // Update PID_MAP with new stream types
-                        update_pid_map(chunk);
-                    }
-                }
-            }
-        }
-
-        let stream_type = determine_stream_type(pid); // Implement this function based on PAT/PMT parsing
-        let timestamp = ((chunk[4] as u64) << 25) | ((chunk[5] as u64) << 17) | ((chunk[6] as u64) << 9) | ((chunk[7] as u64) << 1) | ((chunk[8] as u64) >> 7);
-        let continuity_counter = chunk[3] & 0x0F;
-
-        let stream_data = StreamData::new(chunk, pid, stream_type, timestamp, continuity_counter);
-        streams.push(stream_data);
     }
 
     streams
