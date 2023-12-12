@@ -520,7 +520,8 @@ async fn main() {
                     }
 
                     // print out the stream data parts outside of the .data
-                    debug!("PID: {}, Stream Type: {}, Continuity Counter: {}, Timestamp: {}", stream_data.pid, stream_data.stream_type, stream_data.continuity_counter, stream_data.timestamp);
+                    debug!("PID: {}, Stream Type: {}, Continuity Counter: {}, Timestamp: {}", 
+                        stream_data.pid, stream_data.stream_type, stream_data.continuity_counter, stream_data.timestamp);
 
                     batch.push(stream_data.data.clone());
 
