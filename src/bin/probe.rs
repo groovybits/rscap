@@ -237,7 +237,7 @@ fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
         //debug!("ParsePAT: Packet1 {}, Packet2 {}, Packet3 {}, Packet4 {}", packet[i], packet[i + 1], packet[i + 2], packet[i + 3]);
 
         if program_number != 0 && program_number != 65535 && pmt_pid != 0 && program_number < 30 /* FIXME: kludge fix for now */ {
-            info!("ParsePAT: Program Number: {} PMT PID: {}", program_number, pmt_pid);
+            debug!("ParsePAT: Program Number: {} PMT PID: {}", program_number, pmt_pid);
             entries.push(PatEntry { program_number, pmt_pid });
         }
 
@@ -333,7 +333,7 @@ fn update_pid_map(pmt_packet: &[u8]) {
                     _ => "User Private",
                 };
 
-                info!("UpdatePIDmap: Added Stream PID: {}, Stream Type: {}/{}", stream_pid, pmt_entry.stream_type, stream_type);
+                debug!("UpdatePIDmap: Added Stream PID: {}, Stream Type: {}/{}", stream_pid, pmt_entry.stream_type, stream_type);
                 let stream_data = StreamData::new(&[], stream_pid, stream_type.to_string(), 0, 0);
                 pid_map.insert(stream_pid, stream_data);
             }
@@ -750,14 +750,14 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
         // Handle PAT and PMT packets
         match pid {
             PAT_PID => {
-                log::info!("ProcessPacket: PAT packet detected with PID {}", pid);
+                log::debug!("ProcessPacket: PAT packet detected with PID {}", pid);
                 parse_and_store_pat(chunk);
             }
             _ => {
                 // Check if this is a PMT packet
                 unsafe {
                     if pid == PMT_PID {
-                        log::info!("ProcessPacket: PMT packet detected with PID {}", pid);
+                        log::debug!("ProcessPacket: PMT packet detected with PID {}", pid);
                         // Update PID_MAP with new stream types
                         update_pid_map(chunk);
                     }
