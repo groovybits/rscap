@@ -66,6 +66,8 @@ struct StreamData {
     iat: u64,
     error_count: u32,
     last_arrival_time: u64,
+    start_time: u64,        // field for start time
+    total_bits: u64,        // field for total bits
     data: Vec<u8>, // The actual MPEG-TS packet data
 }
 
@@ -85,20 +87,28 @@ impl StreamData {
             iat,
             error_count,
             last_arrival_time,
+            start_time: timestamp,         // Initialize start time
+            total_bits: 0,                 // Initialize total bits
             data: packet.to_vec(),
         }
     }
-
     fn update_stats(&mut self, packet_size: usize, arrival_time: u64) {
-        // Update bitrate, IAT, etc.
-        // Example calculation for bitrate (simplified)
-        self.bitrate += packet_size as u32 * 8; // Convert bytes to bits
+        let bits = packet_size as u64 * 8; // Convert bytes to bits
 
-        // Example calculation for IAT
+        // Elapsed time in milliseconds
+        let elapsed_time_ms = arrival_time - self.start_time;
+
+        if elapsed_time_ms > 0 {
+            let elapsed_time_sec = elapsed_time_ms as f64 / 1000.0;
+            self.bitrate = (self.total_bits as f64 / elapsed_time_sec) as u32;
+        }
+
+        self.total_bits += bits; // Accumulate total bits
+
+        // IAT calculation remains the same
         let iat = arrival_time - self.last_arrival_time;
         self.iat = iat;
 
-        // Update last arrival time
         self.last_arrival_time = arrival_time;
     }
 }
