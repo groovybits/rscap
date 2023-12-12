@@ -767,12 +767,23 @@ fn process_smpte2110_packet(payload_offset: usize, packet: &[u8], _packet_size: 
                 let chunk_size = rtp.payload().len();
 
                 let payload_type = rtp.payload_type();
+
+                let payload = rtp.payload();
+               
+                let line_length = get_line_length(payload);
+                let line_number = get_line_number(payload);
+                let line_offset = get_line_offset(payload);
+                let field_id = get_line_field_id(payload);
         
                 let smpte_header_info = json!({
                     "size": chunk_size,
                     //"sequence_number": sequence_number as u64,
                     "timestamp": timestamp,
                     "payload_type": payload_type,
+                    "line_length": line_length,
+                    "line_number": line_number,
+                    "line_offset": line_offset,
+                    "field_id": field_id,
                 });
 
                 let pid = 1; /* FIXME */
