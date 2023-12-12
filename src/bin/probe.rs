@@ -162,28 +162,7 @@ fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors) {
 fn process_packet(packet: &[u8], errors: &mut Tr101290Errors) {
     tr101290_p1_check(packet, errors);
 
-    let pid = extract_pid(packet);
-    let mut pid_map = PID_MAP.lock().unwrap();
-
-    let arrival_time = current_unix_timestamp_ms().unwrap_or(0);
-
-    // Check if the PID map already has an entry for this PID
-    if let Some(stream_data) = pid_map.get_mut(&pid) {
-        // Existing StreamData instance found, update it
-        stream_data.update_stats(packet.len(), arrival_time);
-    } else {
-        // New StreamData instance needs to be created
-        let stream_type = determine_stream_type(pid); // Determine stream type
-        let new_stream_data = StreamData::new(packet, pid, stream_type, arrival_time, 0);
-        pid_map.insert(pid, new_stream_data);
-    }
-
-    // Log the updated metrics
-    if let Some(stream_data) = pid_map.get(&pid) {
-        info!("PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms", 
-            stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.iat, 
-            stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp);
-    }
+    // Further processing...
 }
 
 // Function to get the current Unix timestamp in milliseconds
