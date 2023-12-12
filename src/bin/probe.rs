@@ -38,7 +38,7 @@ static mut PMT_PID: u16 = 0xFFFF;
 static mut LAST_PAT_PACKET: Option<Vec<u8>> = None;
 
 lazy_static! {
-    static ref PID_MAP: Mutex<HashMap<u16, String>> = Mutex::new(HashMap::new());
+    static ref PID_MAP: Mutex<HashMap<u16, StreamData>> = Mutex::new(HashMap::new());
 }
 
 struct PatEntry {
@@ -56,25 +56,73 @@ struct Pmt {
 }
 
 // StreamData struct
+#[derive(Clone)]
 struct StreamData {
     pid: u16,
     stream_type: String, // "video", "audio", "text"
     continuity_counter: u8,
     timestamp: u64,
+    bitrate: u32,
+    iat: u64,
+    error_count: u32,
+    last_arrival_time: u64,
     data: Vec<u8>, // The actual MPEG-TS packet data
 }
 
 // StreamData implementation
 impl StreamData {
-    fn new(packet: &[u8], pid: u16, stream_type: String, timestamp: u64, continuity_counter: u8) -> Self {        
+    fn new(packet: &[u8], pid: u16, stream_type: String, timestamp: u64, continuity_counter: u8) -> Self {      
+        let bitrate = 0;
+        let iat = 0;
+        let error_count = 0;
+        let last_arrival_time = current_unix_timestamp_ms().unwrap_or(0);
         StreamData {
             pid,
             stream_type,
             continuity_counter,
             timestamp,
+            bitrate,
+            iat,
+            error_count,
+            last_arrival_time,
             data: packet.to_vec(),
         }
     }
+
+    fn update_stats(&mut self, packet_size: usize, arrival_time: u64) {
+        // Update bitrate, IAT, etc.
+        // Example calculation for bitrate (simplified)
+        self.bitrate += packet_size as u32 * 8; // Convert bytes to bits
+
+        // Example calculation for IAT
+        let iat = arrival_time - self.last_arrival_time;
+        self.iat = iat;
+
+        // Update last arrival time
+        self.last_arrival_time = arrival_time;
+    }
+}
+
+// TR 101 290 Priority 1 Check Example
+fn tr101290_p1_check(packet: &[u8]) -> Result<(), String> {
+    // Implement checks like sync byte verification, transport error indicator check, etc.
+    if packet[0] != 0x47 {
+        return Err("Sync byte error".to_string());
+    }
+
+    // Additional checks...
+
+    Ok(())
+}
+
+// Invoke this function for each MPEG-TS packet
+fn process_packet(packet: &[u8]) {
+    if let Err(e) = tr101290_p1_check(packet) {
+        // Handle error, log it, etc.
+        println!("TR 101 290 Error: {}", e);
+    }
+
+    // Further processing...
 }
 
 // Function to get the current Unix timestamp in milliseconds
@@ -248,7 +296,8 @@ fn update_pid_map(pmt_packet: &[u8]) {
                 };
 
                 info!("UpdatePIDmap: Added Stream PID: {}, Stream Type: {}/{}", stream_pid, pmt_entry.stream_type, stream_type);
-                pid_map.insert(stream_pid, stream_type.to_string());
+                let stream_data = StreamData::new(&[], stream_pid, stream_type.to_string(), 0, 0);
+                pid_map.insert(stream_pid, stream_data);
             }
         } else {
             error!("UpdatePIDmap: Skipping PMT PID: {} as it does not match with current PMT packet PID", pmt_pid);
@@ -258,7 +307,9 @@ fn update_pid_map(pmt_packet: &[u8]) {
 
 fn determine_stream_type(pid: u16) -> String {
     let pid_map = PID_MAP.lock().unwrap();
-    pid_map.get(&pid).cloned().unwrap_or_else(|| "unknown".to_string())
+    pid_map.get(&pid)
+           .map(|stream_data| stream_data.stream_type.clone())
+           .unwrap_or_else(|| "unknown".to_string())
 }
 
 // MAIN
@@ -519,8 +570,20 @@ async fn main() {
                         hexdump(&stream_data.data); // Use stream_data.data to access the raw packet data
                     }
 
+                    // Update PID Map and StreamData
+                    let pid = extract_pid(&stream_data.data);
+                    let mut pid_map = PID_MAP.lock().unwrap();
+                    if let Some(stream_data) = pid_map.get_mut(&pid) {
+                        if let Ok(arrival_time) = current_unix_timestamp_ms() {
+                            stream_data.update_stats(stream_data.data.len(), arrival_time);
+                        }                    
+                    }
+
+                    // Perform TR 101 290 checks
+                    process_packet(&stream_data.data);
+
                     // print out the stream data parts outside of the .data
-                    debug!("PID: {}, Stream Type: {}, Continuity Counter: {}, Timestamp: {}", 
+                    debug!("PID: {}, Stream Type: {}, Continuity Counter: {}, Timestamp: {} ms", 
                         stream_data.pid, stream_data.stream_type, stream_data.continuity_counter, stream_data.timestamp);
 
                     batch.push(stream_data.data.clone());
@@ -532,6 +595,7 @@ async fn main() {
                         batch.clear();
                     }
                 }
+                
                 let stats = cap.stats().unwrap();
                 debug!(
                     "Received: {}, dropped: {}, if_dropped: {}",
