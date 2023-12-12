@@ -770,10 +770,10 @@ fn process_smpte2110_packet(payload_offset: usize, packet: &[u8], _packet_size: 
 
                 let payload = rtp.payload();
                
-                let line_length = get_line_length(payload);
-                let line_number = get_line_number(payload);
-                let line_offset = get_line_offset(payload);
-                let field_id = get_line_field_id(payload);
+                let line_length = get_line_length(rtp_packet);
+                let line_number = get_line_number(rtp_packet);
+                let line_offset = get_line_offset(rtp_packet);
+                let field_id = get_line_field_id(rtp_packet);
         
                 let smpte_header_info = json!({
                     "size": chunk_size,
