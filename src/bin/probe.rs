@@ -22,13 +22,6 @@ use std::sync::Mutex;
 use lazy_static::lazy_static;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-
-// Able to keep up with 1080p60 420/422 8/10-bit 20+ Mbps MPEG-TS stream (not long-term tested)
-const BATCH_SIZE: usize = 1000; // N MPEG-TS packets per batch
-const PAYLOAD_OFFSET: usize = 14 + 20 + 8; // Ethernet (14 bytes) + IP (20 bytes) + UDP (8 bytes)
-const PACKET_SIZE: usize = 188; // MPEG-TS packet size
-const READ_SIZE: i32 = (PACKET_SIZE as i32 * BATCH_SIZE as i32) + PAYLOAD_OFFSET as i32; // pcap read size
-
 // constant for PAT PID
 const PAT_PID: u16 = 0;
 
@@ -356,6 +349,15 @@ async fn main() {
     info!("Starting rscap probe");
     dotenv::dotenv().ok(); // read .env file
 
+    // setup various read/write variables
+    let batch_size: usize = env::var("BATCH_SIZE").unwrap_or("1000".to_string()).parse().expect(&format!("Invalid format for BATCH_SIZE"));
+    let payload_offset: usize = env::var("PAYLOAD_OFFSET").unwrap_or("42".to_string()).parse().expect(&format!("Invalid format for PAYLOAD_OFFSET"));
+    let packet_size: usize = env::var("PACKET_SIZE").unwrap_or("188".to_string()).parse().expect(&format!("Invalid format for PACKET_SIZE"));
+    let read_time_out: i32 = env::var("READ_TIME_OUT").unwrap_or("300000".to_string()).parse().expect(&format!("Invalid format for READ_TIME_OUT"));
+
+    // calculate read size based on batch size and packet size
+    let read_size: i32 = (packet_size as i32 * batch_size as i32) + payload_offset as i32; // pcap read size
+
     // Get environment variables or use default values, set in .env file
     let target_port: i32 = env::var("TARGET_PORT").unwrap_or("5556".to_string()).parse().expect(&format!("Invalid format for TARGET_PORT"));
     let target_ip: String = env::var("TARGET_IP").unwrap_or("127.0.0.1".to_string());
@@ -503,8 +505,8 @@ async fn main() {
     // Setup packet capture
     let mut cap = Capture::from_device(target_device).unwrap()
         .promisc(promiscuous)
-        .timeout(60000)
-        .snaplen(READ_SIZE) // Adjust this based on network configuration
+        .timeout(read_time_out)
+        .snaplen(read_size) // Adjust this based on network configuration
         .open().unwrap();
 
     // Filter pcap
@@ -589,7 +591,7 @@ async fn main() {
                 }
 
                 // Check if chunk is MPEG-TS or SMPTE 2110
-                let chunk_type = is_mpegts_or_smpte2110(&packet[PAYLOAD_OFFSET..]);
+                let chunk_type = is_mpegts_or_smpte2110(&packet[payload_offset..]);
                 if chunk_type != 1 {
                     debug!("Not MPEG-TS, type {}", chunk_type);
                     if chunk_type == 0 {
@@ -600,9 +602,9 @@ async fn main() {
                 }
 
                 let chunks = if is_mpegts {
-                    process_mpegts_packet(&packet)
+                    process_mpegts_packet(payload_offset, &packet, packet_size)
                 } else {
-                    process_smpte2110_packet(&packet)
+                    process_smpte2110_packet(payload_offset, &packet, packet_size)
                 };
 
                 // Process each chunk
@@ -611,35 +613,35 @@ async fn main() {
                         hexdump(&stream_data.data); // Use stream_data.data to access the raw packet data
                     }
 
-                    // Update PID Map and StreamData
-                    let pid = extract_pid(&stream_data.data);
-                    let mut pid_map = PID_MAP.lock().unwrap();
-                    if let Some(stream_data) = pid_map.get_mut(&pid) {
-                        if let Ok(arrival_time) = current_unix_timestamp_ms() {
-                            stream_data.update_stats(stream_data.data.len(), arrival_time);
-                            // Log the updated metrics
-                            debug!("PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms", 
-                                stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.iat, 
-                                stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp);
-                        }                    
-                    } 
-
                     // Check for TR 101 290 errors, skip for SMPTE 2110
                     if is_mpegts {
+                        // Update PID Map and StreamData
+                        let pid = extract_pid(&stream_data.data);
+                        let mut pid_map = PID_MAP.lock().unwrap();
+                        if let Some(stream_data) = pid_map.get_mut(&pid) {
+                            if let Ok(arrival_time) = current_unix_timestamp_ms() {
+                                stream_data.update_stats(stream_data.data.len(), arrival_time);
+                                // Log the updated metrics
+                                debug!("PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms", 
+                                    stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.iat, 
+                                    stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp);
+                            }                    
+                        } 
                         // Check for TR 101 290 errors
                         process_packet(&stream_data.data, &mut tr101290_errors);
                         // Periodically, or at the end of the processing:
                         tr101290_errors.log_errors();
-                    }
+                    
 
-                    // print out the stream data parts outside of the .data
-                    debug!("PID: {}, Stream Type: {}, Continuity Counter: {}, Timestamp: {} ms", 
-                        stream_data.pid, stream_data.stream_type, stream_data.continuity_counter, stream_data.timestamp);
+                        // print out the stream data parts outside of the .data
+                        debug!("PID: {}, Stream Type: {}, Continuity Counter: {}, Timestamp: {} ms", 
+                            stream_data.pid, stream_data.stream_type, stream_data.continuity_counter, stream_data.timestamp);
+                    }
 
                     batch.push(stream_data.data.clone());
 
                     // Check if batch is full
-                    if batch.len() >= BATCH_SIZE {
+                    if batch.len() >= batch_size {
                         // Send the batch to the channel
                         tx.send(batch.clone()).unwrap();
                         batch.clear();
@@ -688,9 +690,10 @@ fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
 }
 
 // Process the packet and return a vector of SMPTE ST 2110 packets
-fn process_smpte2110_packet(packet: &[u8]) -> Vec<StreamData> {
+fn process_smpte2110_packet(payload_offset: usize, packet: &[u8], packet_size: usize) -> Vec<StreamData> {
     let mut smpte2110_packets = Vec::new();
-    let start = PAYLOAD_OFFSET;
+    let start = payload_offset;
+    //let mut read_size = packet_size; // TODO: Adjust this for SMPTE ST 2110
 
     if packet.len() > start + 12 {
         if packet[start] == 0x80 || packet[start] == 0x81 {
@@ -726,16 +729,16 @@ fn process_smpte2110_packet(packet: &[u8]) -> Vec<StreamData> {
 }
 
 // Process the packet and return a vector of MPEG-TS packets
-fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
+fn process_mpegts_packet(payload_offset: usize, packet: &[u8], packet_size: usize) -> Vec<StreamData> {
     let mut mpeg_ts_packets = Vec::new();
-    let mut start = PAYLOAD_OFFSET;
-    let mut read_size = PACKET_SIZE;
+    let mut start = payload_offset;
+    let mut read_size = packet_size;
 
     while start + read_size <= packet.len() {
         let chunk = &packet[start..start + read_size];
         if chunk[0] == 0x47 { // Check for MPEG-TS sync byte
             mpeg_ts_packets.push(chunk.to_vec());
-            read_size = PACKET_SIZE; // reset read_size
+            read_size = packet_size; // reset read_size
         } else {
             error!("ProcessPacket: Not MPEG-TS");
             hexdump(&packet);
