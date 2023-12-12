@@ -208,6 +208,8 @@ fn update_pid_map(pmt_packet: &[u8]) {
             let pmt = parse_pmt(pmt_packet, pmt_pid);
 
             for pmt_entry in pmt.entries.iter() {
+                info!("UpdatePIDmap: Processing PMT PID: {} for Stream PID: {} Type {}", pmt_pid, pmt_entry.stream_pid, pmt_entry.stream_type);
+
                 let stream_pid = pmt_entry.stream_pid;
                 let stream_type = match pmt_entry.stream_type {
                     0x00 => "Reserved",
