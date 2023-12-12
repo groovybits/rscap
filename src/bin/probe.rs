@@ -154,7 +154,8 @@ fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors) {
 }
 
 // Invoke this function for each MPEG-TS packet
-fn process_packet(packet: &[u8], errors: &mut Tr101290Errors) {
+fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) {
+    let packet: &[u8] = &stream_data_packet.data;
     tr101290_p1_check(packet, errors);
 
     let pid = extract_pid(packet);
@@ -169,10 +170,11 @@ fn process_packet(packet: &[u8], errors: &mut Tr101290Errors) {
             Some(stream_data) => {
                 // Existing StreamData instance found, update it
                 stream_data.update_stats(packet.len(), arrival_time);
+                let uptime = arrival_time - stream_data.start_time;
                 // print stats
-                debug!("STATS: PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms", 
-                                    stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.iat, 
-                                    stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp);
+                debug!("STATS: PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms Uptime: {} ms", 
+                                    stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data_packet.iat, 
+                                    stream_data.error_count, stream_data_packet.continuity_counter, stream_data_packet.timestamp, uptime);
             },
             None => {
                 // New StreamData instance needs to be created
@@ -650,13 +652,10 @@ async fn main() {
                         hexdump(&stream_data.data); // Use stream_data.data to access the raw packet data
                     }
 
-                    // Check for TR 101 290 errors, skip for SMPTE 2110
-                    if is_mpegts {
-                        // Check for TR 101 290 errors
-                        process_packet(&stream_data.data, &mut tr101290_errors);
-                        // Periodically, or at the end of the processing:
-                        tr101290_errors.log_errors();
-                    }
+                    // Check for TR 101 290 errors
+                    process_packet(&stream_data, &mut tr101290_errors);
+                    // Periodically, or at the end of the processing:
+                    tr101290_errors.log_errors();
 
                     batch.push(stream_data.data.clone());
 
