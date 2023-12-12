@@ -185,12 +185,12 @@ fn process_packet(packet: &[u8], errors: &mut Tr101290Errors) {
     }
 
     // Log outside of the lock scope
-    let pid_map = PID_MAP.lock().unwrap();
+    /*let pid_map = PID_MAP.lock().unwrap();
     if let Some(stream_data) = pid_map.get(&pid) {
         info!("PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms", 
             stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.iat, 
             stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp);
-    }
+    }*/
 }
 
 // Function to get the current Unix timestamp in milliseconds
@@ -642,7 +642,7 @@ async fn main() {
                     }
 
                     // Update PID Map and StreamData
-                    /*let pid = extract_pid(&stream_data.data);
+                    let pid = extract_pid(&stream_data.data);
                     let mut pid_map = PID_MAP.lock().unwrap();
                     if let Some(stream_data) = pid_map.get_mut(&pid) {
                         if let Ok(arrival_time) = current_unix_timestamp_ms() {
@@ -652,7 +652,7 @@ async fn main() {
                                 stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.iat, 
                                 stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp);
                         }                    
-                    }*/
+                    }
 
                     // In your packet processing loop:
                     process_packet(&stream_data.data, &mut tr101290_errors);
