@@ -650,13 +650,10 @@ async fn main() {
                         hexdump(&stream_data.data); // Use stream_data.data to access the raw packet data
                     }
 
-                    // Check for TR 101 290 errors, skip for SMPTE 2110
-                    if is_mpegts {
-                        // Check for TR 101 290 errors
-                        process_packet(&stream_data.data, &mut tr101290_errors);
-                        // Periodically, or at the end of the processing:
-                        tr101290_errors.log_errors();
-                    }
+                    // Check for TR 101 290 errors
+                    process_packet(&stream_data.data, &mut tr101290_errors);
+                    // Periodically, or at the end of the processing:
+                    tr101290_errors.log_errors();
 
                     batch.push(stream_data.data.clone());
 
