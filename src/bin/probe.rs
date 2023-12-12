@@ -166,7 +166,7 @@ fn process_packet(packet: &[u8], errors: &mut Tr101290Errors) {
     let arrival_time = current_unix_timestamp_ms().unwrap_or(0);
 
     // Use a scope to limit the duration of the lock
-    {
+    /*{
         let mut pid_map = PID_MAP.lock().unwrap();
 
         // Check if the PID map already has an entry for this PID
@@ -182,7 +182,7 @@ fn process_packet(packet: &[u8], errors: &mut Tr101290Errors) {
                 pid_map.insert(pid, new_stream_data);
             }
         }
-    }
+    }*/
 
     // Log outside of the lock scope
     /*let pid_map = PID_MAP.lock().unwrap();
