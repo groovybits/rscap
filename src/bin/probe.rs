@@ -624,11 +624,13 @@ async fn main() {
                         }                    
                     } 
 
-                    // In your packet processing loop:
-                    process_packet(&stream_data.data, &mut tr101290_errors);
-
-                    // Periodically, or at the end of the processing:
-                    tr101290_errors.log_errors();
+                    // Check for TR 101 290 errors, skip for SMPTE 2110
+                    if is_mpegts {
+                        // Check for TR 101 290 errors
+                        process_packet(&stream_data.data, &mut tr101290_errors);
+                        // Periodically, or at the end of the processing:
+                        tr101290_errors.log_errors();
+                    }
 
                     // print out the stream data parts outside of the .data
                     debug!("PID: {}, Stream Type: {}, Continuity Counter: {}, Timestamp: {} ms", 
