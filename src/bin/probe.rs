@@ -247,7 +247,7 @@ fn update_pid_map(pmt_packet: &[u8]) {
                     _ => "User Private",
                 };
 
-                info!("UpdatePIDmap: Added Stream PID: {}, Stream Type: {}", stream_pid, stream_type);
+                info!("UpdatePIDmap: Added Stream PID: {}, Stream Type: {}/{}", stream_pid, pmt_entry.stream_type, stream_type);
                 pid_map.insert(stream_pid, stream_type.to_string());
             }
         } else {
