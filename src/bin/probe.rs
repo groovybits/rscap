@@ -161,36 +161,6 @@ fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors) {
 // Invoke this function for each MPEG-TS packet
 fn process_packet(packet: &[u8], errors: &mut Tr101290Errors) {
     tr101290_p1_check(packet, errors);
-
-    let pid = extract_pid(packet);
-    let arrival_time = current_unix_timestamp_ms().unwrap_or(0);
-
-    // Use a scope to limit the duration of the lock
-    /*{
-        let mut pid_map = PID_MAP.lock().unwrap();
-
-        // Check if the PID map already has an entry for this PID
-        match pid_map.get_mut(&pid) {
-            Some(stream_data) => {
-                // Existing StreamData instance found, update it
-                stream_data.update_stats(packet.len(), arrival_time);
-            },
-            None => {
-                // New StreamData instance needs to be created
-                let stream_type = determine_stream_type(pid); // Determine stream type
-                let new_stream_data = StreamData::new(packet, pid, stream_type, arrival_time, 0);
-                pid_map.insert(pid, new_stream_data);
-            }
-        }
-    }*/
-
-    // Log outside of the lock scope
-    /*let pid_map = PID_MAP.lock().unwrap();
-    if let Some(stream_data) = pid_map.get(&pid) {
-        info!("PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms", 
-            stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.iat, 
-            stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp);
-    }*/
 }
 
 // Function to get the current Unix timestamp in milliseconds
@@ -648,11 +618,11 @@ async fn main() {
                         if let Ok(arrival_time) = current_unix_timestamp_ms() {
                             stream_data.update_stats(stream_data.data.len(), arrival_time);
                             // Log the updated metrics
-                            info!("PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms", 
+                            debug!("PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms", 
                                 stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.iat, 
                                 stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp);
                         }                    
-                    }
+                    } 
 
                     // In your packet processing loop:
                     process_packet(&stream_data.data, &mut tr101290_errors);
