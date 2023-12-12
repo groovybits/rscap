@@ -170,7 +170,7 @@ fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
     let program_info_length = (((packet[15] as usize) & 0x0F) << 8) | packet[16] as usize;
     let mut i = 17 + program_info_length; // Starting index of the first stream in the PMT
 
-    info!("ParsePMT: Program Number: {} PMT PID: {} starting at position {}", program_number, pmt_pid, i);
+    debug!("ParsePMT: Program Number: {} PMT PID: {} starting at position {}", program_number, pmt_pid, i);
     while i + 5 <= packet.len() && i < 17 + section_length - 4 {
         let stream_type = packet[i];
         let stream_pid = (((packet[i + 1] as u16) & 0x1F) << 8) | (packet[i + 2] as u16);
@@ -178,7 +178,7 @@ fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
         i += 5 + es_info_length; // Update index to point to next stream's info
 
         entries.push(PmtEntry { stream_pid, stream_type });
-        info!("ParsePMT: Stream PID: {}, Stream Type: {}", stream_pid, stream_type);
+        debug!("ParsePMT: Stream PID: {}, Stream Type: {}", stream_pid, stream_type);
     }
 
     Pmt { entries }
@@ -198,14 +198,14 @@ fn update_pid_map(pmt_packet: &[u8]) {
         let pmt_pid = pat_entry.pmt_pid;
 
         // Log for debugging
-        info!("UpdatePIDmap: Processing Program Number: {}, PMT PID: {}", program_number, pmt_pid);
+        debug!("UpdatePIDmap: Processing Program Number: {}, PMT PID: {}", program_number, pmt_pid);
 
         // Ensure the current PMT packet matches the PMT PID from the PAT
         if extract_pid(pmt_packet) == pmt_pid {
             let pmt = parse_pmt(pmt_packet, pmt_pid);
 
             for pmt_entry in pmt.entries.iter() {
-                info!("UpdatePIDmap: Processing PMT PID: {} for Stream PID: {} Type {}", pmt_pid, pmt_entry.stream_pid, pmt_entry.stream_type);
+                debug!("UpdatePIDmap: Processing PMT PID: {} for Stream PID: {} Type {}", pmt_pid, pmt_entry.stream_pid, pmt_entry.stream_type);
 
                 let stream_pid = pmt_entry.stream_pid;
                 let stream_type = match pmt_entry.stream_type {
@@ -251,7 +251,7 @@ fn update_pid_map(pmt_packet: &[u8]) {
                 pid_map.insert(stream_pid, stream_type.to_string());
             }
         } else {
-            info!("UpdatePIDmap: Skipping PMT PID: {} as it does not match with current PMT packet PID", pmt_pid);
+            error!("UpdatePIDmap: Skipping PMT PID: {} as it does not match with current PMT packet PID", pmt_pid);
         }
     }
 }
