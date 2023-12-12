@@ -667,9 +667,9 @@ fn process_mpegts_packet(packet: &[u8]) -> Vec<StreamData> {
 // Print a hexdump of the packet
 fn hexdump(packet: &[u8]) {
     let pid = extract_pid(packet);
-    debug!("--------------------------------------------------");
+    info!("--------------------------------------------------");
     // print in rows of 16 bytes
-    debug!("PacketDump: PID {} Packet length: {}", pid, packet.len());
+    info!("PacketDump: PID {} Packet length: {}", pid, packet.len());
     let mut packet_dump = String::new();
     for (i, chunk) in packet.iter().take(packet.len()).enumerate() {
         if i % 16 == 0 {
@@ -677,8 +677,8 @@ fn hexdump(packet: &[u8]) {
         }
         packet_dump.push_str(&format!("{:02x} ", chunk));
     }
-    debug!("{}", packet_dump);
-    debug!("");
-    debug!("--------------------------------------------------");
+    info!("{}", packet_dump);
+    info!("");
+    info!("--------------------------------------------------");
 }
 
