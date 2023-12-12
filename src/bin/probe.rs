@@ -103,24 +103,54 @@ impl StreamData {
     }
 }
 
-// TR 101 290 Priority 1 Check Example
-fn tr101290_p1_check(packet: &[u8]) -> Result<(), String> {
-    // Implement checks like sync byte verification, transport error indicator check, etc.
-    if packet[0] != 0x47 {
-        return Err("Sync byte error".to_string());
+struct Tr101290Errors {
+    sync_byte_errors: u32,
+    transport_error_indicator_errors: u32,
+    continuity_counter_errors: u32,
+    // ... other error types ...
+}
+
+impl Tr101290Errors {
+    fn new() -> Self {
+        Tr101290Errors {
+            sync_byte_errors: 0,
+            transport_error_indicator_errors: 0,
+            continuity_counter_errors: 0,
+            // ... initialize other errors ...
+        }
     }
 
-    // Additional checks...
+    fn log_errors(&self) {
+        // Log the error counts for monitoring
+        if self.sync_byte_errors > 0 {
+            error!("Sync byte errors: {}", self.sync_byte_errors);
+        }
+        if self.transport_error_indicator_errors > 0 {
+            error!("Transport Error Indicator errors: {}", self.transport_error_indicator_errors);
+        }
+        if self.continuity_counter_errors > 0 {
+            error!("Continuity counter errors: {}", self.continuity_counter_errors);
+        }
+        // ... log other errors ...
+    }
+}
 
-    Ok(())
+// TR 101 290 Priority 1 Check Example
+fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors) {
+    if packet[0] != 0x47 {
+        errors.sync_byte_errors += 1;
+    }
+
+    if (packet[1] & 0x80) != 0 {
+        errors.transport_error_indicator_errors += 1;
+    }
+
+    // ... other checks, updating the respective counters ...
 }
 
 // Invoke this function for each MPEG-TS packet
-fn process_packet(packet: &[u8]) {
-    if let Err(e) = tr101290_p1_check(packet) {
-        // Handle error, log it, etc.
-        println!("TR 101 290 Error: {}", e);
-    }
+fn process_packet(packet: &[u8], errors: &mut Tr101290Errors) {
+    tr101290_p1_check(packet, errors);
 
     // Further processing...
 }
@@ -538,6 +568,9 @@ async fn main() {
         }
     });
 
+    // Perform TR 101 290 checks
+    let mut tr101290_errors = Tr101290Errors::new();
+
     // Start packet capture
     let mut batch = Vec::new();
     loop {
@@ -576,11 +609,18 @@ async fn main() {
                     if let Some(stream_data) = pid_map.get_mut(&pid) {
                         if let Ok(arrival_time) = current_unix_timestamp_ms() {
                             stream_data.update_stats(stream_data.data.len(), arrival_time);
+                            // Log the updated metrics
+                            info!("PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms", 
+                                stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.iat, 
+                                stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp);
                         }                    
                     }
 
-                    // Perform TR 101 290 checks
-                    process_packet(&stream_data.data);
+                    // In your packet processing loop:
+                    process_packet(&stream_data.data, &mut tr101290_errors);
+
+                    // Periodically, or at the end of the processing:
+                    tr101290_errors.log_errors();
 
                     // print out the stream data parts outside of the .data
                     debug!("PID: {}, Stream Type: {}, Continuity Counter: {}, Timestamp: {} ms", 
