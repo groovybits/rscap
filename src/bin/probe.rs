@@ -166,22 +166,19 @@ fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
     let program_number = ((packet[8] as u16) << 8) | (packet[9] as u16);
 
     // Calculate the starting position for stream entries
+    let section_length = (((packet[6] as usize) & 0x0F) << 8) | packet[7] as usize;
     let program_info_length = (((packet[15] as usize) & 0x0F) << 8) | packet[16] as usize;
     let mut i = 17 + program_info_length; // Starting index of the first stream in the PMT
 
-    hexdump(&packet);
-
     info!("ParsePMT: Program Number: {} PMT PID: {} starting at position {}", program_number, pmt_pid, i);
-    while i + 5 <= packet.len() {
+    while i + 5 <= packet.len() && i < 17 + section_length - 4 {
         let stream_type = packet[i];
-        // Correctly masking the PID
         let stream_pid = (((packet[i + 1] as u16) & 0x1F) << 8) | (packet[i + 2] as u16);
+        let es_info_length = (((packet[i + 3] as usize) & 0x0F) << 8) | packet[i + 4] as usize;
+        i += 5 + es_info_length; // Update index to point to next stream's info
+
         entries.push(PmtEntry { stream_pid, stream_type });
         info!("ParsePMT: Stream PID: {}, Stream Type: {}", stream_pid, stream_type);
-
-        // Moving past the stream info and its descriptors
-        let es_info_length = ((packet[i + 3] as usize) << 8) | (packet[i + 4] as usize);
-        i += 5 + es_info_length;
     }
 
     Pmt { entries }
