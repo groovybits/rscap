@@ -690,7 +690,7 @@ fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
 }
 
 // Process the packet and return a vector of SMPTE ST 2110 packets
-fn process_smpte2110_packet(payload_offset: usize, packet: &[u8], packet_size: usize) -> Vec<StreamData> {
+fn process_smpte2110_packet(payload_offset: usize, packet: &[u8], _packet_size: usize) -> Vec<StreamData> {
     let mut smpte2110_packets = Vec::new();
     let start = payload_offset;
     //let mut read_size = packet_size; // TODO: Adjust this for SMPTE ST 2110
