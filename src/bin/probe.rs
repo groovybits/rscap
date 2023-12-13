@@ -112,6 +112,9 @@ impl StreamData {
             data: packet.to_vec(),
         }
     }
+    fn update_stream_type(&mut self, stream_type: String) {
+        self.stream_type = stream_type;
+    }
     fn update_stats(&mut self, packet_size: usize, arrival_time: u64) {
         let bits = packet_size as u64 * 8; // Convert bytes to bits
 
@@ -258,7 +261,9 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
                 error!("ProcessPacket: PID {} not found in PID map.", pid);
             }
         }
-        if !found_pid && pid == 0x1FFF {
+
+        // PID not found, add the stream_data_packet to the pid_map, probably before we have seen the PMT
+        if !found_pid {
             // PID not found, add the stream_data_packet to the pid_map
             pid_map.insert(
                 pid,
@@ -520,6 +525,8 @@ fn update_pid_map(pmt_packet: &[u8]) {
                     let stream_data = pid_map.get_mut(&stream_pid).unwrap();
                     // update the timestamp
                     stream_data.update_stats(pmt_packet.len(), timestamp);
+                    // update the stream type
+                    stream_data.update_stream_type(stream_type.to_string());
 
                      // create json object of stats
                      let json_stats = json!({
