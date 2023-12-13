@@ -184,16 +184,15 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
                 // Existing StreamData instance found, update it
                 stream_data.update_stats(packet.len(), arrival_time);
                 let uptime = arrival_time - stream_data.start_time;
+
                 // print stats
-                debug!("STATS: PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms Uptime: {} ms", 
+                debug!("STATS[PES]: PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms Uptime: {} ms", 
                                     stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data_packet.iat,
                                     stream_data.error_count, stream_data_packet.continuity_counter, stream_data_packet.timestamp, uptime);
             }
             None => {
-                // New StreamData instance needs to be created
-                //let stream_type = determine_stream_type(pid); // Determine stream type
-                //let new_stream_data = StreamData::new(packet, pid, stream_type, arrival_time, arrival_time, 0);
-                //pid_map.insert(pid, new_stream_data);
+                // No StreamData instance found, log an error
+                error!("ProcessPacket: PID {} not found in PID map.", pid);
             }
         }
     }
@@ -418,12 +417,26 @@ fn update_pid_map(pmt_packet: &[u8]) {
                         timestamp,
                         0,
                     );
+
+                    debug!("STATS[PMT]: PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms", 
+                                        stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.iat,
+                                        stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp);
+
                     pid_map.insert(stream_pid, stream_data);
                 } else {
                     debug!(
                         "UpdatePIDmap: PID {} already exists, not adding again.",
                         stream_pid
                     );
+                    // get the stream data so we can update it
+                    let stream_data = pid_map.get_mut(&stream_pid).unwrap();
+                    // update the timestamp
+                    stream_data.update_stats(pmt_packet.len(), timestamp);
+
+                    // print stats
+                    debug!("STATS[PMT]: PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms", 
+                                        stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.iat,
+                                        stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp);
                 }
             }
         } else {
