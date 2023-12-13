@@ -177,6 +177,7 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
     // Use a scope to limit the duration of the lock
     {
         let mut pid_map = PID_MAP.lock().unwrap();
+        let mut found_pid = false;
 
         // Check if the PID map already has an entry for this PID
         match pid_map.get_mut(&pid) {
@@ -189,11 +190,19 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
                 debug!("STATS[PES]: PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms Uptime: {} ms", 
                                     stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data_packet.iat,
                                     stream_data.error_count, stream_data_packet.continuity_counter, stream_data_packet.timestamp, uptime);
+                found_pid = true;
             }
             None => {
                 // No StreamData instance found, log an error
                 error!("ProcessPacket: PID {} not found in PID map.", pid);
             }
+        }
+        if !found_pid && pid == 0x1FFF {
+            // PID not found, add the stream_data_packet to the pid_map
+            pid_map.insert(
+                pid,
+                stream_data_packet.clone(),
+            );
         }
     }
 }
