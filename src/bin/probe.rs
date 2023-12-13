@@ -9,13 +9,13 @@
 
 extern crate rtp_rs as rtp;
 extern crate zmq;
+use clap::Parser;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use pcap::Capture;
 use rtp::RtpReader;
 use serde_json::json;
 use std::collections::HashMap;
-use std::env;
 use std::io::Write;
 use std::net::{Ipv4Addr, UdpSocket};
 use std::sync::mpsc;
@@ -433,68 +433,100 @@ fn determine_stream_type(pid: u16) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+/// RScap Probe Configuration
+#[derive(Parser, Debug)]
+#[clap(
+    author = "Chris Kennedy",
+    version = "1.0",
+    about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
+)]
+struct Args {
+    /// Sets the batch size
+    #[clap(long, env = "BATCH_SIZE", default_value_t = 1000)]
+    batch_size: usize,
+
+    /// Sets the payload offset
+    #[clap(long, env = "PAYLOAD_OFFSET", default_value_t = 42)]
+    payload_offset: usize,
+
+    /// Sets the packet size
+    #[clap(long, env = "PACKET_SIZE", default_value_t = 188)]
+    packet_size: usize,
+
+    /// Sets the read timeout
+    #[clap(long, env = "READ_TIME_OUT", default_value_t = 300000)]
+    read_time_out: i32,
+
+    /// Sets the target port
+    #[clap(long, env = "TARGET_PORT", default_value_t = 5556)]
+    target_port: i32,
+
+    /// Sets the target IP
+    #[clap(long, env = "TARGET_IP", default_value = "127.0.0.1")]
+    target_ip: String,
+
+    /// Sets the source device
+    #[clap(long, env = "SOURCE_DEVICE", default_value = "")]
+    source_device: String,
+
+    /// Sets the source IP
+    #[clap(long, env = "SOURCE_IP", default_value = "224.0.0.200")]
+    source_ip: String,
+
+    /// Sets the source protocol
+    #[clap(long, env = "SOURCE_PROTOCOL", default_value = "udp")]
+    source_protocol: String,
+
+    /// Sets the source port
+    #[clap(long, env = "SOURCE_PORT", default_value_t = 10000)]
+    source_port: i32,
+
+    /// Sets the debug mode
+    #[clap(long, env = "DEBUG", default_value_t = false)]
+    debug_on: bool,
+
+    /// Sets the silent mode
+    #[clap(long, env = "SILENT", default_value_t = false)]
+    silent: bool,
+
+    /// Sets if wireless is used
+    #[clap(long, env = "USE_WIRELESS", default_value_t = false)]
+    use_wireless: bool,
+
+    /// Sets if JSON header should be sent
+    #[clap(long, env = "SEND_JSON_HEADER", default_value_t = false)]
+    send_json_header: bool,
+}
+
 // MAIN
 #[tokio::main]
 async fn main() {
     info!("Starting rscap probe");
     dotenv::dotenv().ok(); // read .env file
 
-    // setup various read/write variables
-    let mut batch_size: usize = env::var("BATCH_SIZE")
-        .unwrap_or("1000".to_string())
-        .parse()
-        .expect(&format!("Invalid format for BATCH_SIZE"));
-    let payload_offset: usize = env::var("PAYLOAD_OFFSET")
-        .unwrap_or("42".to_string())
-        .parse()
-        .expect(&format!("Invalid format for PAYLOAD_OFFSET"));
-    let packet_size: usize = env::var("PACKET_SIZE")
-        .unwrap_or("188".to_string())
-        .parse()
-        .expect(&format!("Invalid format for PACKET_SIZE"));
-    let read_time_out: i32 = env::var("READ_TIME_OUT")
-        .unwrap_or("300000".to_string())
-        .parse()
-        .expect(&format!("Invalid format for READ_TIME_OUT"));
+    let source_device_ip: &str = "0.0.0.0";
+
+    let args = Args::parse();
+
+    // Use the parsed arguments directly
+    let mut batch_size = args.batch_size;
+    let payload_offset = args.payload_offset;
+    let packet_size = args.packet_size;
+    let read_time_out = args.read_time_out;
+    let target_port = args.target_port;
+    let target_ip = args.target_ip;
+    let source_device = args.source_device;
+    let source_ip = args.source_ip;
+    let source_protocol = args.source_protocol;
+    let source_port = args.source_port;
+    let debug_on = args.debug_on;
+    let silent = args.silent;
+    #[cfg(not(target_os = "linux"))]
+    let use_wireless = args.use_wireless;
+    let send_json_header = args.send_json_header;
 
     // calculate read size based on batch size and packet size
     let read_size: i32 = (packet_size as i32 * batch_size as i32) + payload_offset as i32; // pcap read size
-
-    // Get environment variables or use default values, set in .env file
-    let target_port: i32 = env::var("TARGET_PORT")
-        .unwrap_or("5556".to_string())
-        .parse()
-        .expect(&format!("Invalid format for TARGET_PORT"));
-    let target_ip: String = env::var("TARGET_IP").unwrap_or("127.0.0.1".to_string());
-    let source_device: String = env::var("SOURCE_DEVICE").unwrap_or("".to_string());
-    let source_ip: String = env::var("SOURCE_IP").unwrap_or("224.0.0.200".to_string());
-    let source_protocol: String = env::var("SOURCE_PROTOCOL").unwrap_or("udp".to_string());
-
-    let source_port: i32 = env::var("SOURCE_PORT")
-        .unwrap_or("10000".to_string())
-        .parse()
-        .expect(&format!("Invalid format for SOURCE_PORT"));
-    let source_device_ip: &str = "0.0.0.0";
-
-    let debug_on: bool = env::var("DEBUG")
-        .unwrap_or("false".to_string())
-        .parse()
-        .expect(&format!("Invalid format for DEBUG"));
-    let silent: bool = env::var("SILENT")
-        .unwrap_or("false".to_string())
-        .parse()
-        .expect(&format!("Invalid format for SILENT"));
-
-    #[cfg(not(target_os = "linux"))]
-    let use_wireless: bool = env::var("USE_WIRELESS")
-        .unwrap_or("false".to_string())
-        .parse()
-        .expect(&format!("Invalid format for USE_WIRELESS"));
-
-    let send_json_header: bool = env::var("SEND_JSON_HEADER")
-        .unwrap_or("false".to_string())
-        .parse()
-        .expect(&format!("Invalid format for SEND_JSON_HEADER"));
 
     let mut is_mpegts = true; // Default to true, update based on actual packet type
 
@@ -920,8 +952,6 @@ fn process_smpte2110_packet(
                 let payload_type = rtp.payload_type();
 
                 let payload_offset = rtp.payload_offset();
-
-                let payload = rtp.payload();
 
                 let line_length = get_line_length(rtp_packet);
                 let line_number = get_line_number(rtp_packet);
