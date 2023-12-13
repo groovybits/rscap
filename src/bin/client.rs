@@ -12,25 +12,36 @@
  */
 
 extern crate zmq;
-use log::{error, debug, info};
-use tokio;
+use log::{debug, error, info};
+use std::env;
 use std::fs::File;
 use std::io::Write;
-use std::env;
+use tokio;
 //use ffmpeg_next as ffmpeg; // You might need to configure FFmpeg flags
 
-
 #[tokio::main]
-async fn main() {    
+async fn main() {
     dotenv::dotenv().ok(); // read .env file
 
     // Get environment variables or use default values, set in .env file
-    let source_port: i32 = env::var("TARGET_PORT").unwrap_or("5556".to_string()).parse().expect(&format!("Invalid format for TARGET_PORT"));
+    let source_port: i32 = env::var("TARGET_PORT")
+        .unwrap_or("5556".to_string())
+        .parse()
+        .expect(&format!("Invalid format for TARGET_PORT"));
     let source_ip: &str = &env::var("TARGET_IP").unwrap_or("127.0.0.1".to_string());
-    let debug_on: bool = env::var("DEBUG").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for DEBUG"));
-    let silent: bool = env::var("SILENT").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for SILENT"));
+    let debug_on: bool = env::var("DEBUG")
+        .unwrap_or("false".to_string())
+        .parse()
+        .expect(&format!("Invalid format for DEBUG"));
+    let silent: bool = env::var("SILENT")
+        .unwrap_or("false".to_string())
+        .parse()
+        .expect(&format!("Invalid format for SILENT"));
     let output_file: &str = &env::var("OUTPUT_FILE").unwrap_or("output.ts".to_string());
-    let send_json_header: bool = env::var("SEND_JSON_HEADER").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for SEND_JSON_HEADER"));
+    let send_json_header: bool = env::var("SEND_JSON_HEADER")
+        .unwrap_or("false".to_string())
+        .parse()
+        .expect(&format!("Invalid format for SEND_JSON_HEADER"));
 
     info!("Starting rscap client");
 
@@ -39,9 +50,7 @@ async fn main() {
         if debug_on {
             log_level = log::LevelFilter::Debug;
         }
-        env_logger::Builder::new()
-        .filter_level(log_level)
-        .init();
+        env_logger::Builder::new().filter_level(log_level).init();
     }
 
     // Setup ZeroMQ subscriber
@@ -66,7 +75,11 @@ async fn main() {
             count += 1;
             let json_header = String::from_utf8(msg.clone()).unwrap();
             if debug_on {
-                info!("#{} Received JSON header: {}", mpeg_packets + 1, json_header);
+                info!(
+                    "#{} Received JSON header: {}",
+                    mpeg_packets + 1,
+                    json_header
+                );
             }
             continue;
         }
@@ -74,7 +87,12 @@ async fn main() {
         count += 1;
         mpeg_packets += 1;
         if debug_on {
-            debug!("#{} Received {}/{} bytes", mpeg_packets, msg.len(), total_bytes);
+            debug!(
+                "#{} Received {}/{} bytes",
+                mpeg_packets,
+                msg.len(),
+                total_bytes
+            );
         } else if !silent {
             print!(".");
             std::io::stdout().flush().unwrap();
@@ -111,4 +129,3 @@ fn check_mpegts_integrity(file_path: &str) {
     }
 }
 */
-

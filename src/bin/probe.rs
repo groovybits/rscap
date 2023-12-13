@@ -7,22 +7,22 @@
  *
  */
 
-extern crate zmq;
 extern crate rtp_rs as rtp;
+extern crate zmq;
+use lazy_static::lazy_static;
+use log::{debug, error, info};
+use pcap::Capture;
 use rtp::RtpReader;
-use pcap::{Capture};
 use serde_json::json;
-use log::{error, debug, info};
-use tokio;
-use std::net::{Ipv4Addr, UdpSocket};
+use std::collections::HashMap;
 use std::env;
 use std::io::Write;
+use std::net::{Ipv4Addr, UdpSocket};
 use std::sync::mpsc;
-use std::thread;
-use std::collections::HashMap;
 use std::sync::Mutex;
-use lazy_static::lazy_static;
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio;
 
 // constant for PAT PID
 const PAT_PID: u16 = 0;
@@ -61,14 +61,21 @@ struct StreamData {
     iat: u64,
     error_count: u32,
     last_arrival_time: u64,
-    start_time: u64,        // field for start time
-    total_bits: u64,        // field for total bits
-    data: Vec<u8>, // The actual MPEG-TS packet data
+    start_time: u64, // field for start time
+    total_bits: u64, // field for total bits
+    data: Vec<u8>,   // The actual MPEG-TS packet data
 }
 
 // StreamData implementation
 impl StreamData {
-    fn new(packet: &[u8], pid: u16, stream_type: String, start_time: u64, timestamp: u64, continuity_counter: u8) -> Self {      
+    fn new(
+        packet: &[u8],
+        pid: u16,
+        stream_type: String,
+        start_time: u64,
+        timestamp: u64,
+        continuity_counter: u8,
+    ) -> Self {
         let bitrate = 0;
         let iat = 0;
         let error_count = 0;
@@ -82,8 +89,8 @@ impl StreamData {
             iat,
             error_count,
             last_arrival_time,
-            start_time,         // Initialize start time
-            total_bits: 0,                 // Initialize total bits
+            start_time,    // Initialize start time
+            total_bits: 0, // Initialize total bits
             data: packet.to_vec(),
         }
     }
@@ -131,10 +138,16 @@ impl Tr101290Errors {
             error!("Sync byte errors: {}", self.sync_byte_errors);
         }
         if self.transport_error_indicator_errors > 0 {
-            error!("Transport Error Indicator errors: {}", self.transport_error_indicator_errors);
+            error!(
+                "Transport Error Indicator errors: {}",
+                self.transport_error_indicator_errors
+            );
         }
         if self.continuity_counter_errors > 0 {
-            error!("Continuity counter errors: {}", self.continuity_counter_errors);
+            error!(
+                "Continuity counter errors: {}",
+                self.continuity_counter_errors
+            );
         }
         // ... log other errors ...
     }
@@ -173,9 +186,9 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
                 let uptime = arrival_time - stream_data.start_time;
                 // print stats
                 debug!("STATS: PID: {}, Type: {}, Bitrate: {} bps, IAT: {} ms, Errors: {}, CC: {}, Timestamp: {} ms Uptime: {} ms", 
-                                    stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data_packet.iat, 
+                                    stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data_packet.iat,
                                     stream_data.error_count, stream_data_packet.continuity_counter, stream_data_packet.timestamp, uptime);
-            },
+            }
             None => {
                 // New StreamData instance needs to be created
                 //let stream_type = determine_stream_type(pid); // Determine stream type
@@ -226,20 +239,29 @@ fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
     let pusi = (packet[1] & 0x40) != 0;
     let adaptation_field_control = (packet[3] & 0x30) >> 4;
     let mut pat_start = 4; // start after TS header
-    
+
     if adaptation_field_control == 0x02 || adaptation_field_control == 0x03 {
         let adaptation_field_length = packet[4] as usize;
         pat_start += 1 + adaptation_field_length; // +1 for the length byte itself
-        debug!("ParsePAT: Adaptation Field Length: {}", adaptation_field_length);
+        debug!(
+            "ParsePAT: Adaptation Field Length: {}",
+            adaptation_field_length
+        );
     } else {
-        debug!("ParsePAT: Skipping Adaptation Field Control: {}", adaptation_field_control);
+        debug!(
+            "ParsePAT: Skipping Adaptation Field Control: {}",
+            adaptation_field_control
+        );
     }
 
     if pusi {
         // PUSI is set, so the first byte after the TS header is the pointer field
         let pointer_field = packet[pat_start] as usize;
         //pat_start += 1 + pointer_field; // Skip pointer field
-        debug!("ParsePAT: PUSI set as {}, skipping pointer field {} as packet value {} {}", pusi, pointer_field, packet[0], packet[1]);
+        debug!(
+            "ParsePAT: PUSI set as {}, skipping pointer field {} as packet value {} {}",
+            pusi, pointer_field, packet[0], packet[1]
+        );
     } else {
         debug!("ParsePAT: PUSI not set as {}", pusi);
     }
@@ -259,9 +281,17 @@ fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
 
         //debug!("ParsePAT: Packet1 {}, Packet2 {}, Packet3 {}, Packet4 {}", packet[i], packet[i + 1], packet[i + 2], packet[i + 3]);
 
-        if program_number != 0 && program_number != 65535 && pmt_pid != 0 && program_number < 30 /* FIXME: kludge fix for now */ {
-            debug!("ParsePAT: Program Number: {} PMT PID: {}", program_number, pmt_pid);
-            entries.push(PatEntry { program_number, pmt_pid });
+        if program_number != 0 && program_number != 65535 && pmt_pid != 0 && program_number < 30
+        /* FIXME: kludge fix for now */
+        {
+            debug!(
+                "ParsePAT: Program Number: {} PMT PID: {}",
+                program_number, pmt_pid
+            );
+            entries.push(PatEntry {
+                program_number,
+                pmt_pid,
+            });
         }
 
         i += 4;
@@ -279,15 +309,24 @@ fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
     let program_info_length = (((packet[15] as usize) & 0x0F) << 8) | packet[16] as usize;
     let mut i = 17 + program_info_length; // Starting index of the first stream in the PMT
 
-    debug!("ParsePMT: Program Number: {} PMT PID: {} starting at position {}", program_number, pmt_pid, i);
+    debug!(
+        "ParsePMT: Program Number: {} PMT PID: {} starting at position {}",
+        program_number, pmt_pid, i
+    );
     while i + 5 <= packet.len() && i < 17 + section_length - 4 {
         let stream_type = packet[i];
         let stream_pid = (((packet[i + 1] as u16) & 0x1F) << 8) | (packet[i + 2] as u16);
         let es_info_length = (((packet[i + 3] as usize) & 0x0F) << 8) | packet[i + 4] as usize;
         i += 5 + es_info_length; // Update index to point to next stream's info
 
-        entries.push(PmtEntry { stream_pid, stream_type });
-        debug!("ParsePMT: Stream PID: {}, Stream Type: {}", stream_pid, stream_type);
+        entries.push(PmtEntry {
+            stream_pid,
+            stream_type,
+        });
+        debug!(
+            "ParsePMT: Stream PID: {}, Stream Type: {}",
+            stream_pid, stream_type
+        );
     }
 
     Pmt { entries }
@@ -299,7 +338,9 @@ fn update_pid_map(pmt_packet: &[u8]) {
 
     // Process the stored PAT packet to find program numbers and corresponding PMT PIDs
     let program_pids = unsafe {
-        LAST_PAT_PACKET.as_ref().map_or_else(Vec::new, |pat_packet| parse_pat(pat_packet))
+        LAST_PAT_PACKET
+            .as_ref()
+            .map_or_else(Vec::new, |pat_packet| parse_pat(pat_packet))
     };
 
     for pat_entry in program_pids.iter() {
@@ -307,14 +348,20 @@ fn update_pid_map(pmt_packet: &[u8]) {
         let pmt_pid = pat_entry.pmt_pid;
 
         // Log for debugging
-        debug!("UpdatePIDmap: Processing Program Number: {}, PMT PID: {}", program_number, pmt_pid);
+        debug!(
+            "UpdatePIDmap: Processing Program Number: {}, PMT PID: {}",
+            program_number, pmt_pid
+        );
 
         // Ensure the current PMT packet matches the PMT PID from the PAT
         if extract_pid(pmt_packet) == pmt_pid {
             let pmt = parse_pmt(pmt_packet, pmt_pid);
 
             for pmt_entry in pmt.entries.iter() {
-                debug!("UpdatePIDmap: Processing PMT PID: {} for Stream PID: {} Type {}", pmt_pid, pmt_entry.stream_pid, pmt_entry.stream_type);
+                debug!(
+                    "UpdatePIDmap: Processing PMT PID: {} for Stream PID: {} Type {}",
+                    pmt_pid, pmt_entry.stream_pid, pmt_entry.stream_type
+                );
 
                 let stream_pid = pmt_entry.stream_pid;
                 let stream_type = match pmt_entry.stream_type {
@@ -358,8 +405,18 @@ fn update_pid_map(pmt_packet: &[u8]) {
 
                 let timestamp = current_unix_timestamp_ms().unwrap_or(0);
 
-                debug!("UpdatePIDmap: Added Stream PID: {}, Stream Type: {}/{}", stream_pid, pmt_entry.stream_type, stream_type);
-                let stream_data = StreamData::new(&[], stream_pid, stream_type.to_string(), timestamp, timestamp, 0);
+                debug!(
+                    "UpdatePIDmap: Added Stream PID: {}, Stream Type: {}/{}",
+                    stream_pid, pmt_entry.stream_type, stream_type
+                );
+                let stream_data = StreamData::new(
+                    &[],
+                    stream_pid,
+                    stream_type.to_string(),
+                    timestamp,
+                    timestamp,
+                    0,
+                );
                 pid_map.insert(stream_pid, stream_data);
             }
         } else {
@@ -370,9 +427,10 @@ fn update_pid_map(pmt_packet: &[u8]) {
 
 fn determine_stream_type(pid: u16) -> String {
     let pid_map = PID_MAP.lock().unwrap();
-    pid_map.get(&pid)
-           .map(|stream_data| stream_data.stream_type.clone())
-           .unwrap_or_else(|| "unknown".to_string())
+    pid_map
+        .get(&pid)
+        .map(|stream_data| stream_data.stream_type.clone())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 // MAIN
@@ -382,31 +440,61 @@ async fn main() {
     dotenv::dotenv().ok(); // read .env file
 
     // setup various read/write variables
-    let mut batch_size: usize = env::var("BATCH_SIZE").unwrap_or("1000".to_string()).parse().expect(&format!("Invalid format for BATCH_SIZE"));
-    let payload_offset: usize = env::var("PAYLOAD_OFFSET").unwrap_or("42".to_string()).parse().expect(&format!("Invalid format for PAYLOAD_OFFSET"));
-    let packet_size: usize = env::var("PACKET_SIZE").unwrap_or("188".to_string()).parse().expect(&format!("Invalid format for PACKET_SIZE"));
-    let read_time_out: i32 = env::var("READ_TIME_OUT").unwrap_or("300000".to_string()).parse().expect(&format!("Invalid format for READ_TIME_OUT"));
+    let mut batch_size: usize = env::var("BATCH_SIZE")
+        .unwrap_or("1000".to_string())
+        .parse()
+        .expect(&format!("Invalid format for BATCH_SIZE"));
+    let payload_offset: usize = env::var("PAYLOAD_OFFSET")
+        .unwrap_or("42".to_string())
+        .parse()
+        .expect(&format!("Invalid format for PAYLOAD_OFFSET"));
+    let packet_size: usize = env::var("PACKET_SIZE")
+        .unwrap_or("188".to_string())
+        .parse()
+        .expect(&format!("Invalid format for PACKET_SIZE"));
+    let read_time_out: i32 = env::var("READ_TIME_OUT")
+        .unwrap_or("300000".to_string())
+        .parse()
+        .expect(&format!("Invalid format for READ_TIME_OUT"));
 
     // calculate read size based on batch size and packet size
     let read_size: i32 = (packet_size as i32 * batch_size as i32) + payload_offset as i32; // pcap read size
 
     // Get environment variables or use default values, set in .env file
-    let target_port: i32 = env::var("TARGET_PORT").unwrap_or("5556".to_string()).parse().expect(&format!("Invalid format for TARGET_PORT"));
+    let target_port: i32 = env::var("TARGET_PORT")
+        .unwrap_or("5556".to_string())
+        .parse()
+        .expect(&format!("Invalid format for TARGET_PORT"));
     let target_ip: String = env::var("TARGET_IP").unwrap_or("127.0.0.1".to_string());
     let source_device: String = env::var("SOURCE_DEVICE").unwrap_or("".to_string());
     let source_ip: String = env::var("SOURCE_IP").unwrap_or("224.0.0.200".to_string());
     let source_protocol: String = env::var("SOURCE_PROTOCOL").unwrap_or("udp".to_string());
 
-    let source_port: i32 = env::var("SOURCE_PORT").unwrap_or("10000".to_string()).parse().expect(&format!("Invalid format for SOURCE_PORT"));
+    let source_port: i32 = env::var("SOURCE_PORT")
+        .unwrap_or("10000".to_string())
+        .parse()
+        .expect(&format!("Invalid format for SOURCE_PORT"));
     let source_device_ip: &str = "0.0.0.0";
 
-    let debug_on: bool = env::var("DEBUG").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for DEBUG"));
-    let silent: bool = env::var("SILENT").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for SILENT"));
+    let debug_on: bool = env::var("DEBUG")
+        .unwrap_or("false".to_string())
+        .parse()
+        .expect(&format!("Invalid format for DEBUG"));
+    let silent: bool = env::var("SILENT")
+        .unwrap_or("false".to_string())
+        .parse()
+        .expect(&format!("Invalid format for SILENT"));
 
     #[cfg(not(target_os = "linux"))]
-    let use_wireless: bool = env::var("USE_WIRELESS").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for USE_WIRELESS"));
+    let use_wireless: bool = env::var("USE_WIRELESS")
+        .unwrap_or("false".to_string())
+        .parse()
+        .expect(&format!("Invalid format for USE_WIRELESS"));
 
-    let send_json_header: bool = env::var("SEND_JSON_HEADER").unwrap_or("false".to_string()).parse().expect(&format!("Invalid format for SEND_JSON_HEADER"));
+    let send_json_header: bool = env::var("SEND_JSON_HEADER")
+        .unwrap_or("false".to_string())
+        .parse()
+        .expect(&format!("Invalid format for SEND_JSON_HEADER"));
 
     let mut is_mpegts = true; // Default to true, update based on actual packet type
 
@@ -414,8 +502,10 @@ async fn main() {
     env_logger::init(); // set RUST_LOG environment variable to debug for more verbose logging
 
     // device ip address
-    let mut interface_addr = source_device_ip.parse::<Ipv4Addr>()
-        .expect(&format!("Invalid IP address format in source_device_ip {}", source_device_ip));
+    let mut interface_addr = source_device_ip.parse::<Ipv4Addr>().expect(&format!(
+        "Invalid IP address format in source_device_ip {}",
+        source_device_ip
+    ));
 
     // Get the selected device's details
     let mut target_device_found = false;
@@ -425,13 +515,22 @@ async fn main() {
         info!("Device: {:?}, Flags: {:?}", device.name, device.flags);
     }
     #[cfg(target_os = "linux")]
-    let mut target_device = devices.clone().into_iter()
+    let mut target_device = devices
+        .clone()
+        .into_iter()
         .find(|d| d.name != "lo") // Exclude loopback device
         .expect("No valid devices found");
 
     #[cfg(not(target_os = "linux"))]
-    let mut target_device = devices.clone().into_iter()
-        .find(|d| d.flags.is_up() && !d.flags.is_loopback() && d.flags.is_running() && (!d.flags.is_wireless() || use_wireless))
+    let mut target_device = devices
+        .clone()
+        .into_iter()
+        .find(|d| {
+            d.flags.is_up()
+                && !d.flags.is_loopback()
+                && d.flags.is_running()
+                && (!d.flags.is_wireless() || use_wireless)
+        })
         .expect(&format!("No valid devices found {}", devices.len()));
 
     info!("Default device: {:?}", target_device.name);
@@ -466,7 +565,7 @@ async fn main() {
             if !device.flags.is_running() {
                 continue;
             }
-            
+
             // check if device has an IPv4 address
             for addr in device.addresses.iter() {
                 if let std::net::IpAddr::V4(ipv4_addr) = addr.addr {
@@ -477,7 +576,10 @@ async fn main() {
                     target_device_found = true;
 
                     // Found through auto-detection, set interface_addr
-                    info!("Found IPv4 target device {} with ip {}", source_device, ipv4_addr);
+                    info!(
+                        "Found IPv4 target device {} with ip {}",
+                        source_device, ipv4_addr
+                    );
                     interface_addr = ipv4_addr;
                     target_device = device;
                     break;
@@ -486,7 +588,7 @@ async fn main() {
             // break out of loop if target device is found
             if target_device_found {
                 break;
-            }   
+            }
         }
     } else {
         // Use the specified device instead of auto-detection
@@ -494,11 +596,20 @@ async fn main() {
 
         // Find the specified device
         #[cfg(not(target_os = "linux"))]
-        let target_device_discovered = devices.into_iter().find(|d| d.name == source_device && d.flags.is_up() && d.flags.is_running() && (!d.flags.is_wireless() || use_wireless))
+        let target_device_discovered = devices
+            .into_iter()
+            .find(|d| {
+                d.name == source_device
+                    && d.flags.is_up()
+                    && d.flags.is_running()
+                    && (!d.flags.is_wireless() || use_wireless)
+            })
             .expect(&format!("Target device not found {}", source_device));
 
         #[cfg(target_os = "linux")]
-        let target_device_discovered = devices.into_iter().find(|d| d.name == source_device)
+        let target_device_discovered = devices
+            .into_iter()
+            .find(|d| d.name == source_device)
             .expect(&format!("Target device not found {}", source_device));
 
         // Check if device has an IPv4 address
@@ -521,12 +632,18 @@ async fn main() {
     }
 
     // Join multicast group
-    let multicast_addr = source_ip.parse::<Ipv4Addr>()
-        .expect(&format!("Invalid IP address format in source_ip {}", source_ip));
+    let multicast_addr = source_ip.parse::<Ipv4Addr>().expect(&format!(
+        "Invalid IP address format in source_ip {}",
+        source_ip
+    ));
 
     let socket = UdpSocket::bind("0.0.0.0:0").expect("Failed to bind socket");
-    socket.join_multicast_v4(&multicast_addr, &interface_addr)
-    .expect(&format!("Failed to join multicast group on interface {}", source_device));
+    socket
+        .join_multicast_v4(&multicast_addr, &interface_addr)
+        .expect(&format!(
+            "Failed to join multicast group on interface {}",
+            source_device
+        ));
 
     #[cfg(not(target_os = "linux"))]
     let promiscuous: bool = false;
@@ -535,14 +652,19 @@ async fn main() {
     let promiscuous: bool = true;
 
     // Setup packet capture
-    let mut cap = Capture::from_device(target_device).unwrap()
+    let mut cap = Capture::from_device(target_device)
+        .unwrap()
         .promisc(promiscuous)
         .timeout(read_time_out)
         .snaplen(read_size) // Adjust this based on network configuration
-        .open().unwrap();
+        .open()
+        .unwrap();
 
     // Filter pcap
-    let source_host_and_port = format!("{} dst port {} and ip dst host {}", source_protocol, source_port, source_ip);
+    let source_host_and_port = format!(
+        "{} dst port {} and ip dst host {}",
+        source_protocol, source_port, source_ip
+    );
     cap.filter(&source_host_and_port, true).unwrap();
 
     // Setup channel for passing data between threads
@@ -590,7 +712,9 @@ async fn main() {
                 });
 
                 // Send JSON header as multipart message
-                publisher.send(json_header.to_string().as_bytes(), zmq::SNDMORE).unwrap();
+                publisher
+                    .send(json_header.to_string().as_bytes(), zmq::SNDMORE)
+                    .unwrap();
             }
 
             // Send chunk of data as multipart message
@@ -598,14 +722,17 @@ async fn main() {
             total_bytes += chunk_size;
             count += 1;
             publisher.send(batched_data, 0).unwrap();
-            
+
             // Print progress
-            if !debug_on && !silent{
+            if !debug_on && !silent {
                 print!(".");
                 // flush stdout
                 std::io::stdout().flush().unwrap();
             } else if !silent {
-                debug!("#{} Sent chunk of {}/{} bytes", count, chunk_size, total_bytes);
+                debug!(
+                    "#{} Sent chunk of {}/{} bytes",
+                    count, chunk_size, total_bytes
+                );
             }
         }
     });
@@ -621,7 +748,7 @@ async fn main() {
     loop {
         match cap.next_packet() {
             Ok(packet) => {
-                if debug_on{
+                if debug_on {
                     debug!("Received packet! {:?}", packet.header);
                 }
 
@@ -666,13 +793,13 @@ async fn main() {
                         batch.clear();
                     }
                 }
-                
+
                 let stats = cap.stats().unwrap();
                 debug!(
                     "Received: {}, dropped: {}, if_dropped: {}",
                     stats.received, stats.dropped, stats.if_dropped
                 );
-            },
+            }
             Err(e) => {
                 error!("Error capturing packet: {:?}", e);
                 break; // or handle the error as needed
@@ -766,7 +893,12 @@ fn get_line_offset(buf: &[u8]) -> u16 {
 // ## End of RFC 4175 SMPTE2110 header functions ##
 
 // Process the packet and return a vector of SMPTE ST 2110 packets
-fn process_smpte2110_packet(payload_offset: usize, packet: &[u8], _packet_size: usize, start_time: u64) -> Vec<StreamData> {
+fn process_smpte2110_packet(
+    payload_offset: usize,
+    packet: &[u8],
+    _packet_size: usize,
+    start_time: u64,
+) -> Vec<StreamData> {
     let start = payload_offset;
     let mut streams = Vec::new();
 
@@ -778,7 +910,7 @@ fn process_smpte2110_packet(payload_offset: usize, packet: &[u8], _packet_size: 
             if let Ok(rtp) = RtpReader::new(rtp_packet) {
                 // Extract the sequence number
                 let _sequence_number = rtp.sequence_number();
-        
+
                 // Extract the timestamp
                 let timestamp = rtp.timestamp();
 
@@ -790,12 +922,12 @@ fn process_smpte2110_packet(payload_offset: usize, packet: &[u8], _packet_size: 
                 let payload_offset = rtp.payload_offset();
 
                 let payload = rtp.payload();
-               
+
                 let line_length = get_line_length(rtp_packet);
                 let line_number = get_line_number(rtp_packet);
                 let line_offset = get_line_offset(rtp_packet);
                 let field_id = get_line_field_id(rtp_packet);
-        
+
                 let smpte_header_info = json!({
                     "size": chunk_size,
                     //"sequence_number": sequence_number as u64,
@@ -809,14 +941,24 @@ fn process_smpte2110_packet(payload_offset: usize, packet: &[u8], _packet_size: 
 
                 let pid = 1; /* FIXME */
                 let stream_type = "smpte2110".to_string();
-                let mut stream_data = StreamData::new(&rtp_packet[payload_offset..], pid, stream_type, start_time, timestamp as u64, 0 /* fix me */);
+                let mut stream_data = StreamData::new(
+                    &rtp_packet[payload_offset..],
+                    pid,
+                    stream_type,
+                    start_time,
+                    timestamp as u64,
+                    0, /* fix me */
+                );
                 // update streams details in stream_data structure
                 stream_data.update_stats(chunk_size, current_unix_timestamp_ms().unwrap_or(0));
 
-                streams.push(stream_data);            
+                streams.push(stream_data);
 
                 //smpte2110_packets.push(rtp_packet.to_vec());
-                debug!("SMPTE ST 2110 Header Info: {}", smpte_header_info.to_string());
+                debug!(
+                    "SMPTE ST 2110 Header Info: {}",
+                    smpte_header_info.to_string()
+                );
             } else {
                 hexdump(&packet);
                 error!("Error parsing RTP header, not SMPTE ST 2110");
@@ -834,16 +976,20 @@ fn process_smpte2110_packet(payload_offset: usize, packet: &[u8], _packet_size: 
 }
 
 // Process the packet and return a vector of MPEG-TS packets
-fn process_mpegts_packet(payload_offset: usize, packet: &[u8], packet_size: usize, start_time: u64) -> Vec<StreamData> {
-    //let mut mpeg_ts_packets = Vec::new();
+fn process_mpegts_packet(
+    payload_offset: usize,
+    packet: &[u8],
+    packet_size: usize,
+    start_time: u64,
+) -> Vec<StreamData> {
     let mut start = payload_offset;
     let mut read_size = packet_size;
     let mut streams = Vec::new();
 
     while start + read_size <= packet.len() {
         let chunk = &packet[start..start + read_size];
-        if chunk[0] == 0x47 { // Check for MPEG-TS sync byte
-            //mpeg_ts_packets.push(chunk.to_vec());
+        if chunk[0] == 0x47 {
+            // Check for MPEG-TS sync byte
             read_size = packet_size; // reset read_size
 
             let pid = ((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
@@ -865,12 +1011,23 @@ fn process_mpegts_packet(payload_offset: usize, packet: &[u8], packet_size: usiz
                     }
                 }
             }
-    
+
             let stream_type = determine_stream_type(pid); // Implement this function based on PAT/PMT parsing
-            let timestamp = ((chunk[4] as u64) << 25) | ((chunk[5] as u64) << 17) | ((chunk[6] as u64) << 9) | ((chunk[7] as u64) << 1) | ((chunk[8] as u64) >> 7);
+            let timestamp = ((chunk[4] as u64) << 25)
+                | ((chunk[5] as u64) << 17)
+                | ((chunk[6] as u64) << 9)
+                | ((chunk[7] as u64) << 1)
+                | ((chunk[8] as u64) >> 7);
             let continuity_counter = chunk[3] & 0x0F;
-    
-            let mut stream_data = StreamData::new(chunk, pid, stream_type, start_time, timestamp, continuity_counter);
+
+            let mut stream_data = StreamData::new(
+                chunk,
+                pid,
+                stream_type,
+                start_time,
+                timestamp,
+                continuity_counter,
+            );
             stream_data.update_stats(chunk.len(), current_unix_timestamp_ms().unwrap_or(0));
             streams.push(stream_data);
         } else {
@@ -901,4 +1058,3 @@ fn hexdump(packet: &[u8]) {
     info!("");
     info!("--------------------------------------------------");
 }
-
