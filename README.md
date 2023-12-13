@@ -7,6 +7,46 @@ keeping the ZeroMQ output clean without any non-legal
 TS packets. Store metadata extracted in zeromq json headers.
 Share out multicast to many clients for distributed stream processing.
 
+```
+RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap.
+
+Usage: probe [OPTIONS]
+
+Options:
+      --batch-size <BATCH_SIZE>
+          Sets the batch size [env: BATCH_SIZE=] [default: 1000]
+      --payload-offset <PAYLOAD_OFFSET>
+          Sets the payload offset [env: PAYLOAD_OFFSET=] [default: 42]
+      --packet-size <PACKET_SIZE>
+          Sets the packet size [env: PACKET_SIZE=] [default: 188]
+      --read-time-out <READ_TIME_OUT>
+          Sets the read timeout [env: READ_TIME_OUT=] [default: 300000]
+      --target-port <TARGET_PORT>
+          Sets the target port [env: TARGET_PORT=5556] [default: 5556]
+      --target-ip <TARGET_IP>
+          Sets the target IP [env: TARGET_IP=127.0.0.1] [default: 127.0.0.1]
+      --source-device <SOURCE_DEVICE>
+          Sets the source device [env: SOURCE_DEVICE=] [default: ]
+      --source-ip <SOURCE_IP>
+          Sets the source IP [env: SOURCE_IP=224.0.0.200] [default: 224.0.0.200]
+      --source-protocol <SOURCE_PROTOCOL>
+          Sets the source protocol [env: SOURCE_PROTOCOL=] [default: udp]
+      --source-port <SOURCE_PORT>
+          Sets the source port [env: SOURCE_PORT=10000] [default: 10000]
+      --debug-on
+          Sets the debug mode [env: DEBUG=]
+      --silent
+          Sets the silent mode [env: SILENT=]
+      --use-wireless
+          Sets if wireless is used [env: USE_WIRELESS=]
+      --send-json-header
+          Sets if JSON header should be sent [env: SEND_JSON_HEADER=]
+  -h, --help
+          Print help
+  -V, --version
+          Print version
+```
+
 ![rscap](https://storage.googleapis.com/gaib/2/rscap/rscap.png)
 
 ## This consists of two programs, a probe and a client.
