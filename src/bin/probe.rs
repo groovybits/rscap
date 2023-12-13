@@ -405,19 +405,26 @@ fn update_pid_map(pmt_packet: &[u8]) {
 
                 let timestamp = current_unix_timestamp_ms().unwrap_or(0);
 
-                debug!(
-                    "UpdatePIDmap: Added Stream PID: {}, Stream Type: {}/{}",
-                    stream_pid, pmt_entry.stream_type, stream_type
-                );
-                let stream_data = StreamData::new(
-                    &[],
-                    stream_pid,
-                    stream_type.to_string(),
-                    timestamp,
-                    timestamp,
-                    0,
-                );
-                pid_map.insert(stream_pid, stream_data);
+                if !pid_map.contains_key(&stream_pid) {
+                    debug!(
+                        "UpdatePIDmap: Added Stream PID: {}, Stream Type: {}/{}",
+                        stream_pid, pmt_entry.stream_type, stream_type
+                    );
+                    let stream_data = StreamData::new(
+                        &[],
+                        stream_pid,
+                        stream_type.to_string(),
+                        timestamp,
+                        timestamp,
+                        0,
+                    );
+                    pid_map.insert(stream_pid, stream_data);
+                } else {
+                    debug!(
+                        "UpdatePIDmap: PID {} already exists, not adding again.",
+                        stream_pid
+                    );
+                }
             }
         } else {
             error!("UpdatePIDmap: Skipping PMT PID: {} as it does not match with current PMT packet PID", pmt_pid);
@@ -427,6 +434,12 @@ fn update_pid_map(pmt_packet: &[u8]) {
 
 fn determine_stream_type(pid: u16) -> String {
     let pid_map = PID_MAP.lock().unwrap();
+
+    // check if pid already is mapped, if so return the stream type already stored
+    if let Some(stream_data) = pid_map.get(&pid) {
+        return stream_data.stream_type.clone();
+    }
+
     pid_map
         .get(&pid)
         .map(|stream_data| stream_data.stream_type.clone())
