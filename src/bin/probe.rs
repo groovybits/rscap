@@ -953,7 +953,7 @@ fn process_smpte2110_packet(
 
                 let payload_offset = rtp.payload_offset();
 
-                let payload = rtp.payload();
+                //let payload = rtp.payload();
 
                 let line_length = get_line_length(rtp_packet);
                 let line_number = get_line_number(rtp_packet);
