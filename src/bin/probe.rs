@@ -601,7 +601,7 @@ fn determine_stream_type(pid: u16) -> String {
 )]
 struct Args {
     /// Sets the batch size
-    #[clap(long, env = "BATCH_SIZE", default_value_t = 1000)]
+    #[clap(long, env = "BATCH_SIZE", default_value_t = 7)]
     batch_size: usize,
 
     /// Sets the payload offset
@@ -613,7 +613,7 @@ struct Args {
     packet_size: usize,
 
     /// Sets the read timeout
-    #[clap(long, env = "READ_TIME_OUT", default_value_t = 300000)]
+    #[clap(long, env = "READ_TIME_OUT", default_value_t = 60000)]
     read_time_out: i32,
 
     /// Sets the target port
