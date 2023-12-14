@@ -254,7 +254,7 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
             }
 
             if pmt_pid != 0xFFFF {
-                error!("ProcessPacket: PID {} not found in PID map.", pid);
+                info!("ProcessPacket: New PID {} Found, adding to PID map.", pid);
             } else {
                 // PMT packet not found yet, add the stream_data_packet to the pid_map
                 let mut stream_data_clone = stream_data_packet.clone();
@@ -684,6 +684,11 @@ async fn main() {
     let use_wireless = args.use_wireless;
     let send_json_header = args.send_json_header;
 
+    if silent {
+        // set log level to error
+        std::env::set_var("RUST_LOG", "error");
+    }
+
     // calculate read size based on batch size and packet size
     let read_size: i32 = (packet_size as i32 * batch_size as i32) + payload_offset as i32; // pcap read size
 
@@ -879,6 +884,11 @@ async fn main() {
             // ... ZeroMQ sending logic ...
             let batched_data = batch.concat();
 
+            // Send chunk of data as multipart message
+            let chunk_size = batched_data.len();
+            total_bytes += chunk_size;
+            count += 1;
+
             let mut format_str = "unknown";
             let format_index = is_mpegts_or_smpte2110(&batched_data);
             if format_index == 1 {
@@ -886,38 +896,38 @@ async fn main() {
             } else if format_index == 2 {
                 format_str = "smpte2110";
             }
+            // Construct JSON header for batched data
+            let json_header = json!({
+                "type": "mpegts_chunk",
+                "content_length": batched_data.len(),
+                "total_bytes": total_bytes,
+                "count": count,
+                "source_ip": source_ip,
+                "source_port": source_port,
+                "source_device": source_device,
+                "target_ip": target_ip,
+                "target_port": target_port,
+                "format": format_str,
+                "count": count,
+                "timestamp": current_unix_timestamp_ms().unwrap_or(0),
+                "chunk_size": chunk_size,
+                "batch_size": batch_size,
+            });
+
             // Check if JSON header is enabled
             if send_json_header {
-                // Construct JSON header for batched data
-                let json_header = json!({
-                    "type": "mpegts_chunk",
-                    "content_length": batched_data.len(),
-                    "total_bytes": total_bytes,
-                    "count": count,
-                    "source_ip": source_ip,
-                    "source_port": source_port,
-                    "source_device": source_device,
-                    "target_ip": target_ip,
-                    "target_port": target_port,
-                    "format": format_str,
-                });
-
                 // Send JSON header as multipart message
                 publisher
                     .send(json_header.to_string().as_bytes(), zmq::SNDMORE)
                     .unwrap();
             }
 
-            // Send chunk of data as multipart message
-            let chunk_size = batched_data.len();
-            total_bytes += chunk_size;
-            count += 1;
             publisher.send(batched_data, 0).unwrap();
 
             // Print progress
-            info!(
-                "ZeroMQ_THREAD: #{} Sent chunk of {}/{} bytes",
-                count, chunk_size, total_bytes
+            log::info!(
+                "STATUS::ZEROMQ:TX {}",
+                json_header
             );
         }
     });
@@ -944,7 +954,6 @@ async fn main() {
                 // Check if chunk is MPEG-TS or SMPTE 2110
                 let chunk_type = is_mpegts_or_smpte2110(&packet[payload_offset..]);
                 if chunk_type != 1 {
-                    debug!("Not MPEG-TS, type {}", chunk_type);
                     if chunk_type == 0 {
                         error!("Not MPEG-TS or SMPTE 2110");
                         hexdump(&packet);
