@@ -128,6 +128,25 @@ impl StreamData {
     fn increment_count(&mut self, count: u32) {
         self.count += count;
     }
+    fn continuity_increment(&mut self) {
+        // take previous value and new value, wrap around from 0 to 15 always checking if the previous value was 1 less or 15 if currently 0
+        let previous_continuity_counter = self.continuity_counter;
+        self.continuity_counter = (self.continuity_counter + 1) & 0x0F;
+        // check if we incremented without loss
+        if self.continuity_counter != previous_continuity_counter + 1 {
+            // check if we wrapped around from 15 to 0
+            if self.continuity_counter == 0 {
+                // check if previous value was 15
+                if previous_continuity_counter == 15 {
+                    // no loss
+                    return;
+                }
+            }
+            // loss
+            self.increment_error_count(1);
+            error!("Continuity Counter Error: PID: {} Previous: {} Current: {}", self.pid, previous_continuity_counter, self.continuity_counter);
+        }
+    }
     fn update_stats(&mut self, packet_size: usize, arrival_time: u64) {
         let bits = packet_size as u64 * 8; // Convert bytes to bits
 
@@ -221,6 +240,8 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
         Some(stream_data) => {
             // Existing StreamData instance found, update it
             stream_data.update_stats(packet.len(), arrival_time);
+            stream_data.increment_count(1);
+            stream_data.continuity_increment();
             let uptime = arrival_time - stream_data.start_time;
 
             // create json object of stats
@@ -540,14 +561,10 @@ fn update_pid_map(pmt_packet: &[u8]) {
                 } else {
                     // get the stream data so we can update it
                     let stream_data = pid_map.get_mut(&stream_pid).unwrap();
-                    // update the timestamp
-                    stream_data.update_stats(pmt_packet.len(), timestamp);
+                    
                     // update the stream type
                     stream_data.update_stream_type(stream_type.to_string());
                     // update the count
-                    stream_data.increment_count(1);
-                    // update the timestamp
-                    stream_data.update_timestamp(timestamp);
 
                      // create json object of stats
                      let json_stats = json!({
@@ -569,7 +586,7 @@ fn update_pid_map(pmt_packet: &[u8]) {
                     });
 
                     // log json stats
-                    info!("STATUS::STREAM:UPDATE[{}] {}", stream_data.pid, json_stats);
+                    debug!("STATUS::STREAM:UPDATE[{}] {}", stream_data.pid, json_stats);
                 }
             }
         } else {
@@ -945,7 +962,7 @@ async fn main() {
             Ok(packet) => {
                 if debug_on {
                     println!("Received packet! {:?}", packet.header);
-                } else {
+                } else if silent {
                     print!(".");
                     // flush stdout
                     std::io::stdout().flush().unwrap();
