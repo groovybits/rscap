@@ -27,11 +27,13 @@ use tokio;
 // constant for PAT PID
 const PAT_PID: u16 = 0;
 
+// global variable to store last PAT packet
+static mut LAST_PAT_PACKET: Option<Vec<u8>> = None;
+
 // global variable to store PMT PID (initially set to an invalid PID)
 static mut PMT_PID: u16 = 0xFFFF;
 
-static mut LAST_PAT_PACKET: Option<Vec<u8>> = None;
-
+// global variable to store the MpegTS PID Map (initially empty)
 lazy_static! {
     static ref PID_MAP: Mutex<HashMap<u16, StreamData>> = Mutex::new(HashMap::new());
 }
@@ -69,6 +71,7 @@ struct StreamData {
     last_arrival_time: u64,
     start_time: u64, // field for start time
     total_bits: u64, // field for total bits
+    count: u32,      // field for count
     data: Vec<u8>,   // The actual MPEG-TS packet data
 }
 
@@ -109,11 +112,21 @@ impl StreamData {
             last_arrival_time,
             start_time,    // Initialize start time
             total_bits: 0, // Initialize total bits
+            count: 0,      // Initialize count
             data: packet.to_vec(),
         }
     }
     fn update_stream_type(&mut self, stream_type: String) {
         self.stream_type = stream_type;
+    }
+    fn update_timestamp(&mut self, timestamp: u64) {
+        self.timestamp = timestamp;
+    }
+    fn increment_error_count(&mut self, error_count: u32) {
+        self.error_count += error_count;
+    }
+    fn increment_count(&mut self, count: u32) {
+        self.count += count;
     }
     fn update_stats(&mut self, packet_size: usize, arrival_time: u64) {
         let bits = packet_size as u64 * 8; // Convert bytes to bits
@@ -166,7 +179,7 @@ struct Tr101290Errors {
     sync_byte_errors: u32,
     transport_error_indicator_errors: u32,
     continuity_counter_errors: u32,
-    // ... other error types ...
+    // TODO: ... other error types ...
 }
 
 impl Tr101290Errors {
@@ -175,28 +188,8 @@ impl Tr101290Errors {
             sync_byte_errors: 0,
             transport_error_indicator_errors: 0,
             continuity_counter_errors: 0,
-            // ... initialize other errors ...
+            // TODO: ... initialize other errors ...
         }
-    }
-
-    fn log_errors(&self) {
-        // Log the error counts for monitoring
-        if self.sync_byte_errors > 0 {
-            error!("Sync byte errors: {}", self.sync_byte_errors);
-        }
-        if self.transport_error_indicator_errors > 0 {
-            error!(
-                "Transport Error Indicator errors: {}",
-                self.transport_error_indicator_errors
-            );
-        }
-        if self.continuity_counter_errors > 0 {
-            error!(
-                "Continuity counter errors: {}",
-                self.continuity_counter_errors
-            );
-        }
-        // ... log other errors ...
     }
 }
 
@@ -209,8 +202,7 @@ fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors) {
     if (packet[1] & 0x80) != 0 {
         errors.transport_error_indicator_errors += 1;
     }
-
-    // ... other checks, updating the respective counters ...
+    // TODO: ... other checks, updating the respective counters ...
 }
 
 // Invoke this function for each MPEG-TS packet
@@ -221,55 +213,86 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
     let pid = extract_pid(packet);
     let arrival_time = current_unix_timestamp_ms().unwrap_or(0);
 
-    // Use a scope to limit the duration of the lock
-    {
-        let mut pid_map = PID_MAP.lock().unwrap();
-        let mut found_pid = false;
+    let mut pid_map = PID_MAP.lock().unwrap();
+    let mut found_pid = false;
 
-        // Check if the PID map already has an entry for this PID
-        match pid_map.get_mut(&pid) {
-            Some(stream_data) => {
-                // Existing StreamData instance found, update it
-                stream_data.update_stats(packet.len(), arrival_time);
-                let uptime = arrival_time - stream_data.start_time;
+    // Check if the PID map already has an entry for this PID
+    match pid_map.get_mut(&pid) {
+        Some(stream_data) => {
+            // Existing StreamData instance found, update it
+            stream_data.update_stats(packet.len(), arrival_time);
+            let uptime = arrival_time - stream_data.start_time;
 
+            // create json object of stats
+            let json_stats = json!({
+                "type": "mpegts_stats",
+                "pid": stream_data.pid,
+                "stream_type": stream_data.stream_type,
+                "bitrate": stream_data.bitrate,
+                "bitrate_max": stream_data.bitrate_max,
+                "bitrate_min": stream_data.bitrate_min,
+                "bitrate_avg": stream_data.bitrate_avg,
+                "iat": stream_data_packet.iat,
+                "iat_max": stream_data.iat_max,
+                "iat_min": stream_data.iat_min,
+                "iat_avg": stream_data.iat_avg,
+                "errors": stream_data.error_count,
+                "continuity_counter": stream_data_packet.continuity_counter,
+                "timestamp": stream_data_packet.timestamp,
+                "uptime": uptime,
+            });
+
+            // log json stats
+            info!("STATUS::PACKET:MODIFY[{}] {}", stream_data.pid, json_stats);
+            found_pid = true;
+        }
+        None => {
+            // No StreamData instance found for this PID, possibly no PMT yet
+            let mut pmt_pid = 0;
+            unsafe {
+                pmt_pid = PMT_PID;
+            }
+
+            if pmt_pid != 0xFFFF {
+                error!("ProcessPacket: PID {} not found in PID map.", pid);
+            } else {
+                // PMT packet not found yet, add the stream_data_packet to the pid_map
+                let mut stream_data_clone = stream_data_packet.clone();
+                stream_data_clone.update_stats(packet.len(), arrival_time);
+                pid_map.insert(
+                    pid,
+                    stream_data_clone.clone(),
+                );
                 // create json object of stats
                 let json_stats = json!({
                     "type": "mpegts_stats",
-                    "pid": stream_data.pid,
-                    "stream_type": stream_data.stream_type,
-                    "bitrate": stream_data.bitrate,
-                    "bitrate_max": stream_data.bitrate_max,
-                    "bitrate_min": stream_data.bitrate_min,
-                    "bitrate_avg": stream_data.bitrate_avg,
+                    "pid": stream_data_clone.pid,
+                    "stream_type": stream_data_clone.stream_type,
+                    "bitrate": stream_data_clone.bitrate,
+                    "bitrate_max": stream_data_clone.bitrate_max,
+                    "bitrate_min": stream_data_clone.bitrate_min,
+                    "bitrate_avg": stream_data_clone.bitrate_avg,
                     "iat": stream_data_packet.iat,
-                    "iat_max": stream_data.iat_max,
-                    "iat_min": stream_data.iat_min,
-                    "iat_avg": stream_data.iat_avg,
-                    "errors": stream_data.error_count,
+                    "iat_max": stream_data_clone.iat_max,
+                    "iat_min": stream_data_clone.iat_min,
+                    "iat_avg": stream_data_clone.iat_avg,
+                    "errors": stream_data_clone.error_count,
                     "continuity_counter": stream_data_packet.continuity_counter,
                     "timestamp": stream_data_packet.timestamp,
-                    "uptime": uptime,
+                    "uptime": 0,
                 });
-
-                // log json stats
-                debug!("STATS: {}", json_stats);
-                found_pid = true;
-            }
-            None => {
-                // No StreamData instance found, log an error
-                error!("ProcessPacket: PID {} not found in PID map.", pid);
+                info!("STATUS::PACKET:ADD[{}] {}", stream_data_clone.pid, json_stats);
             }
         }
+    }
 
-        // PID not found, add the stream_data_packet to the pid_map, probably before we have seen the PMT
-        if !found_pid {
-            // PID not found, add the stream_data_packet to the pid_map
-            pid_map.insert(
-                pid,
-                stream_data_packet.clone(),
-            );
-        }
+    // PID not found, add the stream_data_packet to the pid_map, probably before we have seen the PMT
+    if !found_pid {
+        // PID not found, add the stream_data_packet to the pid_map
+        pid_map.insert(
+            pid,
+            stream_data_packet.clone(),
+        );
     }
 }
 
@@ -480,11 +503,7 @@ fn update_pid_map(pmt_packet: &[u8]) {
                 let timestamp = current_unix_timestamp_ms().unwrap_or(0);
 
                 if !pid_map.contains_key(&stream_pid) {
-                    debug!(
-                        "UpdatePIDmap: Added Stream PID: {}, Stream Type: {}/{}",
-                        stream_pid, pmt_entry.stream_type, stream_type
-                    );
-                    let stream_data = StreamData::new(
+                    let mut stream_data = StreamData::new(
                         &[],
                         stream_pid,
                         stream_type.to_string(),
@@ -492,6 +511,8 @@ fn update_pid_map(pmt_packet: &[u8]) {
                         timestamp,
                         0,
                     );
+                    // update stream_data stats
+                    stream_data.update_stats(pmt_packet.len(), timestamp);
 
                     // create json object of stats
                     let json_stats = json!({
@@ -513,20 +534,20 @@ fn update_pid_map(pmt_packet: &[u8]) {
                     });
 
                     // log json stats
-                    debug!("STATS: {}", json_stats);
+                    info!("STATUS::STREAM:CREATE[{}] {}", stream_data.pid, json_stats);
 
                     pid_map.insert(stream_pid, stream_data);
                 } else {
-                    debug!(
-                        "UpdatePIDmap: PID {} already exists, not adding again.",
-                        stream_pid
-                    );
                     // get the stream data so we can update it
                     let stream_data = pid_map.get_mut(&stream_pid).unwrap();
                     // update the timestamp
                     stream_data.update_stats(pmt_packet.len(), timestamp);
                     // update the stream type
                     stream_data.update_stream_type(stream_type.to_string());
+                    // update the count
+                    stream_data.increment_count(1);
+                    // update the timestamp
+                    stream_data.update_timestamp(timestamp);
 
                      // create json object of stats
                      let json_stats = json!({
@@ -548,7 +569,7 @@ fn update_pid_map(pmt_packet: &[u8]) {
                     });
 
                     // log json stats
-                    debug!("STATS: {}", json_stats);
+                    info!("STATUS::STREAM:UPDATE[{}] {}", stream_data.pid, json_stats);
                 }
             }
         } else {
@@ -894,16 +915,10 @@ async fn main() {
             publisher.send(batched_data, 0).unwrap();
 
             // Print progress
-            if !debug_on && !silent {
-                print!(".");
-                // flush stdout
-                std::io::stdout().flush().unwrap();
-            } else if !silent {
-                debug!(
-                    "#{} Sent chunk of {}/{} bytes",
-                    count, chunk_size, total_bytes
-                );
-            }
+            info!(
+                "ZeroMQ_THREAD: #{} Sent chunk of {}/{} bytes",
+                count, chunk_size, total_bytes
+            );
         }
     });
 
@@ -919,7 +934,11 @@ async fn main() {
         match cap.next_packet() {
             Ok(packet) => {
                 if debug_on {
-                    debug!("Received packet! {:?}", packet.header);
+                    println!("Received packet! {:?}", packet.header);
+                } else {
+                    print!(".");
+                    // flush stdout
+                    std::io::stdout().flush().unwrap();
                 }
 
                 // Check if chunk is MPEG-TS or SMPTE 2110
@@ -948,11 +967,42 @@ async fn main() {
                     if debug_on {
                         hexdump(&stream_data.data); // Use stream_data.data to access the raw packet data
                     }
+                    
+                    // Handle PAT and PMT packets
+                    let pid = extract_pid(&stream_data.data);
+                    match pid {
+                        PAT_PID => {
+                            log::debug!("ProcessPacket: PAT packet detected with PID {}", pid);
+                            parse_and_store_pat(&stream_data.data);
+                        }
+                        _ => {
+                            // Check if this is a PMT packet
+                            unsafe {
+                                if pid == PMT_PID {
+                                    log::debug!("ProcessPacket: PMT packet detected with PID {}", pid);
+                                    // Update PID_MAP with new stream types
+                                    update_pid_map(&stream_data.data);
+                                }
+                            }
+                        }
+                    }
 
                     // Check for TR 101 290 errors
                     process_packet(&stream_data, &mut tr101290_errors);
-                    // Periodically, or at the end of the processing:
-                    tr101290_errors.log_errors();
+
+                    // print tr101290 errors as one line json
+                    let json_errors = json!({
+                        "p1": {
+                            "sync_byte_errors": tr101290_errors.sync_byte_errors,
+                            "transport_error_indicator_errors": tr101290_errors.transport_error_indicator_errors,
+                            "continuity_counter_errors": tr101290_errors.continuity_counter_errors,
+                        },
+                        "p2": {},
+                        "p3": {},
+                    });
+
+                    // log json errors
+                    info!("STATUS::TR101290:ERRORS {}", json_errors);
 
                     batch.push(stream_data.data.clone());
 
@@ -965,9 +1015,15 @@ async fn main() {
                 }
 
                 let stats = cap.stats().unwrap();
-                debug!(
-                    "Received: {}, dropped: {}, if_dropped: {}",
-                    stats.received, stats.dropped, stats.if_dropped
+                // Json representation of stats
+                let json_stats = json!({
+                    "received": stats.received,
+                    "dropped": stats.dropped,
+                    "if_dropped": stats.if_dropped,
+                });
+                info!(
+                    "STATUS::PCAP:PACKET {}",
+                    json_stats
                 );
             }
             Err(e) => {
@@ -1160,25 +1216,7 @@ fn process_mpegts_packet(
             // Check for MPEG-TS sync byte
             read_size = packet_size; // reset read_size
 
-            let pid = ((chunk[1] as u16 & 0x1F) << 8) | chunk[2] as u16;
-
-            // Handle PAT and PMT packets
-            match pid {
-                PAT_PID => {
-                    log::debug!("ProcessPacket: PAT packet detected with PID {}", pid);
-                    parse_and_store_pat(chunk);
-                }
-                _ => {
-                    // Check if this is a PMT packet
-                    unsafe {
-                        if pid == PMT_PID {
-                            log::debug!("ProcessPacket: PMT packet detected with PID {}", pid);
-                            // Update PID_MAP with new stream types
-                            update_pid_map(chunk);
-                        }
-                    }
-                }
-            }
+            let pid = extract_pid(chunk);
 
             let stream_type = determine_stream_type(pid); // Implement this function based on PAT/PMT parsing
             let timestamp = ((chunk[4] as u64) << 25)
@@ -1212,9 +1250,9 @@ fn process_mpegts_packet(
 // Print a hexdump of the packet
 fn hexdump(packet: &[u8]) {
     let pid = extract_pid(packet);
-    info!("--------------------------------------------------");
+    println!("--------------------------------------------------");
     // print in rows of 16 bytes
-    info!("PacketDump: PID {} Packet length: {}", pid, packet.len());
+    println!("PacketDump: PID {} Packet length: {}", pid, packet.len());
     let mut packet_dump = String::new();
     for (i, chunk) in packet.iter().take(packet.len()).enumerate() {
         if i % 16 == 0 {
@@ -1222,7 +1260,7 @@ fn hexdump(packet: &[u8]) {
         }
         packet_dump.push_str(&format!("{:02x} ", chunk));
     }
-    info!("{}", packet_dump);
-    info!("");
-    info!("--------------------------------------------------");
+    println!("{}", packet_dump);
+    println!("");
+    println!("--------------------------------------------------");
 }
