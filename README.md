@@ -122,23 +122,25 @@ sudo make install
 Build and run the pcap stream probe...
 
 ```text
+# Build release version in target/release/probe
 cargo build --release
 
-sudo RUST_LOG=debug \
-     DEBUG=false \
-     SILENT=false \
-     SOURCE_IP="224.0.0.1" \
-     SOURCE_PORT=10000 \
-     TARGET_IP="127.0.0.1" \
-     TARGET_PORT="5556" \
-     SEND_JSON_HEADER=true \
-     SOURCE_DEVICE="en0" \
-                target/release/probe
+# Use ENV Variable RUST_LOG= for logging level and cmdline args
+sudo RUST_LOG=info target/release/probe \
+         --source-ip 224.0.0.1 \
+         --source-port 10000 \
+         --target-ip 127.0.0.1 \
+         --target-port 5556 \
+         --send-json-header \
+         --source-device eth0 \
+         --debug
+
 ```
 
 Build and run the zmq capture client...
 
 ```text
+# TODO: add additional cmdline args to override env args
 DEBUG=true \
       RUST_LOG=debug \
       DEBUG=true \
