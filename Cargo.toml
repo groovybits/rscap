@@ -25,3 +25,6 @@ dotenv = "0.15"
 lazy_static = "1.4.0"
 rtp-rs = "0.6.0"
 clap = { version = "4.4.11", features = ["derive", "env"] }
+## Uncomment this line and comment the next line for profiling to ./flames/
+#firestorm = { version="0.5.1", features=["enable_system_time"] }
+firestorm = { version="0.5.1" }

@@ -24,7 +24,9 @@ use std::sync::mpsc;
 use std::sync::Mutex;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio;
+use firestorm::{profile_fn, profile_method, profile_section};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 // constant for PAT PID
 const PAT_PID: u16 = 0;
@@ -159,27 +161,35 @@ impl StreamData {
         self.rtp_field_id = rtp_field_id;
     }
     fn set_pmt_pid(&mut self, pmt_pid: u16) {
+        profile_fn!(set_pmt_pid);
         self.pmt_pid = pmt_pid;
     }
     fn add_pmt_data(&mut self, pmt_data: &[u8]) {
+        profile_fn!(add_pmt_data);
         self.pmt_data = pmt_data.to_vec();
     }
     fn update_program_number(&mut self, program_number: u16) {
+        profile_fn!(update_program_number);
         self.program_number = program_number;
     }
     fn update_stream_type(&mut self, stream_type: String) {
+        profile_fn!(update_stream_type);
         self.stream_type = stream_type;
     }
     fn update_timestamp(&mut self, timestamp: u64) {
+        profile_fn!(update_timestamp);
         self.timestamp = timestamp;
     }
     fn increment_error_count(&mut self, error_count: u32) {
+        profile_fn!(increment_error_count);
         self.error_count += error_count;
     }
     fn increment_count(&mut self, count: u32) {
+        profile_fn!(increment_count);
         self.count += count;
     }
     fn set_continuity_counter(&mut self, continuity_counter: u8) {
+        profile_fn!(set_continuity_counter);
         // check for continuity continuous increment and wrap around from 0 to 15
         let previous_continuity_counter = self.continuity_counter;
         self.continuity_counter = continuity_counter & 0x0F;
@@ -203,6 +213,7 @@ impl StreamData {
         self.continuity_counter = continuity_counter;
     }
     fn update_stats(&mut self, packet_size: usize, arrival_time: u64) {
+        profile_fn!(update_stats);
         let bits = packet_size as u64 * 8; // Convert bytes to bits
 
         // Elapsed time in milliseconds
@@ -327,6 +338,7 @@ impl Tr101290Errors {
 
 // TR 101 290 Priority 1 Check
 fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors) {
+    profile_fn!(tr101290_p1_check);
     // p1
     if packet[0] != 0x47 {
         errors.sync_byte_errors += 1;
@@ -337,6 +349,7 @@ fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors) {
 
 // TR 101 290 Priority 2 Check
 fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
+    profile_fn!(tr101290_p2_check);
     // p2
 
     if (packet[1] & 0x80) != 0 {
@@ -347,6 +360,7 @@ fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
 
 // Invoke this function for each MPEG-TS packet
 fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) {
+    profile_fn!(process_packet);
     let packet: &[u8] = &stream_data_packet.data;
     tr101290_p1_check(packet, errors);
     tr101290_p2_check(packet, errors);
@@ -440,6 +454,7 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
 
 // Function to get the current Unix timestamp in milliseconds
 fn current_unix_timestamp_ms() -> Result<u64, String> {
+    profile_fn!(current_unix_timestamp_ms);
     let now = SystemTime::now();
     match now.duration_since(UNIX_EPOCH) {
         Ok(duration) => {
@@ -452,6 +467,7 @@ fn current_unix_timestamp_ms() -> Result<u64, String> {
 
 // Implement a function to extract PID from a packet
 fn extract_pid(packet: &[u8]) -> u16 {
+    profile_fn!(extract_pid);
     // Extract PID from packet
     // (You'll need to adjust the indices according to your packet format)
     ((packet[1] as u16 & 0x1F) << 8) | packet[2] as u16
@@ -459,6 +475,7 @@ fn extract_pid(packet: &[u8]) -> u16 {
 
 // Helper function to parse PAT and update global PAT packet storage
 fn parse_and_store_pat(packet: &[u8]) {
+    profile_fn!(parse_and_store_pat);
     let pat_entries = parse_pat(packet);
     unsafe {
         // Store the specific PAT chunk for later use
@@ -472,6 +489,7 @@ fn parse_and_store_pat(packet: &[u8]) {
 }
 
 fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
+    profile_fn!(parse_pat);
     let mut entries = Vec::new();
 
     // Check if Payload Unit Start Indicator (PUSI) is set
@@ -540,6 +558,7 @@ fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
 }
 
 fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
+    profile_fn!(parse_pmt);
     let mut entries = Vec::new();
     let program_number = ((packet[8] as u16) << 8) | (packet[9] as u16);
 
@@ -573,6 +592,7 @@ fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
 
 // Modify the function to use the stored PAT packet
 fn update_pid_map(pmt_packet: &[u8]) {
+    profile_fn!(update_pid_map);
     let mut pid_map = PID_MAP.lock().unwrap();
 
     // Process the stored PAT packet to find program numbers and corresponding PMT PIDs
@@ -717,6 +737,7 @@ fn update_pid_map(pmt_packet: &[u8]) {
 }
 
 fn determine_stream_type(pid: u16) -> String {
+    profile_fn!(determine_stream_type);
     let pid_map = PID_MAP.lock().unwrap();
 
     // check if pid already is mapped, if so return the stream type already stored
@@ -793,12 +814,28 @@ struct Args {
     /// Sets if JSON header should be sent
     #[clap(long, env = "SEND_JSON_HEADER", default_value_t = false)]
     send_json_header: bool,
+
+    /// number of packets to capture
+    #[clap(long, env = "PACKET_COUNT", default_value_t = 0)]
+    packet_count: u64,
 }
 
-// MAIN
-#[tokio::main]
-async fn main() {
-    info!("Starting rscap probe");
+fn main() {
+    if firestorm::enabled() {
+        if let Err(e) = firestorm::bench("./flames/", || {
+            rscap();
+        }) {
+            println!("Error occurred: {:?}", e);
+        }
+    } else {
+        rscap();
+    }
+}
+
+// MAIN Function
+fn rscap() {
+    println!("Starting rscap probe");
+   
     dotenv::dotenv().ok(); // read .env file
 
     let source_device_ip: &str = "0.0.0.0";
@@ -821,6 +858,7 @@ async fn main() {
     #[cfg(not(target_os = "linux"))]
     let use_wireless = args.use_wireless;
     let send_json_header = args.send_json_header;
+    let packet_count = args.packet_count;
 
     if silent {
         // set log level to error
@@ -833,7 +871,7 @@ async fn main() {
     let mut is_mpegts = true; // Default to true, update based on actual packet type
 
     // Initialize logging
-    env_logger::init(); // set RUST_LOG environment variable to debug for more verbose logging
+    let _ = env_logger::try_init();
 
     // device ip address
     let mut interface_addr = source_device_ip.parse::<Ipv4Addr>().expect(&format!(
@@ -985,24 +1023,69 @@ async fn main() {
     #[cfg(target_os = "linux")]
     let promiscuous: bool = true;
 
-    // Setup packet capture
-    let mut cap = Capture::from_device(target_device)
-        .unwrap()
-        .promisc(promiscuous)
-        .timeout(read_time_out)
-        .snaplen(read_size) // Adjust this based on network configuration
-        .open()
-        .unwrap();
-
     // Filter pcap
     let source_host_and_port = format!(
         "{} dst port {} and ip dst host {}",
         source_protocol, source_port, source_ip
     );
-    cap.filter(&source_host_and_port, true).unwrap();
+
+    let (ptx, prx) = mpsc::channel::<Vec<u8>>();
+
+    // Define a struct or type alias for the data from each packet
+    type PacketData = Vec<u8>;
+
+    let running = Arc::new(AtomicBool::new(true));
+    let running_clone = running.clone();
+
+    let capture_thread = thread::spawn(move || {
+        let mut cap = Capture::from_device(target_device)
+            .unwrap()
+            .promisc(promiscuous)
+            .timeout(read_time_out)
+            .snaplen(read_size)
+            .open()
+            .unwrap();
+
+        cap.filter(&source_host_and_port, true).unwrap();
+
+        loop {
+            if !running_clone.load(Ordering::SeqCst) {
+                break;
+            }
+            match cap.next_packet() {
+                Ok(packet) => {
+                    if debug_on {
+                        println!("Received packet! {:?}", packet.header);
+                    }
+
+                    // Extract only the necessary data from the packet
+                    let packet_data = packet.data.to_vec(); // Extract the data as Vec<u8>
+
+                    if let Err(e) = ptx.send(packet_data) {
+                        error!("Error sending packet data to main thread: {:?}", e);
+                        break;
+                    }
+
+                    let stats = cap.stats().unwrap();
+
+                    // Json representation of stats
+                    let json_stats = json!({
+                        "received": stats.received,
+                        "dropped": stats.dropped,
+                        "if_dropped": stats.if_dropped,
+                    });
+                    info!("STATUS::PCAP:PACKET {}", json_stats);
+                },
+                Err(_) => {
+                    // Exit loop if `next_packet` fails or some other error occurs
+                    break;
+                }
+            }
+        }
+    });
 
     // Setup channel for passing data between threads
-    let (tx, rx) = mpsc::channel::<Vec<Vec<u8>>>();
+    let (tx, rx) = mpsc::channel::<Vec<StreamData>>();
 
     // Spawn a new thread for ZeroMQ communication
     let zmq_thread = thread::spawn(move || {
@@ -1020,50 +1103,51 @@ async fn main() {
                 break; // Exit the loop if a stop signal is received
             }
             // ... ZeroMQ sending logic ...
-            let batched_data = batch.concat();
+            //let batched_data = batch.concat();
+            for stream_data in batch.iter() {
+                // Send chunk of data as multipart message
+                let chunk_size = stream_data.data.len();
+                total_bytes += chunk_size;
+                count += 1;
 
-            // Send chunk of data as multipart message
-            let chunk_size = batched_data.len();
-            total_bytes += chunk_size;
-            count += 1;
+                let mut format_str = "unknown";
+                let format_index = is_mpegts_or_smpte2110(&stream_data.data);
+                if format_index == 1 {
+                    format_str = "mpegts";
+                } else if format_index == 2 {
+                    format_str = "smpte2110";
+                }
+                // Construct JSON header for batched data
+                let json_header = json!({
+                    "type": "mpegts_chunk",
+                    "content_length": chunk_size,
+                    "total_bytes": total_bytes,
+                    "count": count,
+                    "source_ip": source_ip,
+                    "source_port": source_port,
+                    "source_device": source_device,
+                    "target_ip": target_ip,
+                    "target_port": target_port,
+                    "format": format_str,
+                    "count": count,
+                    "timestamp": current_unix_timestamp_ms().unwrap_or(0),
+                    "chunk_size": chunk_size,
+                    "batch_size": batch_size,
+                });
 
-            let mut format_str = "unknown";
-            let format_index = is_mpegts_or_smpte2110(&batched_data);
-            if format_index == 1 {
-                format_str = "mpegts";
-            } else if format_index == 2 {
-                format_str = "smpte2110";
+                // Check if JSON header is enabled
+                if send_json_header {
+                    // Send JSON header as multipart message
+                    publisher
+                        .send(json_header.to_string().as_bytes(), zmq::SNDMORE)
+                        .unwrap();
+                }
+
+                publisher.send(stream_data.data.clone(), 0).unwrap();
+
+                // Print progress
+                log::info!("STATUS::ZEROMQ:TX {}", json_header);
             }
-            // Construct JSON header for batched data
-            let json_header = json!({
-                "type": "mpegts_chunk",
-                "content_length": batched_data.len(),
-                "total_bytes": total_bytes,
-                "count": count,
-                "source_ip": source_ip,
-                "source_port": source_port,
-                "source_device": source_device,
-                "target_ip": target_ip,
-                "target_port": target_port,
-                "format": format_str,
-                "count": count,
-                "timestamp": current_unix_timestamp_ms().unwrap_or(0),
-                "chunk_size": chunk_size,
-                "batch_size": batch_size,
-            });
-
-            // Check if JSON header is enabled
-            if send_json_header {
-                // Send JSON header as multipart message
-                publisher
-                    .send(json_header.to_string().as_bytes(), zmq::SNDMORE)
-                    .unwrap();
-            }
-
-            publisher.send(batched_data, 0).unwrap();
-
-            // Print progress
-            log::info!("STATUS::ZEROMQ:TX {}", json_header);
         }
     });
 
@@ -1073,14 +1157,20 @@ async fn main() {
     // start time
     let start_time = current_unix_timestamp_ms().unwrap_or(0);
 
+    let mut packets_captured = 0;
+
     // Start packet capture
     let mut batch = Vec::new();
     loop {
-        match cap.next_packet() {
+        if packet_count > 0 && packets_captured > packet_count {
+            running.store(false, Ordering::SeqCst);
+            break;
+        }
+        match prx.recv() {
             Ok(packet) => {
-                if debug_on {
-                    println!("Received packet! {:?}", packet.header);
-                } else if silent {
+                packets_captured += 1;
+                
+                if silent {
                     print!(".");
                     // flush stdout
                     std::io::stdout().flush().unwrap();
@@ -1143,7 +1233,7 @@ async fn main() {
                         Err(e) => eprintln!("Failed to serialize TR101290 Errors to JSON: {}", e),
                     }
 
-                    batch.push(stream_data.data.clone());
+                    batch.push(stream_data.clone());
 
                     // Check if batch is full
                     if batch.len() >= batch_size {
@@ -1152,15 +1242,6 @@ async fn main() {
                         batch.clear();
                     }
                 }
-
-                let stats = cap.stats().unwrap();
-                // Json representation of stats
-                let json_stats = json!({
-                    "received": stats.received,
-                    "dropped": stats.dropped,
-                    "if_dropped": stats.if_dropped,
-                });
-                info!("STATUS::PCAP:PACKET {}", json_stats);
             }
             Err(e) => {
                 error!("Error capturing packet: {:?}", e);
@@ -1169,18 +1250,24 @@ async fn main() {
         }
     }
 
-    info!("Exiting rscap probe");
+    println!("Exiting rscap probe");
 
     // Send stop signal
     tx.send(Vec::new()).unwrap();
     drop(tx);
 
     // Wait for the zmq_thread to finish
+    //ptx.send(Vec::new()).unwrap();
+    //drop(ptx);
     zmq_thread.join().unwrap();
+    capture_thread.join().unwrap();
+
 }
 
 // Check if the packet is MPEG-TS or SMPTE 2110
 fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
+    profile_fn!(is_mpegts_or_smpte2110);
+
     // Check for MPEG-TS (starts with 0x47 sync byte)
     if packet.starts_with(&[0x47]) {
         return 1;
@@ -1202,26 +1289,32 @@ const RFC_4175_EXT_SEQ_NUM_LEN: usize = 2;
 const RFC_4175_HEADER_LEN: usize = 6; // Note: extended sequence number not included
 
 fn get_extended_sequence_number(buf: &[u8]) -> u16 {
+    profile_fn!(get_extended_sequence_number);
     ((buf[0] as u16) << 8) | buf[1] as u16
 }
 
 fn get_line_length(buf: &[u8]) -> u16 {
+    profile_fn!(get_line_length);
     ((buf[0] as u16) << 8) | buf[1] as u16
 }
 
 fn get_line_field_id(buf: &[u8]) -> u8 {
+    profile_fn!(get_line_field_id);
     buf[2] >> 7
 }
 
 fn get_line_number(buf: &[u8]) -> u16 {
+    profile_fn!(get_line_number);
     ((buf[2] as u16 & 0x7f) << 8) | buf[3] as u16
 }
 
 fn get_line_continuation(buf: &[u8]) -> u8 {
+    profile_fn!(get_line_continuation);
     buf[4] >> 7
 }
 
 fn get_line_offset(buf: &[u8]) -> u16 {
+    profile_fn!(get_line_offset);
     ((buf[4] as u16 & 0x7f) << 8) | buf[5] as u16
 }
 // ## End of RFC 4175 SMPTE2110 header functions ##
@@ -1233,6 +1326,7 @@ fn process_smpte2110_packet(
     _packet_size: usize,
     start_time: u64,
 ) -> Vec<StreamData> {
+    profile_fn!(process_smpte2110_packet);
     let start = payload_offset;
     let mut streams = Vec::new();
 
@@ -1314,6 +1408,7 @@ fn process_mpegts_packet(
     packet_size: usize,
     start_time: u64,
 ) -> Vec<StreamData> {
+    profile_fn!(process_mpegts_packet);
     let mut start = payload_offset;
     let mut read_size = packet_size;
     let mut streams = Vec::new();
@@ -1357,6 +1452,7 @@ fn process_mpegts_packet(
 
 // Print a hexdump of the packet
 fn hexdump(packet: &[u8]) {
+    profile_fn!(hexdump);
     let pid = extract_pid(packet);
     println!("--------------------------------------------------");
     // print in rows of 16 bytes
