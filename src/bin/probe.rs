@@ -1160,12 +1160,6 @@ fn process_smpte2110_packet(
 
             // Create an RtpReader
             if let Ok(rtp) = RtpReader::new(rtp_packet) {
-                // Extract the sequence number
-                //let sequence_number = rtp.sequence_number();
-                //let sequence_number_serializable = sequence_number as u16;
-                let sequence_number_ext = get_extended_sequence_number(rtp_packet);
-                let sequence_number = (rtp_packet[2] as u16) << 8 | (rtp_packet[3] as u16);
-
                 // Extract the timestamp
                 let timestamp = rtp.timestamp();
 
@@ -1183,8 +1177,6 @@ fn process_smpte2110_packet(
 
                 let smpte_header_info = json!({
                     "size": chunk_size,
-                    "sequence_number": sequence_number,
-                    "sequence_number_ext": sequence_number_ext,
                     "timestamp": timestamp,
                     "payload_type": payload_type,
                     "line_length": line_length,
