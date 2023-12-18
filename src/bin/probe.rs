@@ -985,21 +985,60 @@ async fn main() {
     #[cfg(target_os = "linux")]
     let promiscuous: bool = true;
 
-    // Setup packet capture
-    let mut cap = Capture::from_device(target_device)
-        .unwrap()
-        .promisc(promiscuous)
-        .timeout(read_time_out)
-        .snaplen(read_size) // Adjust this based on network configuration
-        .open()
-        .unwrap();
-
     // Filter pcap
     let source_host_and_port = format!(
         "{} dst port {} and ip dst host {}",
         source_protocol, source_port, source_ip
     );
-    cap.filter(&source_host_and_port, true).unwrap();
+
+    let (ptx, prx) = mpsc::channel::<Vec<u8>>();
+
+    // Define a struct or type alias for the data you need from each packet
+    type PacketData = Vec<u8>;
+
+    let capture_thread = thread::spawn(move || {
+        let mut cap = Capture::from_device(target_device)
+            .unwrap()
+            .promisc(promiscuous)
+            .timeout(read_time_out)
+            .snaplen(read_size)
+            .open()
+            .unwrap();
+
+        cap.filter(&source_host_and_port, true).unwrap();
+
+        loop {
+            match cap.next_packet() {
+                Ok(packet) => {
+                    if debug_on {
+                        println!("Received packet! {:?}", packet.header);
+                    }
+
+                    // Extract only the necessary data from the packet
+                    let packet_data = packet.data.to_vec(); // Extract the data as Vec<u8>
+
+                    if let Err(e) = ptx.send(packet_data) {
+                        error!("Error sending packet data to main thread: {:?}", e);
+                        break;
+                    }
+
+                    let stats = cap.stats().unwrap();
+                    
+                    // Json representation of stats
+                    let json_stats = json!({
+                        "received": stats.received,
+                        "dropped": stats.dropped,
+                        "if_dropped": stats.if_dropped,
+                    });
+                    info!("STATUS::PCAP:PACKET {}", json_stats);
+                },
+                Err(_) => {
+                    // Exit loop if `next_packet` fails or some other error occurs
+                    break;
+                }
+            }
+        }
+    });
 
     // Setup channel for passing data between threads
     let (tx, rx) = mpsc::channel::<Vec<StreamData>>();
@@ -1077,11 +1116,9 @@ async fn main() {
     // Start packet capture
     let mut batch = Vec::new();
     loop {
-        match cap.next_packet() {
+        match prx.recv() {
             Ok(packet) => {
-                if debug_on {
-                    println!("Received packet! {:?}", packet.header);
-                } else if silent {
+                if silent {
                     print!(".");
                     // flush stdout
                     std::io::stdout().flush().unwrap();
@@ -1153,15 +1190,6 @@ async fn main() {
                         batch.clear();
                     }
                 }
-
-                let stats = cap.stats().unwrap();
-                // Json representation of stats
-                let json_stats = json!({
-                    "received": stats.received,
-                    "dropped": stats.dropped,
-                    "if_dropped": stats.if_dropped,
-                });
-                info!("STATUS::PCAP:PACKET {}", json_stats);
             }
             Err(e) => {
                 error!("Error capturing packet: {:?}", e);
@@ -1178,6 +1206,7 @@ async fn main() {
 
     // Wait for the zmq_thread to finish
     zmq_thread.join().unwrap();
+    capture_thread.join().unwrap();
 }
 
 // Check if the packet is MPEG-TS or SMPTE 2110
