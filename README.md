@@ -158,6 +158,49 @@ Check the output file capture.ts (or what you set in .env or environment variabl
 ffmpeg -i capture.ts
 ```
 
+## Profiling with firestorm (built in)
+
+```
+Edit Cargo.toml and change the following lines...
+
+## Uncomment this line and comment the next line for profiling to ./flames/
+#firestorm = { version="0.5.1", features=["enable_system_time"] }
+firestorm = { version="0.5.1" }
+
+Effectively setting the features to have enable_system_time which will enable profiling.
+
+Browse to the ./flames/ directory with a webbrowser to see the profiling results.
+```
+
+## Profiling with Intel Vtune (Linux/Windows)
+
+```
+tee > /tmp/oneAPI.repo << EOF
+[oneAPI]
+name=Intel® oneAPI repository
+baseurl=https://yum.repos.intel.com/oneapi
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
+EOF
+
+sudo mv /tmp/oneAPI.repo /etc/yum.repos.d
+sudo yum install intel-oneapi-vtune
+
+source /opt/intel/oneapi/vtune/latest/vtune-vars.sh
+/opt/intel/oneapi/vtune/latest/bin64/vtune \
+        -collect performance-snapshot \
+            target/debug/probe
+
+/opt/intel/oneapi/vtune/latest/bin64/vtune \
+        -collect hotspots \
+        -result-dir results \
+            target/release/probe
+
+vtune -report summary -result-dir results -format html -report-output results/report.html
+```
+
 ## TODO - roadmap plans
 
 - (WIP) Add more information header to the json metadata like system stats, network stats, mediainfo, captions, ancillary data.
