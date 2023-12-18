@@ -363,7 +363,9 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
             // Existing StreamData instance found, update it
             stream_data.update_stats(packet.len(), arrival_time);
             stream_data.increment_count(1);
-            stream_data.set_continuity_counter(stream_data_packet.continuity_counter);
+            if stream_data.pid != 0xFFFF {
+                stream_data.set_continuity_counter(stream_data_packet.continuity_counter);
+            }
             let uptime = arrival_time - stream_data.start_time;
 
             // create json object of stats
