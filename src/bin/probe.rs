@@ -1002,7 +1002,7 @@ async fn main() {
     cap.filter(&source_host_and_port, true).unwrap();
 
     // Setup channel for passing data between threads
-    let (tx, rx) = mpsc::channel::<Vec<Vec<u8>>>();
+    let (tx, rx) = mpsc::channel::<Vec<StreamData>>();
 
     // Spawn a new thread for ZeroMQ communication
     let zmq_thread = thread::spawn(move || {
@@ -1020,50 +1020,51 @@ async fn main() {
                 break; // Exit the loop if a stop signal is received
             }
             // ... ZeroMQ sending logic ...
-            let batched_data = batch.concat();
+            //let batched_data = batch.concat();
+            for stream_data in batch.iter() {
+                // Send chunk of data as multipart message
+                let chunk_size = stream_data.data.len();
+                total_bytes += chunk_size;
+                count += 1;
 
-            // Send chunk of data as multipart message
-            let chunk_size = batched_data.len();
-            total_bytes += chunk_size;
-            count += 1;
+                let mut format_str = "unknown";
+                let format_index = is_mpegts_or_smpte2110(&stream_data.data);
+                if format_index == 1 {
+                    format_str = "mpegts";
+                } else if format_index == 2 {
+                    format_str = "smpte2110";
+                }
+                // Construct JSON header for batched data
+                let json_header = json!({
+                    "type": "mpegts_chunk",
+                    "content_length": chunk_size,
+                    "total_bytes": total_bytes,
+                    "count": count,
+                    "source_ip": source_ip,
+                    "source_port": source_port,
+                    "source_device": source_device,
+                    "target_ip": target_ip,
+                    "target_port": target_port,
+                    "format": format_str,
+                    "count": count,
+                    "timestamp": current_unix_timestamp_ms().unwrap_or(0),
+                    "chunk_size": chunk_size,
+                    "batch_size": batch_size,
+                });
 
-            let mut format_str = "unknown";
-            let format_index = is_mpegts_or_smpte2110(&batched_data);
-            if format_index == 1 {
-                format_str = "mpegts";
-            } else if format_index == 2 {
-                format_str = "smpte2110";
+                // Check if JSON header is enabled
+                if send_json_header {
+                    // Send JSON header as multipart message
+                    publisher
+                        .send(json_header.to_string().as_bytes(), zmq::SNDMORE)
+                        .unwrap();
+                }
+
+                publisher.send(stream_data.data.clone(), 0).unwrap();
+
+                // Print progress
+                log::info!("STATUS::ZEROMQ:TX {}", json_header);
             }
-            // Construct JSON header for batched data
-            let json_header = json!({
-                "type": "mpegts_chunk",
-                "content_length": batched_data.len(),
-                "total_bytes": total_bytes,
-                "count": count,
-                "source_ip": source_ip,
-                "source_port": source_port,
-                "source_device": source_device,
-                "target_ip": target_ip,
-                "target_port": target_port,
-                "format": format_str,
-                "count": count,
-                "timestamp": current_unix_timestamp_ms().unwrap_or(0),
-                "chunk_size": chunk_size,
-                "batch_size": batch_size,
-            });
-
-            // Check if JSON header is enabled
-            if send_json_header {
-                // Send JSON header as multipart message
-                publisher
-                    .send(json_header.to_string().as_bytes(), zmq::SNDMORE)
-                    .unwrap();
-            }
-
-            publisher.send(batched_data, 0).unwrap();
-
-            // Print progress
-            log::info!("STATUS::ZEROMQ:TX {}", json_header);
         }
     });
 
@@ -1143,7 +1144,7 @@ async fn main() {
                         Err(e) => eprintln!("Failed to serialize TR101290 Errors to JSON: {}", e),
                     }
 
-                    batch.push(stream_data.data.clone());
+                    batch.push(stream_data.clone());
 
                     // Check if batch is full
                     if batch.len() >= batch_size {
