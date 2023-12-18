@@ -158,7 +158,7 @@ Check the output file capture.ts (or what you set in .env or environment variabl
 ffmpeg -i capture.ts
 ```
 
-## Profiling with firestorm (built in)
+## Profiling with Firestorm (built in) <https://www.reddit.com/r/rust/comments/lkvlya/introducing_the_firestorm_profiler/>
 
 ```
 Edit Cargo.toml and change the following lines...
