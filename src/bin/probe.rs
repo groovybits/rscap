@@ -14,8 +14,10 @@ use lazy_static::lazy_static;
 use log::{debug, error, info};
 use pcap::Capture;
 use rtp::RtpReader;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
+use std::fmt;
 use std::io::Write;
 use std::net::{Ipv4Addr, UdpSocket};
 use std::sync::mpsc;
@@ -56,6 +58,8 @@ struct Pmt {
 #[derive(Clone)]
 struct StreamData {
     pid: u16,
+    pmt_pid: u16,
+    program_number: u16,
     stream_type: String, // "video", "audio", "text"
     continuity_counter: u8,
     timestamp: u64,
@@ -73,6 +77,15 @@ struct StreamData {
     total_bits: u64, // field for total bits
     count: u32,      // field for count
     data: Vec<u8>,   // The actual MPEG-TS packet data
+    pmt_data: Vec<u8>,
+    // SMPTE 2110 fields
+    rtp_timestamp: u32,
+    rtp_payload_type: u8,
+    rtp_payload_type_name: String,
+    rtp_line_number: u16,
+    rtp_line_offset: u16,
+    rtp_line_length: u16,
+    rtp_field_id: u8,
 }
 
 // StreamData implementation
@@ -97,6 +110,8 @@ impl StreamData {
         let last_arrival_time = current_unix_timestamp_ms().unwrap_or(0);
         StreamData {
             pid,
+            pmt_pid: 0xFFFF,
+            program_number: 0,
             stream_type,
             continuity_counter,
             timestamp,
@@ -114,7 +129,43 @@ impl StreamData {
             total_bits: 0, // Initialize total bits
             count: 0,      // Initialize count
             data: packet.to_vec(),
+            pmt_data: Vec::new(),
+            // SMPTE 2110 fields
+            rtp_timestamp: 0,
+            rtp_payload_type: 0,
+            rtp_payload_type_name: "".to_string(),
+            rtp_line_number: 0,
+            rtp_line_offset: 0,
+            rtp_line_length: 0,
+            rtp_field_id: 0,
         }
+    }
+    fn set_rtp_fields(
+        &mut self,
+        rtp_timestamp: u32,
+        rtp_payload_type: u8,
+        rtp_payload_type_name: String,
+        rtp_line_number: u16,
+        rtp_line_offset: u16,
+        rtp_line_length: u16,
+        rtp_field_id: u8,
+    ) {
+        self.rtp_timestamp = rtp_timestamp;
+        self.rtp_payload_type = rtp_payload_type;
+        self.rtp_payload_type_name = rtp_payload_type_name;
+        self.rtp_line_number = rtp_line_number;
+        self.rtp_line_offset = rtp_line_offset;
+        self.rtp_line_length = rtp_line_length;
+        self.rtp_field_id = rtp_field_id;
+    }
+    fn set_pmt_pid(&mut self, pmt_pid: u16) {
+        self.pmt_pid = pmt_pid;
+    }
+    fn add_pmt_data(&mut self, pmt_data: &[u8]) {
+        self.pmt_data = pmt_data.to_vec();
+    }
+    fn update_program_number(&mut self, program_number: u16) {
+        self.program_number = program_number;
     }
     fn update_stream_type(&mut self, stream_type: String) {
         self.stream_type = stream_type;
@@ -127,6 +178,29 @@ impl StreamData {
     }
     fn increment_count(&mut self, count: u32) {
         self.count += count;
+    }
+    fn set_continuity_counter(&mut self, continuity_counter: u8) {
+        // check for continuity continuous increment and wrap around from 0 to 15
+        let previous_continuity_counter = self.continuity_counter;
+        self.continuity_counter = continuity_counter & 0x0F;
+        // check if we incremented without loss
+        if self.continuity_counter != previous_continuity_counter + 1 {
+            // check if we wrapped around from 15 to 0
+            if self.continuity_counter == 0 {
+                // check if previous value was 15
+                if previous_continuity_counter == 15 {
+                    // no loss
+                    return;
+                }
+            }
+            // loss
+            self.increment_error_count(1);
+            error!(
+                "Continuity Counter Error: PID: {} Previous: {} Current: {}",
+                self.pid, previous_continuity_counter, self.continuity_counter
+            );
+        }
+        self.continuity_counter = continuity_counter;
     }
     fn update_stats(&mut self, packet_size: usize, arrival_time: u64) {
         let bits = packet_size as u64 * 8; // Convert bytes to bits
@@ -175,29 +249,95 @@ impl StreamData {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 struct Tr101290Errors {
+    // p1 errors
+    ts_sync_byte_errors: u32,
     sync_byte_errors: u32,
-    transport_error_indicator_errors: u32,
     continuity_counter_errors: u32,
-    // TODO: ... other error types ...
+    pat_errors: u32,
+    pmt_errors: u32,
+    pid_map_errors: u32,
+    // p2 errors
+    transport_error_indicator_errors: u32,
+    crc_errors: u32,
+    pcr_repetition_errors: u32,
+    pcr_discontinuity_indicator_errors: u32,
+    pcr_accuracy_errors: u32,
+    pts_errors: u32,
+    cat_errors: u32,
+}
+
+impl fmt::Display for Tr101290Errors {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "\
+            TS Sync Byte Errors: {}, \
+            Sync Byte Errors: {}, \
+            Continuity Counter Errors: {}, \
+            PAT Errors: {}, \
+            PMT Errors: {}, \
+            PID Map Errors: {}, \
+            Transport Error Indicator Errors: {}, \
+            CRC Errors: {}, \
+            PCR Repetition Errors: {}, \
+            PCR Discontinuity Indicator Errors: {}, \
+            PCR Accuracy Errors: {}, \
+            PTS Errors: {}, \
+            CAT Errors: {}",
+            self.ts_sync_byte_errors,
+            self.sync_byte_errors,
+            self.continuity_counter_errors,
+            self.pat_errors,
+            self.pmt_errors,
+            self.pid_map_errors,
+            // p2 errors
+            self.transport_error_indicator_errors,
+            self.crc_errors,
+            self.pcr_repetition_errors,
+            self.pcr_discontinuity_indicator_errors,
+            self.pcr_accuracy_errors,
+            self.pts_errors,
+            self.cat_errors
+        )
+    }
 }
 
 impl Tr101290Errors {
     fn new() -> Self {
         Tr101290Errors {
+            ts_sync_byte_errors: 0,
             sync_byte_errors: 0,
-            transport_error_indicator_errors: 0,
             continuity_counter_errors: 0,
-            // TODO: ... initialize other errors ...
+            pat_errors: 0,
+            pmt_errors: 0,
+            pid_map_errors: 0,
+            // p2
+            transport_error_indicator_errors: 0,
+            crc_errors: 0,
+            pcr_repetition_errors: 0,
+            pcr_discontinuity_indicator_errors: 0,
+            pcr_accuracy_errors: 0,
+            pts_errors: 0,
+            cat_errors: 0,
         }
     }
 }
 
-// TR 101 290 Priority 1 Check Example
+// TR 101 290 Priority 1 Check
 fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors) {
+    // p1
     if packet[0] != 0x47 {
         errors.sync_byte_errors += 1;
     }
+
+    // TODO: ... other checks, updating the respective counters ...
+}
+
+// TR 101 290 Priority 2 Check
+fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
+    // p2
 
     if (packet[1] & 0x80) != 0 {
         errors.transport_error_indicator_errors += 1;
@@ -209,6 +349,7 @@ fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors) {
 fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) {
     let packet: &[u8] = &stream_data_packet.data;
     tr101290_p1_check(packet, errors);
+    tr101290_p2_check(packet, errors);
 
     let pid = extract_pid(packet);
     let arrival_time = current_unix_timestamp_ms().unwrap_or(0);
@@ -221,6 +362,10 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
         Some(stream_data) => {
             // Existing StreamData instance found, update it
             stream_data.update_stats(packet.len(), arrival_time);
+            stream_data.increment_count(1);
+            if stream_data.pid != 0x1FFF {
+                stream_data.set_continuity_counter(stream_data_packet.continuity_counter);
+            }
             let uptime = arrival_time - stream_data.start_time;
 
             // create json object of stats
@@ -248,7 +393,7 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
         }
         None => {
             // No StreamData instance found for this PID, possibly no PMT yet
-            let mut pmt_pid = 0;
+            let mut pmt_pid = 0xFFFF;
             unsafe {
                 pmt_pid = PMT_PID;
             }
@@ -259,10 +404,7 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
                 // PMT packet not found yet, add the stream_data_packet to the pid_map
                 let mut stream_data_clone = stream_data_packet.clone();
                 stream_data_clone.update_stats(packet.len(), arrival_time);
-                pid_map.insert(
-                    pid,
-                    stream_data_clone.clone(),
-                );
+                pid_map.insert(pid, stream_data_clone.clone());
                 // create json object of stats
                 let json_stats = json!({
                     "type": "mpegts_stats",
@@ -281,7 +423,10 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
                     "timestamp": stream_data_packet.timestamp,
                     "uptime": 0,
                 });
-                info!("STATUS::PACKET:ADD[{}] {}", stream_data_clone.pid, json_stats);
+                info!(
+                    "STATUS::PACKET:ADD[{}] {}",
+                    stream_data_clone.pid, json_stats
+                );
             }
         }
     }
@@ -289,10 +434,7 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
     // PID not found, add the stream_data_packet to the pid_map, probably before we have seen the PMT
     if !found_pid {
         // PID not found, add the stream_data_packet to the pid_map
-        pid_map.insert(
-            pid,
-            stream_data_packet.clone(),
-        );
+        pid_map.insert(pid, stream_data_packet.clone());
     }
 }
 
@@ -540,17 +682,13 @@ fn update_pid_map(pmt_packet: &[u8]) {
                 } else {
                     // get the stream data so we can update it
                     let stream_data = pid_map.get_mut(&stream_pid).unwrap();
-                    // update the timestamp
-                    stream_data.update_stats(pmt_packet.len(), timestamp);
+
                     // update the stream type
                     stream_data.update_stream_type(stream_type.to_string());
                     // update the count
-                    stream_data.increment_count(1);
-                    // update the timestamp
-                    stream_data.update_timestamp(timestamp);
 
-                     // create json object of stats
-                     let json_stats = json!({
+                    // create json object of stats
+                    let json_stats = json!({
                         "type": "mpegts_stats",
                         "pid": stream_data.pid,
                         "stream_type": stream_data.stream_type,
@@ -569,7 +707,7 @@ fn update_pid_map(pmt_packet: &[u8]) {
                     });
 
                     // log json stats
-                    info!("STATUS::STREAM:UPDATE[{}] {}", stream_data.pid, json_stats);
+                    debug!("STATUS::STREAM:UPDATE[{}] {}", stream_data.pid, json_stats);
                 }
             }
         } else {
@@ -925,10 +1063,7 @@ async fn main() {
             publisher.send(batched_data, 0).unwrap();
 
             // Print progress
-            log::info!(
-                "STATUS::ZEROMQ:TX {}",
-                json_header
-            );
+            log::info!("STATUS::ZEROMQ:TX {}", json_header);
         }
     });
 
@@ -945,7 +1080,7 @@ async fn main() {
             Ok(packet) => {
                 if debug_on {
                     println!("Received packet! {:?}", packet.header);
-                } else {
+                } else if silent {
                     print!(".");
                     // flush stdout
                     std::io::stdout().flush().unwrap();
@@ -976,7 +1111,7 @@ async fn main() {
                     if debug_on {
                         hexdump(&stream_data.data); // Use stream_data.data to access the raw packet data
                     }
-                    
+
                     // Handle PAT and PMT packets
                     let pid = extract_pid(&stream_data.data);
                     match pid {
@@ -988,7 +1123,10 @@ async fn main() {
                             // Check if this is a PMT packet
                             unsafe {
                                 if pid == PMT_PID {
-                                    log::debug!("ProcessPacket: PMT packet detected with PID {}", pid);
+                                    log::debug!(
+                                        "ProcessPacket: PMT packet detected with PID {}",
+                                        pid
+                                    );
                                     // Update PID_MAP with new stream types
                                     update_pid_map(&stream_data.data);
                                 }
@@ -999,19 +1137,11 @@ async fn main() {
                     // Check for TR 101 290 errors
                     process_packet(&stream_data, &mut tr101290_errors);
 
-                    // print tr101290 errors as one line json
-                    let json_errors = json!({
-                        "p1": {
-                            "sync_byte_errors": tr101290_errors.sync_byte_errors,
-                            "transport_error_indicator_errors": tr101290_errors.transport_error_indicator_errors,
-                            "continuity_counter_errors": tr101290_errors.continuity_counter_errors,
-                        },
-                        "p2": {},
-                        "p3": {},
-                    });
-
-                    // log json errors
-                    info!("STATUS::TR101290:ERRORS {}", json_errors);
+                    // Print TR 101 290 errors
+                    match serde_json::to_string(&tr101290_errors) {
+                        Ok(json_string) => info!("STATUS::TR101290:ERRORS: {}", json_string),
+                        Err(e) => eprintln!("Failed to serialize TR101290 Errors to JSON: {}", e),
+                    }
 
                     batch.push(stream_data.data.clone());
 
@@ -1030,10 +1160,7 @@ async fn main() {
                     "dropped": stats.dropped,
                     "if_dropped": stats.if_dropped,
                 });
-                info!(
-                    "STATUS::PCAP:PACKET {}",
-                    json_stats
-                );
+                info!("STATUS::PCAP:PACKET {}", json_stats);
             }
             Err(e) => {
                 error!("Error capturing packet: {:?}", e);
@@ -1074,52 +1201,24 @@ fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
 const RFC_4175_EXT_SEQ_NUM_LEN: usize = 2;
 const RFC_4175_HEADER_LEN: usize = 6; // Note: extended sequence number not included
 
-fn set_extended_sequence_number(buf: &mut [u8], number: u16) {
-    buf[0] = (number >> 8) as u8;
-    buf[1] = number as u8;
-}
-
 fn get_extended_sequence_number(buf: &[u8]) -> u16 {
     ((buf[0] as u16) << 8) | buf[1] as u16
-}
-
-fn set_line_length(buf: &mut [u8], length: u16) {
-    buf[0] = (length >> 8) as u8;
-    buf[1] = length as u8;
 }
 
 fn get_line_length(buf: &[u8]) -> u16 {
     ((buf[0] as u16) << 8) | buf[1] as u16
 }
 
-fn set_line_field_id(buf: &mut [u8], id: u8) {
-    buf[2] |= ((id != 0) as u8) << 7;
-}
-
 fn get_line_field_id(buf: &[u8]) -> u8 {
     buf[2] >> 7
-}
-
-fn set_line_number(buf: &mut [u8], number: u16) {
-    buf[2] |= (number >> 8) as u8 & 0x7f;
-    buf[3] = number as u8;
 }
 
 fn get_line_number(buf: &[u8]) -> u16 {
     ((buf[2] as u16 & 0x7f) << 8) | buf[3] as u16
 }
 
-fn set_line_continuation(buf: &mut [u8], continuation: u8) {
-    buf[4] |= ((continuation != 0) as u8) << 7;
-}
-
 fn get_line_continuation(buf: &[u8]) -> u8 {
     buf[4] >> 7
-}
-
-fn set_line_offset(buf: &mut [u8], offset: u16) {
-    buf[4] |= (offset >> 8) as u8 & 0x7f;
-    buf[5] = offset as u8;
 }
 
 fn get_line_offset(buf: &[u8]) -> u16 {
@@ -1143,9 +1242,6 @@ fn process_smpte2110_packet(
 
             // Create an RtpReader
             if let Ok(rtp) = RtpReader::new(rtp_packet) {
-                // Extract the sequence number
-                let _sequence_number = rtp.sequence_number();
-
                 // Extract the timestamp
                 let timestamp = rtp.timestamp();
 
@@ -1158,18 +1254,21 @@ fn process_smpte2110_packet(
 
                 let line_length = get_line_length(rtp_packet);
                 let line_number = get_line_number(rtp_packet);
+                let extended_sequence_number = get_extended_sequence_number(rtp_packet);
                 let line_offset = get_line_offset(rtp_packet);
                 let field_id = get_line_field_id(rtp_packet);
 
+                let line_continuation = get_line_continuation(rtp_packet);
+
                 let smpte_header_info = json!({
                     "size": chunk_size,
-                    //"sequence_number": sequence_number as u64,
                     "timestamp": timestamp,
                     "payload_type": payload_type,
                     "line_length": line_length,
                     "line_number": line_number,
                     "line_offset": line_offset,
                     "field_id": field_id,
+                    "line_continuation": line_continuation,
                 });
 
                 let pid = 1; /* FIXME */
