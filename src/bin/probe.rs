@@ -839,7 +839,7 @@ fn rscap() {
     let args = Args::parse();
 
     // Use the parsed arguments directly
-    let mut batch_size = args.batch_size;
+    let batch_size = args.batch_size;
     let payload_offset = args.payload_offset;
     let packet_size = args.packet_size;
     let read_time_out = args.read_time_out;
