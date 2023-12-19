@@ -58,7 +58,6 @@ struct Pmt {
 }
 
 // StreamData struct
-#[derive(Clone)]
 struct StreamData {
     pid: u16,
     pmt_pid: u16,
@@ -89,6 +88,41 @@ struct StreamData {
     rtp_line_offset: u16,
     rtp_line_length: u16,
     rtp_field_id: u8,
+}
+
+impl Clone for StreamData {
+    fn clone(&self) -> Self {
+        StreamData {
+            pid: self.pid,
+            pmt_pid: self.pmt_pid,
+            program_number: self.program_number,
+            stream_type: self.stream_type.clone(),
+            continuity_counter: self.continuity_counter,
+            timestamp: self.timestamp,
+            bitrate: self.bitrate,
+            bitrate_max: self.bitrate_max,
+            bitrate_min: self.bitrate_min,
+            bitrate_avg: self.bitrate_avg,
+            iat: self.iat,
+            iat_max: self.iat_max,
+            iat_min: self.iat_min,
+            iat_avg: self.iat_avg,
+            error_count: self.error_count,
+            last_arrival_time: self.last_arrival_time,
+            start_time: self.start_time,
+            total_bits: self.total_bits,
+            count: self.count,
+            data: Vec::new(), // Do not clone the data, initialize as empty
+            pmt_data: Vec::new(), // Do not clone the data, initialize as empty
+            rtp_timestamp: self.rtp_timestamp,
+            rtp_payload_type: self.rtp_payload_type,
+            rtp_payload_type_name: self.rtp_payload_type_name.clone(),
+            rtp_line_number: self.rtp_line_number,
+            rtp_line_offset: self.rtp_line_offset,
+            rtp_line_length: self.rtp_line_length,
+            rtp_field_id: self.rtp_field_id,
+        }
+    }
 }
 
 // StreamData implementation
