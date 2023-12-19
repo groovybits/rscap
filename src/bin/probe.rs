@@ -359,7 +359,7 @@ fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
 }
 
 // Invoke this function for each MPEG-TS packet
-fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) {
+fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors, is_mpegts: bool) {
     profile_fn!(process_packet);
     let packet: &[u8] = &stream_data_packet.data;
     tr101290_p1_check(packet, errors);
@@ -377,7 +377,7 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
             // Existing StreamData instance found, update it
             stream_data.update_stats(packet.len(), arrival_time);
             stream_data.increment_count(1);
-            if stream_data.pid != 0x1FFF {
+            if stream_data.pid != 0x1FFF && !is_mpegts {
                 stream_data.set_continuity_counter(stream_data_packet.continuity_counter);
             }
             let uptime = arrival_time - stream_data.start_time;
@@ -1225,7 +1225,7 @@ fn rscap() {
                     }
 
                     // Check for TR 101 290 errors
-                    process_packet(&stream_data, &mut tr101290_errors);
+                    process_packet(&stream_data, &mut tr101290_errors, is_mpegts);
 
                     // Print TR 101 290 errors
                     match serde_json::to_string(&tr101290_errors) {
