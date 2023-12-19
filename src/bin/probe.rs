@@ -1063,18 +1063,18 @@ fn rscap() {
 
                     if let Err(e) = ptx.send(packet_data) {
                         error!("Error sending packet data to main thread: {:?}", e);
-                        break;
                     }
 
-                    let stats = cap.stats().unwrap();
+                    /* Stats are not currently used from resource usage, debugging only */
+                    //let stats = cap.stats().unwrap();
 
                     // Json representation of stats
-                    let json_stats = json!({
+                    /*let json_stats = json!({
                         "received": stats.received,
                         "dropped": stats.dropped,
                         "if_dropped": stats.if_dropped,
                     });
-                    info!("STATUS::PCAP:PACKET {}", json_stats);
+                    info!("STATUS::PCAP:PACKET {}", json_stats);*/
                 },
                 Err(_) => {
                     // Exit loop if `next_packet` fails or some other error occurs
