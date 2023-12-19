@@ -229,7 +229,7 @@ impl StreamData {
         let previous_continuity_counter = self.continuity_counter;
         self.continuity_counter = continuity_counter & 0x0F;
         // check if we incremented without loss
-        if self.continuity_counter != previous_continuity_counter + 1 {
+        if self.continuity_counter != previous_continuity_counter + 1 && self.continuity_counter  != previous_continuity_counter {
             // check if we wrapped around from 15 to 0
             if self.continuity_counter == 0 {
                 // check if previous value was 15
@@ -1449,6 +1449,18 @@ fn process_mpegts_packet(
             read_size = packet_size; // reset read_size
 
             let pid = extract_pid(chunk);
+
+            // Check for null packet and skip
+            /*if chunk[13] == 0xFF && pid != 0x1FFF {
+                // Check for null packet
+                error!("ProcessPacket: Null packet detected with PID {}", pid);
+                // check if all bytes are 0xFF
+                if chunk.iter().all(|&x| x == 0xFF) {
+                    error!("ProcessPacket: All bytes are 0xFF, skipping");
+                    start += read_size;
+                    continue;
+                }
+            }*/
 
             let stream_type = determine_stream_type(pid); // Implement this function based on PAT/PMT parsing
             let timestamp = ((chunk[4] as u64) << 25)
