@@ -1160,7 +1160,7 @@ fn rscap() {
                 if silent {
                     print!(".");
                     // flush stdout
-                    std::io::stdout().flush().unwrap();
+                    //std::io::stdout().flush().unwrap();
                 }
 
                 // Check if chunk is MPEG-TS or SMPTE 2110
