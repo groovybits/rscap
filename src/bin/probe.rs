@@ -454,16 +454,11 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors, 
 }
 
 // Function to get the current Unix timestamp in milliseconds
-fn current_unix_timestamp_ms() -> Result<u64, String> {
-    profile_fn!(current_unix_timestamp_ms);
-    let now = SystemTime::now();
-    match now.duration_since(UNIX_EPOCH) {
-        Ok(duration) => {
-            let milliseconds = duration.as_secs() * 1000 + u64::from(duration.subsec_millis());
-            Ok(milliseconds)
-        }
-        Err(e) => Err(format!("System time is before the UNIX epoch: {}", e)),
-    }
+fn current_unix_timestamp_ms() -> Result<u64, &'static str> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .map_err(|_| "System time is before the UNIX epoch")
 }
 
 // Implement a function to extract PID from a packet
@@ -1096,7 +1091,6 @@ fn rscap() {
                 break; // Exit the loop if a stop signal is received
             }
             // ... ZeroMQ sending logic ...
-            //let batched_data = batch.concat();
             for stream_data in batch.iter() {
                 // Send chunk of data as multipart message
                 let chunk_size = stream_data.data.len();
