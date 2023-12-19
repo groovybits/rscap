@@ -394,7 +394,7 @@ fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
 }
 
 // Invoke this function for each MPEG-TS packet
-fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors, is_mpegts: bool) {
+fn process_packet(stream_data_packet: &mut StreamData, errors: &mut Tr101290Errors, is_mpegts: bool) {
     profile_fn!(process_packet);
     let packet: &[u8] = &stream_data_packet.data;
     tr101290_p1_check(packet, errors);
@@ -449,32 +449,31 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors, 
                 info!("ProcessPacket: New PID {} Found, adding to PID map.", pid);
             } else {
                 // PMT packet not found yet, add the stream_data_packet to the pid_map
-                let mut stream_data_clone = stream_data_packet.clone();
-                stream_data_clone.update_stats(packet.len(), arrival_time);
+                stream_data_packet.update_stats(packet.len(), arrival_time);
                 
                 // create json object of stats
                 let json_stats = json!({
                     "type": "mpegts_stats",
-                    "pid": stream_data_clone.pid,
-                    "stream_type": stream_data_clone.stream_type,
-                    "bitrate": stream_data_clone.bitrate,
-                    "bitrate_max": stream_data_clone.bitrate_max,
-                    "bitrate_min": stream_data_clone.bitrate_min,
-                    "bitrate_avg": stream_data_clone.bitrate_avg,
+                    "pid": stream_data_packet.pid,
+                    "stream_type": stream_data_packet.stream_type,
+                    "bitrate": stream_data_packet.bitrate,
+                    "bitrate_max": stream_data_packet.bitrate_max,
+                    "bitrate_min": stream_data_packet.bitrate_min,
+                    "bitrate_avg": stream_data_packet.bitrate_avg,
                     "iat": stream_data_packet.iat,
-                    "iat_max": stream_data_clone.iat_max,
-                    "iat_min": stream_data_clone.iat_min,
-                    "iat_avg": stream_data_clone.iat_avg,
-                    "errors": stream_data_clone.error_count,
+                    "iat_max": stream_data_packet.iat_max,
+                    "iat_min": stream_data_packet.iat_min,
+                    "iat_avg": stream_data_packet.iat_avg,
+                    "errors": stream_data_packet.error_count,
                     "continuity_counter": stream_data_packet.continuity_counter,
                     "timestamp": stream_data_packet.timestamp,
                     "uptime": 0,
                 });
                 info!(
                     "STATUS::PACKET:ADD[{}] {}",
-                    stream_data_clone.pid, json_stats
+                    stream_data_packet.pid, json_stats
                 );
-                pid_map.insert(pid, stream_data_clone);
+                pid_map.insert(pid, stream_data_packet.clone());
             }
         }
     }
@@ -1214,7 +1213,7 @@ fn rscap() {
                 };
 
                 // Process each chunk
-                for stream_data in chunks {
+                for mut stream_data in chunks {
                     if debug_on {
                         hexdump(&stream_data.data); // Use stream_data.data to access the raw packet data
                     }
@@ -1244,7 +1243,7 @@ fn rscap() {
                     }
 
                     // Check for TR 101 290 errors
-                    process_packet(&stream_data, &mut tr101290_errors, is_mpegts);
+                    process_packet(&mut stream_data, &mut tr101290_errors, is_mpegts);
 
                     // Print TR 101 290 errors
                     match serde_json::to_string(&tr101290_errors) {
