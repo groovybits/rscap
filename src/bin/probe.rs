@@ -27,6 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use firestorm::{profile_fn, profile_method, profile_section};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender};
 
 // constant for PAT PID
 const PAT_PID: u16 = 0;
@@ -1029,59 +1030,43 @@ fn rscap() {
         source_protocol, source_port, source_ip
     );
 
-    let (ptx, prx) = mpsc::channel::<Vec<u8>>();
-
-    // Define a struct or type alias for the data from each packet
-    type PacketData = Vec<u8>;
+    let (ptx, prx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = mpsc::channel();
 
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
 
     let capture_thread = thread::spawn(move || {
-        let mut cap = Capture::from_device(target_device)
-            .unwrap()
+        let mut cap = Capture::from_device(target_device).unwrap()
             .promisc(promiscuous)
             .timeout(read_time_out)
             .snaplen(read_size)
-            .open()
-            .unwrap();
+            .open().unwrap();
 
         cap.filter(&source_host_and_port, true).unwrap();
 
-        loop {
-            if !running_clone.load(Ordering::SeqCst) {
-                break;
-            }
+        while running_clone.load(Ordering::SeqCst) {
             match cap.next_packet() {
                 Ok(packet) => {
-                    if debug_on {
-                        println!("Received packet! {:?}", packet.header);
-                    }
-
-                    // Extract only the necessary data from the packet
-                    let packet_data = packet.data.to_vec(); // Extract the data as Vec<u8>
-
-                    if let Err(e) = ptx.send(packet_data) {
-                        error!("Error sending packet data to main thread: {:?}", e);
-                    }
-
-                    /* Stats are not currently used from resource usage, debugging only */
-                    //let stats = cap.stats().unwrap();
-
-                    // Json representation of stats
-                    /*let json_stats = json!({
-                        "received": stats.received,
-                        "dropped": stats.dropped,
-                        "if_dropped": stats.if_dropped,
-                    });
-                    info!("STATUS::PCAP:PACKET {}", json_stats);*/
-                },
+                    // Send the packet data directly without copying
+                    ptx.send(packet.data.to_owned()).unwrap();
+                }
                 Err(_) => {
-                    // Exit loop if `next_packet` fails or some other error occurs
+                    // Exit loop if `next` fails or some other error occurs
                     break;
                 }
             }
         }
+
+        // Stats after capture is complete
+        let stats = cap.stats().unwrap();
+
+        // Json representation of stats
+        let json_stats = json!({
+            "received": stats.received,
+            "dropped": stats.dropped,
+            "if_dropped": stats.if_dropped,
+        });
+        info!("STATUS::PCAP:PACKET {}", json_stats);
     });
 
     // Setup channel for passing data between threads
