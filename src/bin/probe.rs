@@ -27,6 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use firestorm::{profile_fn, profile_method, profile_section};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, Sender};
 
 // constant for PAT PID
 const PAT_PID: u16 = 0;
@@ -57,7 +58,6 @@ struct Pmt {
 }
 
 // StreamData struct
-#[derive(Clone)]
 struct StreamData {
     pid: u16,
     pmt_pid: u16,
@@ -88,6 +88,41 @@ struct StreamData {
     rtp_line_offset: u16,
     rtp_line_length: u16,
     rtp_field_id: u8,
+}
+
+impl Clone for StreamData {
+    fn clone(&self) -> Self {
+        StreamData {
+            pid: self.pid,
+            pmt_pid: self.pmt_pid,
+            program_number: self.program_number,
+            stream_type: self.stream_type.clone(),
+            continuity_counter: self.continuity_counter,
+            timestamp: self.timestamp,
+            bitrate: self.bitrate,
+            bitrate_max: self.bitrate_max,
+            bitrate_min: self.bitrate_min,
+            bitrate_avg: self.bitrate_avg,
+            iat: self.iat,
+            iat_max: self.iat_max,
+            iat_min: self.iat_min,
+            iat_avg: self.iat_avg,
+            error_count: self.error_count,
+            last_arrival_time: self.last_arrival_time,
+            start_time: self.start_time,
+            total_bits: self.total_bits,
+            count: self.count,
+            data: Vec::new(), // Do not clone the data, initialize as empty
+            pmt_data: Vec::new(), // Do not clone the data, initialize as empty
+            rtp_timestamp: self.rtp_timestamp,
+            rtp_payload_type: self.rtp_payload_type,
+            rtp_payload_type_name: self.rtp_payload_type_name.clone(),
+            rtp_line_number: self.rtp_line_number,
+            rtp_line_offset: self.rtp_line_offset,
+            rtp_line_length: self.rtp_line_length,
+            rtp_field_id: self.rtp_field_id,
+        }
+    }
 }
 
 // StreamData implementation
@@ -359,7 +394,7 @@ fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
 }
 
 // Invoke this function for each MPEG-TS packet
-fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) {
+fn process_packet(stream_data_packet: &mut StreamData, errors: &mut Tr101290Errors, is_mpegts: bool) {
     profile_fn!(process_packet);
     let packet: &[u8] = &stream_data_packet.data;
     tr101290_p1_check(packet, errors);
@@ -369,7 +404,6 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
     let arrival_time = current_unix_timestamp_ms().unwrap_or(0);
 
     let mut pid_map = PID_MAP.lock().unwrap();
-    let mut found_pid = false;
 
     // Check if the PID map already has an entry for this PID
     match pid_map.get_mut(&pid) {
@@ -377,7 +411,7 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
             // Existing StreamData instance found, update it
             stream_data.update_stats(packet.len(), arrival_time);
             stream_data.increment_count(1);
-            if stream_data.pid != 0x1FFF {
+            if stream_data.pid != 0x1FFF && is_mpegts {
                 stream_data.set_continuity_counter(stream_data_packet.continuity_counter);
             }
             let uptime = arrival_time - stream_data.start_time;
@@ -403,7 +437,6 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
 
             // log json stats
             info!("STATUS::PACKET:MODIFY[{}] {}", stream_data.pid, json_stats);
-            found_pid = true;
         }
         None => {
             // No StreamData instance found for this PID, possibly no PMT yet
@@ -416,53 +449,42 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors) 
                 info!("ProcessPacket: New PID {} Found, adding to PID map.", pid);
             } else {
                 // PMT packet not found yet, add the stream_data_packet to the pid_map
-                let mut stream_data_clone = stream_data_packet.clone();
-                stream_data_clone.update_stats(packet.len(), arrival_time);
-                pid_map.insert(pid, stream_data_clone.clone());
+                stream_data_packet.update_stats(packet.len(), arrival_time);
+                
                 // create json object of stats
                 let json_stats = json!({
                     "type": "mpegts_stats",
-                    "pid": stream_data_clone.pid,
-                    "stream_type": stream_data_clone.stream_type,
-                    "bitrate": stream_data_clone.bitrate,
-                    "bitrate_max": stream_data_clone.bitrate_max,
-                    "bitrate_min": stream_data_clone.bitrate_min,
-                    "bitrate_avg": stream_data_clone.bitrate_avg,
+                    "pid": stream_data_packet.pid,
+                    "stream_type": stream_data_packet.stream_type,
+                    "bitrate": stream_data_packet.bitrate,
+                    "bitrate_max": stream_data_packet.bitrate_max,
+                    "bitrate_min": stream_data_packet.bitrate_min,
+                    "bitrate_avg": stream_data_packet.bitrate_avg,
                     "iat": stream_data_packet.iat,
-                    "iat_max": stream_data_clone.iat_max,
-                    "iat_min": stream_data_clone.iat_min,
-                    "iat_avg": stream_data_clone.iat_avg,
-                    "errors": stream_data_clone.error_count,
+                    "iat_max": stream_data_packet.iat_max,
+                    "iat_min": stream_data_packet.iat_min,
+                    "iat_avg": stream_data_packet.iat_avg,
+                    "errors": stream_data_packet.error_count,
                     "continuity_counter": stream_data_packet.continuity_counter,
                     "timestamp": stream_data_packet.timestamp,
                     "uptime": 0,
                 });
                 info!(
                     "STATUS::PACKET:ADD[{}] {}",
-                    stream_data_clone.pid, json_stats
+                    stream_data_packet.pid, json_stats
                 );
+                pid_map.insert(pid, stream_data_packet.clone());
             }
         }
-    }
-
-    // PID not found, add the stream_data_packet to the pid_map, probably before we have seen the PMT
-    if !found_pid {
-        // PID not found, add the stream_data_packet to the pid_map
-        pid_map.insert(pid, stream_data_packet.clone());
     }
 }
 
 // Function to get the current Unix timestamp in milliseconds
-fn current_unix_timestamp_ms() -> Result<u64, String> {
-    profile_fn!(current_unix_timestamp_ms);
-    let now = SystemTime::now();
-    match now.duration_since(UNIX_EPOCH) {
-        Ok(duration) => {
-            let milliseconds = duration.as_secs() * 1000 + u64::from(duration.subsec_millis());
-            Ok(milliseconds)
-        }
-        Err(e) => Err(format!("System time is before the UNIX epoch: {}", e)),
-    }
+fn current_unix_timestamp_ms() -> Result<u64, &'static str> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .map_err(|_| "System time is before the UNIX epoch")
 }
 
 // Implement a function to extract PID from a packet
@@ -818,6 +840,10 @@ struct Args {
     /// number of packets to capture
     #[clap(long, env = "PACKET_COUNT", default_value_t = 0)]
     packet_count: u64,
+
+    /// Turn off progress output dots
+    #[clap(long, env = "NO_PROGRESS", default_value_t = false)]
+    no_progress: bool,
 }
 
 fn main() {
@@ -843,7 +869,7 @@ fn rscap() {
     let args = Args::parse();
 
     // Use the parsed arguments directly
-    let mut batch_size = args.batch_size;
+    let batch_size = args.batch_size;
     let payload_offset = args.payload_offset;
     let packet_size = args.packet_size;
     let read_time_out = args.read_time_out;
@@ -859,6 +885,7 @@ fn rscap() {
     let use_wireless = args.use_wireless;
     let send_json_header = args.send_json_header;
     let packet_count = args.packet_count;
+    let no_progress = args.no_progress;
 
     if silent {
         // set log level to error
@@ -1029,59 +1056,51 @@ fn rscap() {
         source_protocol, source_port, source_ip
     );
 
-    let (ptx, prx) = mpsc::channel::<Vec<u8>>();
-
-    // Define a struct or type alias for the data from each packet
-    type PacketData = Vec<u8>;
+    let (ptx, prx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = mpsc::channel();
 
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
 
     let capture_thread = thread::spawn(move || {
-        let mut cap = Capture::from_device(target_device)
-            .unwrap()
+        let mut cap = Capture::from_device(target_device).unwrap()
             .promisc(promiscuous)
             .timeout(read_time_out)
             .snaplen(read_size)
-            .open()
-            .unwrap();
+            .open().unwrap();
 
         cap.filter(&source_host_and_port, true).unwrap();
 
-        loop {
-            if !running_clone.load(Ordering::SeqCst) {
-                break;
-            }
+        while running_clone.load(Ordering::SeqCst) {
             match cap.next_packet() {
                 Ok(packet) => {
-                    if debug_on {
-                        println!("Received packet! {:?}", packet.header);
-                    }
-
-                    // Extract only the necessary data from the packet
-                    let packet_data = packet.data.to_vec(); // Extract the data as Vec<u8>
-
-                    if let Err(e) = ptx.send(packet_data) {
-                        error!("Error sending packet data to main thread: {:?}", e);
+                    // Send the packet data directly without copying
+                    ptx.send(packet.data.to_owned()).unwrap();
+                }
+                Err(e) => {
+                    // Print error and information about it
+                    error!("PCap Capture Error occurred: {}", e);
+                    if e == pcap::Error::TimeoutExpired {
+                        // Timeout expired, continue and try again
+                        continue;
+                    } else {
+                        // Exit the loop if an error occurs
+                        running_clone.store(false, Ordering::SeqCst);
                         break;
                     }
-
-                    let stats = cap.stats().unwrap();
-
-                    // Json representation of stats
-                    let json_stats = json!({
-                        "received": stats.received,
-                        "dropped": stats.dropped,
-                        "if_dropped": stats.if_dropped,
-                    });
-                    info!("STATUS::PCAP:PACKET {}", json_stats);
-                },
-                Err(_) => {
-                    // Exit loop if `next_packet` fails or some other error occurs
-                    break;
                 }
             }
+            if debug_on {
+                let stats = cap.stats().unwrap();
+                println!("Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
+                         stats.received, stats.dropped, stats.if_dropped);
+            }            
         }
+
+        let stats = cap.stats().unwrap();
+        println!("Packet capture statistics:");
+        println!("Received: {}", stats.received);
+        println!("Dropped: {}", stats.dropped);
+        println!("Interface Dropped: {}", stats.if_dropped);
     });
 
     // Setup channel for passing data between threads
@@ -1097,13 +1116,12 @@ fn rscap() {
 
         let mut total_bytes = 0;
         let mut count = 0;
-        for batch in rx {
+        for mut batch in rx {
             // Check for a stop signal
             if batch.is_empty() {
                 break; // Exit the loop if a stop signal is received
             }
             // ... ZeroMQ sending logic ...
-            //let batched_data = batch.concat();
             for stream_data in batch.iter() {
                 // Send chunk of data as multipart message
                 let chunk_size = stream_data.data.len();
@@ -1148,6 +1166,8 @@ fn rscap() {
                 // Print progress
                 log::info!("STATUS::ZEROMQ:TX {}", json_header);
             }
+            // clear batch and any other data
+            batch.clear();
         }
     });
 
@@ -1170,7 +1190,7 @@ fn rscap() {
             Ok(packet) => {
                 packets_captured += 1;
                 
-                if silent {
+                if silent && !no_progress {
                     print!(".");
                     // flush stdout
                     std::io::stdout().flush().unwrap();
@@ -1192,40 +1212,38 @@ fn rscap() {
                     process_smpte2110_packet(payload_offset, &packet, packet_size, start_time)
                 };
 
-                if !is_mpegts {
-                    batch_size = 1; // Set batch size to 1 for SMPTE 2110
-                }
-
                 // Process each chunk
-                for stream_data in chunks {
+                for mut stream_data in chunks {
                     if debug_on {
                         hexdump(&stream_data.data); // Use stream_data.data to access the raw packet data
                     }
 
-                    // Handle PAT and PMT packets
-                    let pid = extract_pid(&stream_data.data);
-                    match pid {
-                        PAT_PID => {
-                            log::debug!("ProcessPacket: PAT packet detected with PID {}", pid);
-                            parse_and_store_pat(&stream_data.data);
-                        }
-                        _ => {
-                            // Check if this is a PMT packet
-                            unsafe {
-                                if pid == PMT_PID {
-                                    log::debug!(
-                                        "ProcessPacket: PMT packet detected with PID {}",
-                                        pid
-                                    );
-                                    // Update PID_MAP with new stream types
-                                    update_pid_map(&stream_data.data);
+                    if is_mpegts {
+                        // Handle PAT and PMT packets
+                        let pid = extract_pid(&stream_data.data);
+                        match pid {
+                            PAT_PID => {
+                                log::debug!("ProcessPacket: PAT packet detected with PID {}", pid);
+                                parse_and_store_pat(&stream_data.data);
+                            }
+                            _ => {
+                                // Check if this is a PMT packet
+                                unsafe {
+                                    if pid == PMT_PID {
+                                        log::debug!(
+                                            "ProcessPacket: PMT packet detected with PID {}",
+                                            pid
+                                        );
+                                        // Update PID_MAP with new stream types
+                                        update_pid_map(&stream_data.data);
+                                    }
                                 }
                             }
                         }
                     }
 
                     // Check for TR 101 290 errors
-                    process_packet(&stream_data, &mut tr101290_errors);
+                    process_packet(&mut stream_data, &mut tr101290_errors, is_mpegts);
 
                     // Print TR 101 290 errors
                     match serde_json::to_string(&tr101290_errors) {
@@ -1233,19 +1251,21 @@ fn rscap() {
                         Err(e) => eprintln!("Failed to serialize TR101290 Errors to JSON: {}", e),
                     }
 
-                    batch.push(stream_data.clone());
+                    batch.push(stream_data);
 
                     // Check if batch is full
                     if batch.len() >= batch_size {
                         // Send the batch to the channel
-                        tx.send(batch.clone()).unwrap();
-                        batch.clear();
+                        let result = tx.send(batch);
+                        if result.is_err() {
+                            error!("Error sending batch to channel");
+                        }
+                        batch = Vec::new(); // Create a new Vec for the next batch
                     }
                 }
             }
             Err(e) => {
                 error!("Error capturing packet: {:?}", e);
-                break; // or handle the error as needed
             }
         }
     }
@@ -1339,12 +1359,12 @@ fn process_smpte2110_packet(
                 // Extract the timestamp
                 let timestamp = rtp.timestamp();
 
-                // size of packet
-                let chunk_size = rtp.payload().len();
-
                 let payload_type = rtp.payload_type();
 
                 let payload_offset = rtp.payload_offset();
+
+                // size of rtp payload
+                let chunk_size = rtp_packet.len() - payload_offset;
 
                 let line_length = get_line_length(rtp_packet);
                 let line_number = get_line_number(rtp_packet);
@@ -1365,8 +1385,8 @@ fn process_smpte2110_packet(
                     "line_continuation": line_continuation,
                 });
 
-                let pid = 1; /* FIXME */
-                let stream_type = "smpte2110".to_string();
+                let pid = payload_type as u16; /* FIXME */
+                let stream_type = payload_type.to_string(); /* FIXME */
                 let mut stream_data = StreamData::new(
                     &rtp_packet[payload_offset..],
                     pid,
@@ -1377,6 +1397,15 @@ fn process_smpte2110_packet(
                 );
                 // update streams details in stream_data structure
                 stream_data.update_stats(chunk_size, current_unix_timestamp_ms().unwrap_or(0));
+                stream_data.set_rtp_fields(
+                    timestamp,
+                    payload_type,
+                    payload_type.to_string(),
+                    line_number,
+                    line_offset,
+                    line_length,
+                    field_id,
+                );
 
                 streams.push(stream_data);
 
