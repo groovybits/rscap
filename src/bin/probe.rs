@@ -229,7 +229,7 @@ impl StreamData {
         let previous_continuity_counter = self.continuity_counter;
         self.continuity_counter = continuity_counter & 0x0F;
         // check if we incremented without loss
-        if self.continuity_counter != previous_continuity_counter + 1 {
+        if self.continuity_counter != previous_continuity_counter + 1 && self.continuity_counter  != previous_continuity_counter {
             // check if we wrapped around from 15 to 0
             if self.continuity_counter == 0 {
                 // check if previous value was 15
