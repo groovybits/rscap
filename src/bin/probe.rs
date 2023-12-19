@@ -370,7 +370,6 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors, 
     let arrival_time = current_unix_timestamp_ms().unwrap_or(0);
 
     let mut pid_map = PID_MAP.lock().unwrap();
-    let mut found_pid = false;
 
     // Check if the PID map already has an entry for this PID
     match pid_map.get_mut(&pid) {
@@ -404,7 +403,6 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors, 
 
             // log json stats
             info!("STATUS::PACKET:MODIFY[{}] {}", stream_data.pid, json_stats);
-            found_pid = true;
         }
         None => {
             // No StreamData instance found for this PID, possibly no PMT yet
@@ -444,12 +442,6 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors, 
                 );
             }
         }
-    }
-
-    // PID not found, add the stream_data_packet to the pid_map, probably before we have seen the PMT
-    if !found_pid {
-        // PID not found, add the stream_data_packet to the pid_map
-        pid_map.insert(pid, stream_data_packet.clone());
     }
 }
 
@@ -1229,7 +1221,6 @@ fn rscap() {
                         let result = tx.send(batch);
                         if result.is_err() {
                             error!("Error sending batch to channel");
-                            //break;
                         }
                         batch = Vec::new(); // Create a new Vec for the next batch
                     }
@@ -1237,7 +1228,6 @@ fn rscap() {
             }
             Err(e) => {
                 error!("Error capturing packet: {:?}", e);
-                //break; // or handle the error as needed
             }
         }
     }
