@@ -1226,14 +1226,18 @@ fn rscap() {
                     // Check if batch is full
                     if batch.len() >= batch_size {
                         // Send the batch to the channel
-                        tx.send(batch);
+                        let result = tx.send(batch);
+                        if result.is_err() {
+                            error!("Error sending batch to channel");
+                            //break;
+                        }
                         batch = Vec::new(); // Create a new Vec for the next batch
                     }
                 }
             }
             Err(e) => {
                 error!("Error capturing packet: {:?}", e);
-                break; // or handle the error as needed
+                //break; // or handle the error as needed
             }
         }
     }
