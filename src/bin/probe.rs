@@ -1179,10 +1179,6 @@ fn rscap() {
                     process_smpte2110_packet(payload_offset, &packet, packet_size, start_time)
                 };
 
-                if !is_mpegts {
-                    batch_size = 1; // Set batch size to 1 for SMPTE 2110
-                }
-
                 // Process each chunk
                 for stream_data in chunks {
                     if debug_on {
