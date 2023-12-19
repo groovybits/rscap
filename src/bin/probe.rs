@@ -1450,18 +1450,6 @@ fn process_mpegts_packet(
 
             let pid = extract_pid(chunk);
 
-            // Check for null packet and skip
-            /*if chunk[13] == 0xFF && pid != 0x1FFF {
-                // Check for null packet
-                error!("ProcessPacket: Null packet detected with PID {}", pid);
-                // check if all bytes are 0xFF
-                if chunk.iter().all(|&x| x == 0xFF) {
-                    error!("ProcessPacket: All bytes are 0xFF, skipping");
-                    start += read_size;
-                    continue;
-                }
-            }*/
-
             let stream_type = determine_stream_type(pid); // Implement this function based on PAT/PMT parsing
             let timestamp = ((chunk[4] as u64) << 25)
                 | ((chunk[5] as u64) << 17)
