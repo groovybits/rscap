@@ -814,6 +814,10 @@ struct Args {
     /// number of packets to capture
     #[clap(long, env = "PACKET_COUNT", default_value_t = 0)]
     packet_count: u64,
+
+    /// Turn off progress output dots
+    #[clap(long, env = "NO_PROGRESS", default_value_t = false)]
+    no_progress: bool,
 }
 
 fn main() {
@@ -855,6 +859,7 @@ fn rscap() {
     let use_wireless = args.use_wireless;
     let send_json_header = args.send_json_header;
     let packet_count = args.packet_count;
+    let no_progress = args.no_progress;
 
     if silent {
         // set log level to error
@@ -1157,10 +1162,10 @@ fn rscap() {
             Ok(packet) => {
                 packets_captured += 1;
                 
-                if silent {
+                if silent && !no_progress {
                     print!(".");
                     // flush stdout
-                    //std::io::stdout().flush().unwrap();
+                    std::io::stdout().flush().unwrap();
                 }
 
                 // Check if chunk is MPEG-TS or SMPTE 2110
