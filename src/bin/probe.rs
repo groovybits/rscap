@@ -417,7 +417,7 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors, 
                 // PMT packet not found yet, add the stream_data_packet to the pid_map
                 let mut stream_data_clone = stream_data_packet.clone();
                 stream_data_clone.update_stats(packet.len(), arrival_time);
-                pid_map.insert(pid, stream_data_clone.clone());
+                
                 // create json object of stats
                 let json_stats = json!({
                     "type": "mpegts_stats",
@@ -440,6 +440,7 @@ fn process_packet(stream_data_packet: &StreamData, errors: &mut Tr101290Errors, 
                     "STATUS::PACKET:ADD[{}] {}",
                     stream_data_clone.pid, json_stats
                 );
+                pid_map.insert(pid, stream_data_clone);
             }
         }
     }
