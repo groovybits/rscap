@@ -1050,23 +1050,31 @@ fn rscap() {
                     // Send the packet data directly without copying
                     ptx.send(packet.data.to_owned()).unwrap();
                 }
-                Err(_) => {
-                    // Exit loop if `next` fails or some other error occurs
-                    break;
+                Err(e) => {
+                    // Print error and information about it
+                    error!("PCap Capture Error occurred: {}", e);
+                    if e == pcap::Error::TimeoutExpired {
+                        // Timeout expired, continue and try again
+                        continue;
+                    } else {
+                        // Exit the loop if an error occurs
+                        running_clone.store(false, Ordering::SeqCst);
+                        break;
+                    }
                 }
             }
+            if debug_on {
+                let stats = cap.stats().unwrap();
+                println!("Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
+                         stats.received, stats.dropped, stats.if_dropped);
+            }            
         }
 
-        // Stats after capture is complete
         let stats = cap.stats().unwrap();
-
-        // Json representation of stats
-        let json_stats = json!({
-            "received": stats.received,
-            "dropped": stats.dropped,
-            "if_dropped": stats.if_dropped,
-        });
-        info!("STATUS::PCAP:PACKET {}", json_stats);
+        println!("Packet capture statistics:");
+        println!("Received: {}", stats.received);
+        println!("Dropped: {}", stats.dropped);
+        println!("Interface Dropped: {}", stats.if_dropped);
     });
 
     // Setup channel for passing data between threads
