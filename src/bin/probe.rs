@@ -1219,23 +1219,25 @@ fn rscap() {
                         hexdump(&stream_data.data); // Use stream_data.data to access the raw packet data
                     }
 
-                    // Handle PAT and PMT packets
-                    let pid = extract_pid(&stream_data.data);
-                    match pid {
-                        PAT_PID => {
-                            log::debug!("ProcessPacket: PAT packet detected with PID {}", pid);
-                            parse_and_store_pat(&stream_data.data);
-                        }
-                        _ => {
-                            // Check if this is a PMT packet
-                            unsafe {
-                                if pid == PMT_PID {
-                                    log::debug!(
-                                        "ProcessPacket: PMT packet detected with PID {}",
-                                        pid
-                                    );
-                                    // Update PID_MAP with new stream types
-                                    update_pid_map(&stream_data.data);
+                    if is_mpegts {
+                        // Handle PAT and PMT packets
+                        let pid = extract_pid(&stream_data.data);
+                        match pid {
+                            PAT_PID => {
+                                log::debug!("ProcessPacket: PAT packet detected with PID {}", pid);
+                                parse_and_store_pat(&stream_data.data);
+                            }
+                            _ => {
+                                // Check if this is a PMT packet
+                                unsafe {
+                                    if pid == PMT_PID {
+                                        log::debug!(
+                                            "ProcessPacket: PMT packet detected with PID {}",
+                                            pid
+                                        );
+                                        // Update PID_MAP with new stream types
+                                        update_pid_map(&stream_data.data);
+                                    }
                                 }
                             }
                         }
