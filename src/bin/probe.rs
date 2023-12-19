@@ -1252,7 +1252,7 @@ fn rscap() {
                         Err(e) => eprintln!("Failed to serialize TR101290 Errors to JSON: {}", e),
                     }
 
-                    batch.push(stream_data.clone());
+                    batch.push(stream_data);
 
                     // Check if batch is full
                     if batch.len() >= batch_size {
