@@ -1226,8 +1226,8 @@ fn rscap() {
                     // Check if batch is full
                     if batch.len() >= batch_size {
                         // Send the batch to the channel
-                        tx.send(batch.clone()).unwrap();
-                        batch.clear();
+                        tx.send(batch);
+                        batch = Vec::new(); // Create a new Vec for the next batch
                     }
                 }
             }
