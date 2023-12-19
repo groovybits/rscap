@@ -1083,7 +1083,7 @@ fn rscap() {
 
         let mut total_bytes = 0;
         let mut count = 0;
-        for batch in rx {
+        for mut batch in rx {
             // Check for a stop signal
             if batch.is_empty() {
                 break; // Exit the loop if a stop signal is received
@@ -1133,6 +1133,8 @@ fn rscap() {
                 // Print progress
                 log::info!("STATUS::ZEROMQ:TX {}", json_header);
             }
+            // clear batch and any other data
+            batch.clear();
         }
     });
 
