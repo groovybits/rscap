@@ -1332,12 +1332,12 @@ fn process_smpte2110_packet(
                 // Extract the timestamp
                 let timestamp = rtp.timestamp();
 
-                // size of packet
-                let chunk_size = rtp.payload().len();
-
                 let payload_type = rtp.payload_type();
 
                 let payload_offset = rtp.payload_offset();
+
+                // size of rtp payload
+                let chunk_size = rtp_packet.len() - payload_offset;
 
                 let line_length = get_line_length(rtp_packet);
                 let line_number = get_line_number(rtp_packet);
@@ -1358,8 +1358,8 @@ fn process_smpte2110_packet(
                     "line_continuation": line_continuation,
                 });
 
-                let pid = 1; /* FIXME */
-                let stream_type = "smpte2110".to_string();
+                let pid = payload_type as u16; /* FIXME */
+                let stream_type = payload_type.to_string(); /* FIXME */
                 let mut stream_data = StreamData::new(
                     &rtp_packet[payload_offset..],
                     pid,
@@ -1370,6 +1370,15 @@ fn process_smpte2110_packet(
                 );
                 // update streams details in stream_data structure
                 stream_data.update_stats(chunk_size, current_unix_timestamp_ms().unwrap_or(0));
+                stream_data.set_rtp_fields(
+                    timestamp,
+                    payload_type,
+                    payload_type.to_string(),
+                    line_number,
+                    line_offset,
+                    line_length,
+                    field_id,
+                );
 
                 streams.push(stream_data);
 
