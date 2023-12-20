@@ -3,6 +3,7 @@
 # Install Intel vtune to use this
 #
 #
+source /opt/intel/oneapi/vtune//latest/vtune-vars.sh
 vtune-backend --web-port 8088 \
     --allow-remote-access \
     --enable-server-profiling \
