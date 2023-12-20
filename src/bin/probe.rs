@@ -40,7 +40,7 @@ static mut PMT_PID: u16 = 0xFFFF;
 
 // global variable to store the MpegTS PID Map (initially empty)
 lazy_static! {
-    static ref PID_MAP: Mutex<HashMap<u16, StreamData>> = Mutex::new(HashMap::new());
+    static ref PID_MAP: Mutex<HashMap<u16, Arc<StreamData>>> = Mutex::new(HashMap::new());
 }
 
 struct PatEntry {
@@ -407,36 +407,21 @@ fn process_packet(stream_data_packet: &mut StreamData, errors: &mut Tr101290Erro
 
     // Check if the PID map already has an entry for this PID
     match pid_map.get_mut(&pid) {
-        Some(stream_data) => {
+        Some(stream_data_arc) => {
             // Existing StreamData instance found, update it
-            stream_data.update_stats(packet.len(), arrival_time);
-            stream_data.increment_count(1);
+            let mut stream_data = Arc::clone(stream_data_arc);
+            Arc::make_mut(&mut stream_data).update_stats(packet.len(), arrival_time);
+            Arc::make_mut(&mut stream_data).increment_count(1);
             if stream_data.pid != 0x1FFF && is_mpegts {
-                stream_data.set_continuity_counter(stream_data_packet.continuity_counter);
+                Arc::make_mut(&mut stream_data).set_continuity_counter(stream_data_packet.continuity_counter);
             }
             let uptime = arrival_time - stream_data.start_time;
 
-            // create json object of stats
-            let json_stats = json!({
-                "type": "mpegts_stats",
-                "pid": stream_data.pid,
-                "stream_type": stream_data.stream_type,
-                "bitrate": stream_data.bitrate,
-                "bitrate_max": stream_data.bitrate_max,
-                "bitrate_min": stream_data.bitrate_min,
-                "bitrate_avg": stream_data.bitrate_avg,
-                "iat": stream_data_packet.iat,
-                "iat_max": stream_data.iat_max,
-                "iat_min": stream_data.iat_min,
-                "iat_avg": stream_data.iat_avg,
-                "errors": stream_data.error_count,
-                "continuity_counter": stream_data_packet.continuity_counter,
-                "timestamp": stream_data_packet.timestamp,
-                "uptime": uptime,
-            });
+            // print out each field of structure similar to json but not wrapping into json
+            info!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, uptime); 
 
-            // log json stats
-            info!("STATUS::PACKET:MODIFY[{}] {}", stream_data.pid, json_stats);
+            // write the stream_data back to the pid_map with modified values
+            pid_map.insert(pid, stream_data);
         }
         None => {
             // No StreamData instance found for this PID, possibly no PMT yet
@@ -449,31 +434,20 @@ fn process_packet(stream_data_packet: &mut StreamData, errors: &mut Tr101290Erro
                 info!("ProcessPacket: New PID {} Found, adding to PID map.", pid);
             } else {
                 // PMT packet not found yet, add the stream_data_packet to the pid_map
-                stream_data_packet.update_stats(packet.len(), arrival_time);
-                
-                // create json object of stats
-                let json_stats = json!({
-                    "type": "mpegts_stats",
-                    "pid": stream_data_packet.pid,
-                    "stream_type": stream_data_packet.stream_type,
-                    "bitrate": stream_data_packet.bitrate,
-                    "bitrate_max": stream_data_packet.bitrate_max,
-                    "bitrate_min": stream_data_packet.bitrate_min,
-                    "bitrate_avg": stream_data_packet.bitrate_avg,
-                    "iat": stream_data_packet.iat,
-                    "iat_max": stream_data_packet.iat_max,
-                    "iat_min": stream_data_packet.iat_min,
-                    "iat_avg": stream_data_packet.iat_avg,
-                    "errors": stream_data_packet.error_count,
-                    "continuity_counter": stream_data_packet.continuity_counter,
-                    "timestamp": stream_data_packet.timestamp,
-                    "uptime": 0,
-                });
-                info!(
-                    "STATUS::PACKET:ADD[{}] {}",
-                    stream_data_packet.pid, json_stats
-                );
-                pid_map.insert(pid, stream_data_packet.clone());
+                let mut stream_data = Arc::new(StreamData::new(
+                    &[],
+                    stream_data_packet.pid,
+                    stream_data_packet.stream_type.clone(),
+                    stream_data_packet.start_time,
+                    stream_data_packet.timestamp,
+                    stream_data_packet.continuity_counter,
+                ));
+                Arc::make_mut(&mut stream_data).update_stats(packet.len(), arrival_time);
+
+                // print out each field of structure similar to json but not wrapping into json
+                info!("STATUS::PACKET:ADD[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
+
+                pid_map.insert(pid, stream_data);
             }
         }
     }
@@ -687,69 +661,31 @@ fn update_pid_map(pmt_packet: &[u8]) {
                 let timestamp = current_unix_timestamp_ms().unwrap_or(0);
 
                 if !pid_map.contains_key(&stream_pid) {
-                    let mut stream_data = StreamData::new(
+                    let mut stream_data = Arc::new(StreamData::new(
                         &[],
                         stream_pid,
                         stream_type.to_string(),
                         timestamp,
                         timestamp,
                         0,
-                    );
+                    ));
                     // update stream_data stats
-                    stream_data.update_stats(pmt_packet.len(), timestamp);
+                    Arc::make_mut(&mut stream_data).update_stats(pmt_packet.len(), timestamp);
 
-                    // create json object of stats
-                    let json_stats = json!({
-                        "type": "mpegts_stats",
-                        "pid": stream_data.pid,
-                        "stream_type": stream_data.stream_type,
-                        "bitrate": stream_data.bitrate,
-                        "bitrate_max": stream_data.bitrate_max,
-                        "bitrate_min": stream_data.bitrate_min,
-                        "bitrate_avg": stream_data.bitrate_avg,
-                        "iat": stream_data.iat,
-                        "iat_max": stream_data.iat_max,
-                        "iat_min": stream_data.iat_min,
-                        "iat_avg": stream_data.iat_avg,
-                        "errors": stream_data.error_count,
-                        "continuity_counter": stream_data.continuity_counter,
-                        "timestamp": stream_data.timestamp,
-                        "uptime": 0,
-                    });
-
-                    // log json stats
-                    info!("STATUS::STREAM:CREATE[{}] {}", stream_data.pid, json_stats);
+                    // print out each field of structure similar to json but not wrapping into json
+                    info!("STATUS::STREAM:CREATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
 
                     pid_map.insert(stream_pid, stream_data);
                 } else {
                     // get the stream data so we can update it
-                    let stream_data = pid_map.get_mut(&stream_pid).unwrap();
+                    let stream_data_arc = pid_map.get_mut(&stream_pid).unwrap();
+                    let mut stream_data = Arc::clone(stream_data_arc);
 
                     // update the stream type
-                    stream_data.update_stream_type(stream_type.to_string());
-                    // update the count
+                    Arc::make_mut(&mut stream_data).update_stream_type(stream_type.to_string());
 
-                    // create json object of stats
-                    let json_stats = json!({
-                        "type": "mpegts_stats",
-                        "pid": stream_data.pid,
-                        "stream_type": stream_data.stream_type,
-                        "bitrate": stream_data.bitrate,
-                        "bitrate_max": stream_data.bitrate_max,
-                        "bitrate_min": stream_data.bitrate_min,
-                        "bitrate_avg": stream_data.bitrate_avg,
-                        "iat": stream_data.iat,
-                        "iat_max": stream_data.iat_max,
-                        "iat_min": stream_data.iat_min,
-                        "iat_avg": stream_data.iat_avg,
-                        "errors": stream_data.error_count,
-                        "continuity_counter": stream_data.continuity_counter,
-                        "timestamp": stream_data.timestamp,
-                        "uptime": 0,
-                    });
-
-                    // log json stats
-                    debug!("STATUS::STREAM:UPDATE[{}] {}", stream_data.pid, json_stats);
+                    // print out each field of structure similar to json but not wrapping into json
+                    info!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
                 }
             }
         } else {
@@ -1246,11 +1182,9 @@ fn rscap() {
                     process_packet(&mut stream_data, &mut tr101290_errors, is_mpegts);
 
                     // Print TR 101 290 errors
-                    match serde_json::to_string(&tr101290_errors) {
-                        Ok(json_string) => info!("STATUS::TR101290:ERRORS: {}", json_string),
-                        Err(e) => eprintln!("Failed to serialize TR101290 Errors to JSON: {}", e),
-                    }
-
+                    // print out each field of structure similar to json but not wrapping into json
+                    info!("STATUS::TR101290:ERRORS: {}", tr101290_errors);
+                    
                     batch.push(stream_data);
 
                     // Check if batch is full
