@@ -78,8 +78,9 @@ struct StreamData {
     start_time: u64, // field for start time
     total_bits: u64, // field for total bits
     count: u32,      // field for count
-    data: Vec<u8>,   // The actual MPEG-TS packet data
-    pmt_data: Vec<u8>,
+    packet: Arc<Vec<u8>>,   // The actual MPEG-TS packet data
+    packet_start: usize,   // Offset into the data
+    packet_len: usize,   // Offset into the data
     // SMPTE 2110 fields
     rtp_timestamp: u32,
     rtp_payload_type: u8,
@@ -88,6 +89,7 @@ struct StreamData {
     rtp_line_offset: u16,
     rtp_line_length: u16,
     rtp_field_id: u8,
+    rtp_line_continuation: u8,
 }
 
 impl Clone for StreamData {
@@ -112,8 +114,9 @@ impl Clone for StreamData {
             start_time: self.start_time,
             total_bits: self.total_bits,
             count: self.count,
-            data: Vec::new(), // Do not clone the data, initialize as empty
-            pmt_data: Vec::new(), // Do not clone the data, initialize as empty
+            packet: Arc::new(Vec::new()), // Initialize as empty with Arc
+            packet_start: 0,
+            packet_len: 0,
             rtp_timestamp: self.rtp_timestamp,
             rtp_payload_type: self.rtp_payload_type,
             rtp_payload_type_name: self.rtp_payload_type_name.clone(),
@@ -121,6 +124,7 @@ impl Clone for StreamData {
             rtp_line_offset: self.rtp_line_offset,
             rtp_line_length: self.rtp_line_length,
             rtp_field_id: self.rtp_field_id,
+            rtp_line_continuation: self.rtp_line_continuation,
         }
     }
 }
@@ -128,7 +132,9 @@ impl Clone for StreamData {
 // StreamData implementation
 impl StreamData {
     fn new(
-        packet: &[u8],
+        packet: Arc<Vec<u8>>,
+        packet_start: usize,
+        packet_len: usize,
         pid: u16,
         stream_type: String,
         start_time: u64,
@@ -165,8 +171,9 @@ impl StreamData {
             start_time,    // Initialize start time
             total_bits: 0, // Initialize total bits
             count: 0,      // Initialize count
-            data: packet.to_vec(),
-            pmt_data: Vec::new(),
+            packet: packet,
+            packet_start: packet_start,
+            packet_len: packet_len,
             // SMPTE 2110 fields
             rtp_timestamp: 0,
             rtp_payload_type: 0,
@@ -175,8 +182,20 @@ impl StreamData {
             rtp_line_offset: 0,
             rtp_line_length: 0,
             rtp_field_id: 0,
+            rtp_line_continuation: 0,
         }
     }
+    // give packet reference to the packet data and the packet length
+    fn set_packet(&mut self, packet: Arc<Vec<u8>>, packet_start: usize, packet_len: usize) {
+        self.packet = packet;
+        self.packet_start = packet_start;
+        self.packet_len = packet_len;
+    }
+    // return packet reference to the packet data and the packet length as a tuple
+    fn get_packet(&self) -> (Arc<Vec<u8>>, usize, usize) {
+        (Arc::clone(&self.packet), self.packet_start, self.packet_len)
+    }
+    // set RTP fields
     fn set_rtp_fields(
         &mut self,
         rtp_timestamp: u32,
@@ -186,6 +205,7 @@ impl StreamData {
         rtp_line_offset: u16,
         rtp_line_length: u16,
         rtp_field_id: u8,
+        rtp_line_continuation: u8,
     ) {
         self.rtp_timestamp = rtp_timestamp;
         self.rtp_payload_type = rtp_payload_type;
@@ -194,14 +214,11 @@ impl StreamData {
         self.rtp_line_offset = rtp_line_offset;
         self.rtp_line_length = rtp_line_length;
         self.rtp_field_id = rtp_field_id;
+        self.rtp_line_continuation = rtp_line_continuation;
     }
     fn set_pmt_pid(&mut self, pmt_pid: u16) {
         profile_fn!(set_pmt_pid);
         self.pmt_pid = pmt_pid;
-    }
-    fn add_pmt_data(&mut self, pmt_data: &[u8]) {
-        profile_fn!(add_pmt_data);
-        self.pmt_data = pmt_data.to_vec();
     }
     fn update_program_number(&mut self, program_number: u16) {
         profile_fn!(update_program_number);
@@ -396,7 +413,7 @@ fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
 // Invoke this function for each MPEG-TS packet
 fn process_packet(stream_data_packet: &mut StreamData, errors: &mut Tr101290Errors, is_mpegts: bool) {
     profile_fn!(process_packet);
-    let packet: &[u8] = &stream_data_packet.data;
+    let packet: &[u8] = &stream_data_packet.packet[stream_data_packet.packet_start..stream_data_packet.packet_start + stream_data_packet.packet_len];
     tr101290_p1_check(packet, errors);
     tr101290_p2_check(packet, errors);
 
@@ -435,7 +452,9 @@ fn process_packet(stream_data_packet: &mut StreamData, errors: &mut Tr101290Erro
             } else {
                 // PMT packet not found yet, add the stream_data_packet to the pid_map
                 let mut stream_data = Arc::new(StreamData::new(
-                    &[],
+                    Arc::new(Vec::new()), // Ensure packet_data is Arc<Vec<u8>>
+                    0,
+                    0,
                     stream_data_packet.pid,
                     stream_data_packet.stream_type.clone(),
                     stream_data_packet.start_time,
@@ -662,7 +681,9 @@ fn update_pid_map(pmt_packet: &[u8]) {
 
                 if !pid_map.contains_key(&stream_pid) {
                     let mut stream_data = Arc::new(StreamData::new(
-                        &[],
+                        Arc::new(Vec::new()), // Ensure packet_data is Arc<Vec<u8>>
+                        0,
+                        0,
                         stream_pid,
                         stream_type.to_string(),
                         timestamp,
@@ -992,11 +1013,13 @@ fn rscap() {
         source_protocol, source_port, source_ip
     );
 
-    let (ptx, prx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = mpsc::channel();
+    let (ptx, prx): (Sender<Arc<Vec<u8>>>, Receiver<Arc<Vec<u8>>>) = mpsc::channel();
+
 
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
 
+    // Spawn a new thread for packet capture
     let capture_thread = thread::spawn(move || {
         let mut cap = Capture::from_device(target_device).unwrap()
             .promisc(promiscuous)
@@ -1009,8 +1032,9 @@ fn rscap() {
         while running_clone.load(Ordering::SeqCst) {
             match cap.next_packet() {
                 Ok(packet) => {
+                    let packet_data = Arc::new(packet.data.to_owned()); // Wrap in Arc
                     // Send the packet data directly without copying
-                    ptx.send(packet.data.to_owned()).unwrap();
+                    ptx.send(packet_data).unwrap();
                 }
                 Err(e) => {
                     // Print error and information about it
@@ -1060,12 +1084,12 @@ fn rscap() {
             // ... ZeroMQ sending logic ...
             for stream_data in batch.iter() {
                 // Send chunk of data as multipart message
-                let chunk_size = stream_data.data.len();
+                let chunk_size = stream_data.packet_len;
                 total_bytes += chunk_size;
                 count += 1;
 
                 let mut format_str = "unknown";
-                let format_index = is_mpegts_or_smpte2110(&stream_data.data);
+                let format_index = is_mpegts_or_smpte2110(&stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len]);
                 if format_index == 1 {
                     format_str = "mpegts";
                 } else if format_index == 2 {
@@ -1097,7 +1121,7 @@ fn rscap() {
                         .unwrap();
                 }
 
-                publisher.send(stream_data.data.clone(), 0).unwrap();
+                publisher.send(&stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len], 0).unwrap();
 
                 // Print progress
                 log::info!("STATUS::ZEROMQ:TX {}", json_header);
@@ -1137,7 +1161,7 @@ fn rscap() {
                 if chunk_type != 1 {
                     if chunk_type == 0 {
                         error!("Not MPEG-TS or SMPTE 2110");
-                        hexdump(&packet);
+                        hexdump(&packet, 0, packet.len());
                     }
                     is_mpegts = false;
                 }
@@ -1145,22 +1169,25 @@ fn rscap() {
                 let chunks = if is_mpegts {
                     process_mpegts_packet(payload_offset, &packet, packet_size, start_time)
                 } else {
-                    process_smpte2110_packet(payload_offset, &packet, packet_size, start_time)
+                    process_smpte2110_packet(payload_offset, &packet, packet.len(), start_time)
                 };
 
                 // Process each chunk
                 for mut stream_data in chunks {
                     if debug_on {
-                        hexdump(&stream_data.data); // Use stream_data.data to access the raw packet data
+                        hexdump(&stream_data.packet, stream_data.packet_start, stream_data.packet_len);
                     }
+
+                    // Extract the necessary slice for PID extraction and parsing
+                    let packet_chunk = &stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
 
                     if is_mpegts {
                         // Handle PAT and PMT packets
-                        let pid = extract_pid(&stream_data.data);
+                        let pid = extract_pid(&packet_chunk);
                         match pid {
                             PAT_PID => {
                                 log::debug!("ProcessPacket: PAT packet detected with PID {}", pid);
-                                parse_and_store_pat(&stream_data.data);
+                                parse_and_store_pat(&packet_chunk);
                             }
                             _ => {
                                 // Check if this is a PMT packet
@@ -1171,7 +1198,7 @@ fn rscap() {
                                             pid
                                         );
                                         // Update PID_MAP with new stream types
-                                        update_pid_map(&stream_data.data);
+                                        update_pid_map(&packet_chunk);
                                     }
                                 }
                             }
@@ -1276,15 +1303,15 @@ fn get_line_offset(buf: &[u8]) -> u16 {
 // Process the packet and return a vector of SMPTE ST 2110 packets
 fn process_smpte2110_packet(
     payload_offset: usize,
-    packet: &[u8],
-    _packet_size: usize,
+    packet: &Arc<Vec<u8>>,
+    packet_size: usize,
     start_time: u64,
 ) -> Vec<StreamData> {
     profile_fn!(process_smpte2110_packet);
     let start = payload_offset;
     let mut streams = Vec::new();
 
-    if packet.len() > start + 12 {
+    if packet_size > start + 12 {
         if packet[start] == 0x80 || packet[start] == 0x81 {
             let rtp_packet = &packet[start..];
 
@@ -1298,7 +1325,7 @@ fn process_smpte2110_packet(
                 let payload_offset = rtp.payload_offset();
 
                 // size of rtp payload
-                let chunk_size = rtp_packet.len() - payload_offset;
+                let chunk_len = packet_size - payload_offset;
 
                 let line_length = get_line_length(rtp_packet);
                 let line_number = get_line_number(rtp_packet);
@@ -1308,21 +1335,12 @@ fn process_smpte2110_packet(
 
                 let line_continuation = get_line_continuation(rtp_packet);
 
-                let smpte_header_info = json!({
-                    "size": chunk_size,
-                    "timestamp": timestamp,
-                    "payload_type": payload_type,
-                    "line_length": line_length,
-                    "line_number": line_number,
-                    "line_offset": line_offset,
-                    "field_id": field_id,
-                    "line_continuation": line_continuation,
-                });
-
                 let pid = payload_type as u16; /* FIXME */
                 let stream_type = payload_type.to_string(); /* FIXME */
                 let mut stream_data = StreamData::new(
-                    &rtp_packet[payload_offset..],
+                    Arc::clone(packet),
+                    payload_offset,
+                    chunk_len,
                     pid,
                     stream_type,
                     start_time,
@@ -1330,7 +1348,7 @@ fn process_smpte2110_packet(
                     0, /* fix me */
                 );
                 // update streams details in stream_data structure
-                stream_data.update_stats(chunk_size, current_unix_timestamp_ms().unwrap_or(0));
+                stream_data.update_stats(chunk_len, current_unix_timestamp_ms().unwrap_or(0));
                 stream_data.set_rtp_fields(
                     timestamp,
                     payload_type,
@@ -1339,25 +1357,20 @@ fn process_smpte2110_packet(
                     line_offset,
                     line_length,
                     field_id,
+                    line_continuation,
                 );
 
                 streams.push(stream_data);
-
-                //smpte2110_packets.push(rtp_packet.to_vec());
-                debug!(
-                    "SMPTE ST 2110 Header Info: {}",
-                    smpte_header_info.to_string()
-                );
             } else {
-                hexdump(&packet);
+                hexdump(&packet, 0, packet_size);
                 error!("Error parsing RTP header, not SMPTE ST 2110");
             }
         } else {
-            hexdump(&packet);
+            hexdump(&packet, 0, packet_size);
             error!("No RTP header detected, not SMPTE ST 2110");
         }
     } else {
-        hexdump(&packet);
+        hexdump(&packet, 0, packet_size);
         error!("Packet too small, not SMPTE ST 2110");
     }
 
@@ -1367,7 +1380,7 @@ fn process_smpte2110_packet(
 // Process the packet and return a vector of MPEG-TS packets
 fn process_mpegts_packet(
     payload_offset: usize,
-    packet: &[u8],
+    packet: &Arc<Vec<u8>>,
     packet_size: usize,
     start_time: u64,
 ) -> Vec<StreamData> {
@@ -1376,7 +1389,9 @@ fn process_mpegts_packet(
     let mut read_size = packet_size;
     let mut streams = Vec::new();
 
-    while start + read_size <= packet.len() {
+    let len = packet.len();
+
+    while start + read_size <= len {
         let chunk = &packet[start..start + read_size];
         if chunk[0] == 0x47 {
             // Check for MPEG-TS sync byte
@@ -1393,18 +1408,20 @@ fn process_mpegts_packet(
             let continuity_counter = chunk[3] & 0x0F;
 
             let mut stream_data = StreamData::new(
-                chunk,
+                Arc::clone(packet),
+                start,
+                packet_size,
                 pid,
                 stream_type,
                 start_time,
                 timestamp,
                 continuity_counter,
             );
-            stream_data.update_stats(chunk.len(), current_unix_timestamp_ms().unwrap_or(0));
+            stream_data.update_stats(packet_size, current_unix_timestamp_ms().unwrap_or(0));
             streams.push(stream_data);
         } else {
             error!("ProcessPacket: Not MPEG-TS");
-            hexdump(&packet);
+            hexdump(&packet, start, packet_size);
             read_size = 1; // Skip to the next byte
         }
         start += read_size;
@@ -1414,14 +1431,16 @@ fn process_mpegts_packet(
 }
 
 // Print a hexdump of the packet
-fn hexdump(packet: &[u8]) {
+fn hexdump(packet_arc: &Arc<Vec<u8>>, packet_offset: usize, packet_len: usize) {
     profile_fn!(hexdump);
+
+    let packet = &packet_arc[packet_offset..packet_offset + packet_len];
     let pid = extract_pid(packet);
     println!("--------------------------------------------------");
     // print in rows of 16 bytes
-    println!("PacketDump: PID {} Packet length: {}", pid, packet.len());
+    println!("PacketDump: PID {} Packet length: {}", pid, packet_len);
     let mut packet_dump = String::new();
-    for (i, chunk) in packet.iter().take(packet.len()).enumerate() {
+    for (i, chunk) in packet.iter().take(packet_len).enumerate() {
         if i % 16 == 0 {
             packet_dump.push_str(&format!("\n{:04x}: ", i));
         }
