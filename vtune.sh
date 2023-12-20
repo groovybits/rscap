@@ -7,7 +7,7 @@ vtune-backend --web-port 8088 \
     --allow-remote-access \
     --enable-server-profiling \
     --log-to-console \
-    --log-level debug \
+    --log-level info \
     --reset-passphrase \
     --suppress-automatic-help-tours \
         --data-directory ~/vtune
