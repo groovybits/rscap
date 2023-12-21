@@ -791,8 +791,8 @@ struct Args {
     use_wireless: bool,
 
     /// Sets if JSON header should be sent
-    #[clap(long, env = "SEND_JSON_HEADER", default_value_t = false)]
-    send_json_header: bool,
+    /*#[clap(long, env = "SEND_JSON_HEADER", default_value_t = false)]
+    send_json_header: bool,*/
 
     /// number of packets to capture
     #[clap(long, env = "PACKET_COUNT", default_value_t = 0)]
@@ -801,6 +801,10 @@ struct Args {
     /// Turn off progress output dots
     #[clap(long, env = "NO_PROGRESS", default_value_t = false)]
     no_progress: bool,
+
+    /// Turn off ZeroMQ send
+    #[clap(long, env = "NO_ZMQ", default_value_t = false)]
+    no_zmq: bool,
 }
 
 fn main() {
@@ -840,9 +844,10 @@ fn rscap() {
     let silent = args.silent;
     #[cfg(not(target_os = "linux"))]
     let use_wireless = args.use_wireless;
-    let send_json_header = args.send_json_header;
+    //let send_json_header = args.send_json_header;
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
+    let no_zmq = args.no_zmq;
 
     if silent {
         // set log level to error
@@ -1082,19 +1087,21 @@ fn rscap() {
                 break; // Exit the loop if a stop signal is received
             }
             // ... ZeroMQ sending logic ...
-            for stream_data in batch.iter() {
+            for stream_data in batch.iter_mut() {
                 // Send chunk of data as multipart message
                 let chunk_size = stream_data.packet_len;
                 total_bytes += chunk_size;
                 count += 1;
 
-                let mut format_str = "unknown";
+                /*let mut format_str = "unknown";
                 let format_index = is_mpegts_or_smpte2110(&stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len]);
                 if format_index == 1 {
                     format_str = "mpegts";
                 } else if format_index == 2 {
                     format_str = "smpte2110";
-                }
+                }*/
+
+                /*
                 // Construct JSON header for batched data
                 let json_header = json!({
                     "type": "mpegts_chunk",
@@ -1119,12 +1126,15 @@ fn rscap() {
                     publisher
                         .send(json_header.to_string().as_bytes(), zmq::SNDMORE)
                         .unwrap();
-                }
+                }*/
 
                 publisher.send(&stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len], 0).unwrap();
 
                 // Print progress
-                log::info!("STATUS::ZEROMQ:TX {}", json_header);
+                //log::info!("STATUS::ZEROMQ:TX {}", json_header);
+
+                // release the packet Arc so it can be reused
+                stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
             }
             // clear batch and any other data
             batch.clear();
@@ -1215,12 +1225,23 @@ fn rscap() {
                     batch.push(stream_data);
 
                     // Check if batch is full
-                    if batch.len() >= batch_size {
-                        // Send the batch to the channel
-                        let result = tx.send(batch);
-                        if result.is_err() {
-                            error!("Error sending batch to channel");
+                    if !no_zmq {
+                        if batch.len() >= batch_size {
+                            // Send the batch to the channel
+                            let result = tx.send(batch);
+                            if result.is_err() {
+                                error!("Error sending batch to channel");
+                            }
+                            // release the packet Arc so it can be reused
+                            batch = Vec::new(); // Create a new Vec for the next batch
                         }
+                    } else {
+                        // go through each stream_data and release the packet Arc so it can be reused
+                        for mut stream_data in batch.iter_mut() {
+                            stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
+                        }
+                        // disgard the batch, we don't send it anywhere
+                        batch.clear();
                         batch = Vec::new(); // Create a new Vec for the next batch
                     }
                 }
@@ -1238,8 +1259,6 @@ fn rscap() {
     drop(tx);
 
     // Wait for the zmq_thread to finish
-    //ptx.send(Vec::new()).unwrap();
-    //drop(ptx);
     zmq_thread.join().unwrap();
     capture_thread.join().unwrap();
 
