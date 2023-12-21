@@ -15,16 +15,14 @@ use log::{debug, error, info};
 use pcap::Capture;
 use rtp::RtpReader;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::collections::HashMap;
 use std::fmt;
-use std::io::Write;
 use std::net::{Ipv4Addr, UdpSocket};
 use std::sync::mpsc;
 use std::sync::Mutex;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
-use firestorm::{profile_fn, profile_method, profile_section};
+use firestorm::{profile_fn};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -58,6 +56,7 @@ struct Pmt {
 }
 
 // StreamData struct
+#[derive(Serialize, Deserialize)]
 struct StreamData {
     pid: u16,
     pmt_pid: u16,
@@ -78,6 +77,7 @@ struct StreamData {
     start_time: u64, // field for start time
     total_bits: u64, // field for total bits
     count: u32,      // field for count
+    #[serde(skip)]
     packet: Arc<Vec<u8>>,   // The actual MPEG-TS packet data
     packet_start: usize,   // Offset into the data
     packet_len: usize,   // Offset into the data
@@ -1093,15 +1093,24 @@ fn rscap() {
         publisher.bind(&source_port_ip).unwrap();
 
         for mut batch in rx {
-            for stream_data in batch.iter_mut() {
-                let slice = &stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
-                let message = zmq::Message::from(slice); // Efficiently converts the slice to a Message
+            for stream_data in batch.iter() {
+                // Clone StreamData to get a version without the packet
+                let cloned_stream_data = stream_data.clone(); // This clone avoids copying the Arc<Vec<u8>>
+                let metadata = serde_json::to_string(&cloned_stream_data).unwrap();
+                let metadata_msg = zmq::Message::from(metadata.as_bytes());
 
-                publisher.send(message, 0).unwrap();
+                // Send metadata as the first message
+                publisher.send(metadata_msg, zmq::SNDMORE).unwrap();
+
+                // Send packet data as the second message
+                let packet_slice = &stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
+                let packet_msg = zmq::Message::from(packet_slice);
+                publisher.send(packet_msg, 0).unwrap();
             }
             batch.clear();
         }
     });
+
 
     // Perform TR 101 290 checks
     let mut tr101290_errors = Tr101290Errors::new();
