@@ -1087,70 +1087,18 @@ fn rscap() {
 
     // Spawn a new thread for ZeroMQ communication
     let zmq_thread = thread::spawn(move || {
-        // Setup ZeroMQ publisher
         let context = zmq::Context::new();
         let publisher = context.socket(zmq::PUB).unwrap();
         let source_port_ip = format!("tcp://{}:{}", target_ip, target_port);
         publisher.bind(&source_port_ip).unwrap();
 
-        let mut total_bytes = 0;
-        let mut count = 0;
         for mut batch in rx {
-            // Check for a stop signal
-            if batch.is_empty() {
-                break; // Exit the loop if a stop signal is received
-            }
-            // ... ZeroMQ sending logic ...
             for stream_data in batch.iter_mut() {
-                // Send chunk of data as multipart message
-                let chunk_size = stream_data.packet_len;
-                total_bytes += chunk_size;
-                count += 1;
+                let slice = &stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
+                let message = zmq::Message::from(slice); // Efficiently converts the slice to a Message
 
-                /*let mut format_str = "unknown";
-                let format_index = is_mpegts_or_smpte2110(&stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len]);
-                if format_index == 1 {
-                    format_str = "mpegts";
-                } else if format_index == 2 {
-                    format_str = "smpte2110";
-                }*/
-
-                /*
-                // Construct JSON header for batched data
-                let json_header = json!({
-                    "type": "mpegts_chunk",
-                    "content_length": chunk_size,
-                    "total_bytes": total_bytes,
-                    "count": count,
-                    "source_ip": source_ip,
-                    "source_port": source_port,
-                    "source_device": source_device,
-                    "target_ip": target_ip,
-                    "target_port": target_port,
-                    "format": format_str,
-                    "count": count,
-                    "timestamp": current_unix_timestamp_ms().unwrap_or(0),
-                    "chunk_size": chunk_size,
-                    "batch_size": batch_size,
-                });
-
-                // Check if JSON header is enabled
-                if send_json_header {
-                    // Send JSON header as multipart message
-                    publisher
-                        .send(json_header.to_string().as_bytes(), zmq::SNDMORE)
-                        .unwrap();
-                }*/
-
-                publisher.send(&stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len], 0).unwrap();
-
-                // Print progress
-                //log::info!("STATUS::ZEROMQ:TX {}", json_header);
-
-                // release the packet Arc so it can be reused
-                stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
+                publisher.send(message, 0).unwrap();
             }
-            // clear batch and any other data
             batch.clear();
         }
     });
