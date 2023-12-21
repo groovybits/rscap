@@ -854,8 +854,13 @@ fn rscap() {
     let no_zmq = args.no_zmq;
 
     if args.smpte2110 {
-        packet_size = 2112;
-        batch_size = 1;
+        packet_size = 1500; // set packet size to 1500 for smpte2110
+
+        // TODO: fix so this is a limit in the args input 
+        // or fix smpte2110 to work with batch size less than 7 without memory backup
+        if batch_size < 7 {
+            batch_size = 7;
+        }
     }
 
     if silent {
