@@ -1124,8 +1124,8 @@ fn rscap() {
                 
                 if silent && !no_progress {
                     print!(".");
-                    // flush stdout
-                    std::io::stdout().flush().unwrap();
+                    // flush stdout TODO: output in ncurses or something w/less output
+                    //std::io::stdout().flush().unwrap();
                 }
 
                 // Check if chunk is MPEG-TS or SMPTE 2110
