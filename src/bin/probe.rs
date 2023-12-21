@@ -1162,9 +1162,9 @@ fn rscap() {
                     // Extract the necessary slice for PID extraction and parsing
                     let packet_chunk = &stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
 
+                    let pid = extract_pid(&packet_chunk);
                     if is_mpegts {
                         // Handle PAT and PMT packets
-                        let pid = extract_pid(&packet_chunk);
                         match pid {
                             PAT_PID => {
                                 log::debug!("ProcessPacket: PAT packet detected with PID {}", pid);
@@ -1193,6 +1193,12 @@ fn rscap() {
                     // print out each field of structure similar to json but not wrapping into json
                     info!("STATUS::TR101290:ERRORS: {}", tr101290_errors);
                     
+                    if pid == 0x1FFF {
+                        // clear the Arc so it can be reused
+                        stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
+                        // Skip null packets
+                        continue;
+                    }
                     batch.push(stream_data);
 
                     // Check if batch is full
