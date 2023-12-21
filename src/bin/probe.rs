@@ -805,6 +805,10 @@ struct Args {
     /// Turn off ZeroMQ send
     #[clap(long, env = "NO_ZMQ", default_value_t = false)]
     no_zmq: bool,
+
+    /// Force smpte2110 mode
+    #[clap(long, env = "SMPT2110", default_value_t = false)]
+    smpte2110: bool,
 }
 
 fn main() {
@@ -830,9 +834,9 @@ fn rscap() {
     let args = Args::parse();
 
     // Use the parsed arguments directly
-    let batch_size = args.batch_size;
+    let mut batch_size = args.batch_size;
     let payload_offset = args.payload_offset;
-    let packet_size = args.packet_size;
+    let mut packet_size = args.packet_size;
     let read_time_out = args.read_time_out;
     let target_port = args.target_port;
     let target_ip = args.target_ip;
@@ -845,9 +849,14 @@ fn rscap() {
     #[cfg(not(target_os = "linux"))]
     let use_wireless = args.use_wireless;
     //let send_json_header = args.send_json_header;
-    let packet_count = args.packet_count;
+    let mut packet_count = args.packet_count;
     let no_progress = args.no_progress;
     let no_zmq = args.no_zmq;
+
+    if args.smpte2110 {
+        packet_size = 2112;
+        batch_size = 1;
+    }
 
     if silent {
         // set log level to error
