@@ -480,6 +480,96 @@ fn current_unix_timestamp_ms() -> Result<u64, &'static str> {
         .map_err(|_| "System time is before the UNIX epoch")
 }
 
+const TS_PACKET_SIZE: usize = 188;
+const PES_START_CODE: [u8; 3] = [0x00, 0x00, 0x01];
+
+// Returns the start offset of the PES payload if the packet is the start of a PES packet, else None
+fn pes_start_offset(packet: &[u8]) -> Option<usize> {
+    if packet.len() < TS_PACKET_SIZE {
+        return None;
+    }
+
+    let payload_unit_start_indicator = (packet[1] & 0x40) != 0;
+    if !payload_unit_start_indicator {
+        return None;
+    }
+
+    let has_adaptation_field = (packet[3] & 0x20) != 0;
+    let adaptation_field_length = if has_adaptation_field { packet[4] as usize } else { 0 };
+
+    // The payload starts after the adaptation field (if present) and the 4-byte TS header
+    let payload_start = 4 + adaptation_field_length;
+
+    // Check if the start of the payload matches the PES start code
+    if packet.len() > payload_start + 3 && &packet[payload_start..payload_start + 3] == PES_START_CODE {
+        // Return the start offset of the PES payload
+        Some(payload_start + 3)
+    } else {
+        None
+    }
+}
+
+const MPEG2_PICTURE_START_CODE: u32 = 0x00000100;
+const MPEG2_GROUP_START_CODE: u32 = 0x000001B8;
+const H264_IDR_NAL: u8 = 5;
+const H265_IDR_W_RADL: u8 = 19;
+const H265_IDR_N_LP: u8 = 20;
+
+enum Codec {
+    MPEG2,
+    H264,
+    H265,
+}
+
+fn is_idr_frame(buffer: &[u8], codec: Codec) -> bool {
+    match codec {
+        Codec::MPEG2 => is_mpeg2_keyframe(buffer),
+        Codec::H264 => is_h264_idr_frame(buffer),
+        Codec::H265 => is_h265_idr_frame(buffer),
+    }
+}
+
+fn is_mpeg2_keyframe(buffer: &[u8]) -> bool {
+    let mut i = 0;
+    while i + 4 <= buffer.len() {
+        let code = ((buffer[i] as u32) << 24) | ((buffer[i + 1] as u32) << 16) |
+                   ((buffer[i + 2] as u32) << 8) | buffer[i + 3] as u32;
+
+        if code == MPEG2_GROUP_START_CODE {
+            return true; // Found a GOP header, indicating a keyframe
+        }
+        i += 1;
+    }
+    false
+}
+
+fn is_h264_idr_frame(buffer: &[u8]) -> bool {
+    buffer.windows(4).any(|window| {
+        window[0] == 0x00 && window[1] == 0x00 && window[2] == 0x01 && (window[3] & 0x1F) == H264_IDR_NAL
+    })
+}
+
+fn is_h265_idr_frame(buffer: &[u8]) -> bool {
+    buffer.windows(4).any(|window| {
+        window[0] == 0x00 && window[1] == 0x00 && window[2] == 0x01 && 
+        ((window[3] & 0x7E) >> 1 == H265_IDR_W_RADL || (window[3] & 0x7E) >> 1 == H265_IDR_N_LP)
+    })
+}
+
+// Extracts the PID from the MPEG-TS packet header
+fn get_pid(packet: &[u8]) -> Option<u16> {
+    if packet.len() < TS_PACKET_SIZE {
+        return None; // Packet size is incorrect
+    }
+
+    let transport_error = (packet[1] & 0x80) != 0;
+    if transport_error {
+        return None; // Packet has a transport error
+    }
+
+    Some(((packet[1] as u16 & 0x1F) << 8) | packet[2] as u16)
+}
+
 // Implement a function to extract PID from a packet
 fn extract_pid(packet: &[u8]) -> u16 {
     profile_fn!(extract_pid);
@@ -504,69 +594,52 @@ fn parse_and_store_pat(packet: &[u8]) {
 }
 
 fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
-    profile_fn!(parse_pat);
     let mut entries = Vec::new();
+
+    // Check for minimum packet size
+    if packet.len() < TS_PACKET_SIZE {
+        return entries;
+    }
 
     // Check if Payload Unit Start Indicator (PUSI) is set
     let pusi = (packet[1] & 0x40) != 0;
-    let adaptation_field_control = (packet[3] & 0x30) >> 4;
-    let mut pat_start = 4; // start after TS header
+    if !pusi {
+        // If PUSI is not set, this packet does not start a new PAT
+        return entries;
+    }
 
+    let adaptation_field_control = (packet[3] & 0x30) >> 4;
+    let mut offset = 4; // start after TS header
+
+    // Check for adaptation field and skip it
     if adaptation_field_control == 0x02 || adaptation_field_control == 0x03 {
         let adaptation_field_length = packet[4] as usize;
-        pat_start += 1 + adaptation_field_length; // +1 for the length byte itself
-        debug!(
-            "ParsePAT: Adaptation Field Length: {}",
-            adaptation_field_length
-        );
-    } else {
-        debug!(
-            "ParsePAT: Skipping Adaptation Field Control: {}",
-            adaptation_field_control
-        );
+        offset += 1 + adaptation_field_length; // +1 for the length byte itself
     }
 
-    if pusi {
-        // PUSI is set, so the first byte after the TS header is the pointer field
-        let pointer_field = packet[pat_start] as usize;
-        //pat_start += 1 + pointer_field; // Skip pointer field
-        debug!(
-            "ParsePAT: PUSI set as {}, skipping pointer field {} as packet value {} {}",
-            pusi, pointer_field, packet[0], packet[1]
-        );
-    } else {
-        debug!("ParsePAT: PUSI not set as {}", pusi);
-    }
+    // Pointer field indicates the start of the PAT section
+    let pointer_field = packet[offset] as usize;
+    offset += 1 + pointer_field; // Skip pointer field
 
-    debug!("ParsePAT: PAT start: {}", pat_start);
+    // Now, 'offset' points to the start of the PAT section
+    while offset + 4 <= packet.len() {
+        let program_number = ((packet[offset] as u16) << 8) | (packet[offset + 1] as u16);
+        let pmt_pid = (((packet[offset + 2] as u16) & 0x1F) << 8) | (packet[offset + 3] as u16);
 
-    // Check for the presence of a pointer field
-    let pointer_field = packet[pat_start] as usize;
-    pat_start += 1 + pointer_field; // Move past the pointer field
-
-    let mut i = pat_start; // Starting index of the PAT data
-
-    while i + 4 <= packet.len() {
-        let program_number = ((packet[i] as u16) << 8) | (packet[i + 1] as u16);
-        // Mask the lower 13 bits for the PMT PID
-        let pmt_pid = (((packet[i + 2] as u16) & 0x1F) << 8) | (packet[i + 3] as u16);
-
-        //debug!("ParsePAT: Packet1 {}, Packet2 {}, Packet3 {}, Packet4 {}", packet[i], packet[i + 1], packet[i + 2], packet[i + 3]);
-
-        if program_number != 0 && program_number != 65535 && pmt_pid != 0 && program_number < 30
-        /* FIXME: kludge fix for now */
-        {
-            debug!(
-                "ParsePAT: Program Number: {} PMT PID: {}",
-                program_number, pmt_pid
-            );
+        // Only add valid entries (non-zero program_number and pmt_pid)
+        if program_number != 0 && pmt_pid != 0 && pmt_pid < 0x1FFF && program_number < 100 {
             entries.push(PatEntry {
                 program_number,
                 pmt_pid,
             });
         }
 
-        i += 4;
+        debug!(
+            "ParsePAT: Program Number: {} PMT PID: {}",
+            program_number, pmt_pid
+        );
+
+        offset += 4; // Move to the next PAT entry
     }
 
     entries
@@ -707,6 +780,9 @@ fn update_pid_map(pmt_packet: &[u8]) {
 
                     // print out each field of structure similar to json but not wrapping into json
                     info!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
+                
+                    // write the stream_data back to the pid_map with modified values
+                    pid_map.insert(stream_pid, stream_data);
                 }
             }
         } else {
