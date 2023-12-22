@@ -484,6 +484,9 @@ const TS_PACKET_SIZE: usize = 188;
 const PES_START_CODE: [u8; 3] = [0x00, 0x00, 0x01];
 
 // Returns the start offset of the PES payload if the packet is the start of a PES packet, else None
+const PES_START_CODE_PREFIX: [u8; 3] = [0x00, 0x00, 0x01];
+const PES_HEADER_START_CODE: u8 = 0xE0; // Start codes for video streams range from 0xE0 to 0xEF
+
 fn pes_start_offset(packet: &[u8]) -> Option<usize> {
     if packet.len() < TS_PACKET_SIZE {
         return None;
@@ -494,19 +497,33 @@ fn pes_start_offset(packet: &[u8]) -> Option<usize> {
         return None;
     }
 
-    let has_adaptation_field = (packet[3] & 0x20) != 0;
-    let adaptation_field_length = if has_adaptation_field { packet[4] as usize } else { 0 };
+    let adaptation_field_control = (packet[3] & 0x30) >> 4;
+    if adaptation_field_control == 0x02 || adaptation_field_control == 0x03 {
+        let adaptation_field_length = packet[4] as usize;
+        if 4 + adaptation_field_length + 4 >= packet.len() {
+            return None;
+        }
 
-    // The payload starts after the adaptation field (if present) and the 4-byte TS header
-    let payload_start = 4 + adaptation_field_length;
+        let start_code = &packet[4 + adaptation_field_length..4 + adaptation_field_length + 3];
+        if start_code != PES_START_CODE_PREFIX {
+            return None;
+        }
 
-    // Check if the start of the payload matches the PES start code
-    if packet.len() > payload_start + 3 && &packet[payload_start..payload_start + 3] == PES_START_CODE {
-        // Return the start offset of the PES payload
-        Some(payload_start + 3)
-    } else {
-        None
+        let stream_id = packet[4 + adaptation_field_length + 3];
+        if stream_id >= PES_HEADER_START_CODE && stream_id <= 0xEF {
+            // This is a video stream
+            let pes_packet_length = ((packet[4 + adaptation_field_length + 4] as usize) << 8)
+                                    | packet[4 + adaptation_field_length + 5] as usize;
+
+            // Calculate the start of PES data
+            let pes_data_start = 4 + adaptation_field_length + 6 + pes_packet_length;
+            if pes_data_start < packet.len() {
+                return Some(pes_data_start);
+            }
+        }
     }
+
+    None
 }
 
 const MPEG2_PICTURE_START_CODE: u32 = 0x00000100;
