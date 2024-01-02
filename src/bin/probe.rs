@@ -22,7 +22,6 @@ use std::sync::mpsc;
 use std::sync::Mutex;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
-use firestorm::{profile_fn};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -217,31 +216,24 @@ impl StreamData {
         self.rtp_line_continuation = rtp_line_continuation;
     }
     fn set_pmt_pid(&mut self, pmt_pid: u16) {
-        profile_fn!(set_pmt_pid);
         self.pmt_pid = pmt_pid;
     }
     fn update_program_number(&mut self, program_number: u16) {
-        profile_fn!(update_program_number);
         self.program_number = program_number;
     }
     fn update_stream_type(&mut self, stream_type: String) {
-        profile_fn!(update_stream_type);
         self.stream_type = stream_type;
     }
     fn update_timestamp(&mut self, timestamp: u64) {
-        profile_fn!(update_timestamp);
         self.timestamp = timestamp;
     }
     fn increment_error_count(&mut self, error_count: u32) {
-        profile_fn!(increment_error_count);
         self.error_count += error_count;
     }
     fn increment_count(&mut self, count: u32) {
-        profile_fn!(increment_count);
         self.count += count;
     }
     fn set_continuity_counter(&mut self, continuity_counter: u8) {
-        profile_fn!(set_continuity_counter);
         // check for continuity continuous increment and wrap around from 0 to 15
         let previous_continuity_counter = self.continuity_counter;
         self.continuity_counter = continuity_counter & 0x0F;
@@ -265,7 +257,6 @@ impl StreamData {
         self.continuity_counter = continuity_counter;
     }
     fn update_stats(&mut self, packet_size: usize, arrival_time: u64) {
-        profile_fn!(update_stats);
         let bits = packet_size as u64 * 8; // Convert bytes to bits
 
         // Elapsed time in milliseconds
@@ -390,7 +381,6 @@ impl Tr101290Errors {
 
 // TR 101 290 Priority 1 Check
 fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors) {
-    profile_fn!(tr101290_p1_check);
     // p1
     if packet[0] != 0x47 {
         errors.sync_byte_errors += 1;
@@ -401,7 +391,6 @@ fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors) {
 
 // TR 101 290 Priority 2 Check
 fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
-    profile_fn!(tr101290_p2_check);
     // p2
 
     if (packet[1] & 0x80) != 0 {
@@ -410,9 +399,32 @@ fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
     // TODO: ... other checks, updating the respective counters ...
 }
 
+// Define a struct to hold information about the current video frame
+struct VideoFrame {
+    packets: Vec<StreamData>,
+    is_complete: bool,
+}
+
+impl VideoFrame {
+    fn new() -> Self {
+        VideoFrame {
+            packets: Vec::new(),
+            is_complete: false,
+        }
+    }
+
+    fn add_packet(&mut self, stream_data: StreamData) {
+        self.packets.push(stream_data);
+    }
+
+    fn clear(&mut self) {
+        self.packets.clear();
+        self.is_complete = false;
+    }
+}
+
 // Invoke this function for each MPEG-TS packet
 fn process_packet(stream_data_packet: &mut StreamData, errors: &mut Tr101290Errors, is_mpegts: bool) {
-    profile_fn!(process_packet);
     let packet: &[u8] = &stream_data_packet.packet[stream_data_packet.packet_start..stream_data_packet.packet_start + stream_data_packet.packet_len];
     tr101290_p1_check(packet, errors);
     tr101290_p2_check(packet, errors);
@@ -480,9 +492,126 @@ fn current_unix_timestamp_ms() -> Result<u64, &'static str> {
         .map_err(|_| "System time is before the UNIX epoch")
 }
 
+const TS_PACKET_SIZE: usize = 188;
+const PES_START_CODE: [u8; 3] = [0x00, 0x00, 0x01];
+
+// Returns the start offset of the PES payload if the packet is the start of a PES packet, else None
+const PES_START_CODE_PREFIX: [u8; 3] = [0x00, 0x00, 0x01];
+const PES_HEADER_START_CODE: u8 = 0xE0; // Start codes for video streams range from 0xE0 to 0xEF
+
+fn pes_start_offset(packet: &[u8]) -> Option<usize> {
+    if packet.len() < TS_PACKET_SIZE {
+        return None;
+    }
+
+    let payload_unit_start_indicator = (packet[1] & 0x40) != 0;
+    if !payload_unit_start_indicator {
+        return None;
+    }
+
+    let adaptation_field_control = (packet[3] & 0x30) >> 4;
+    if adaptation_field_control == 0x02 || adaptation_field_control == 0x03 {
+        let adaptation_field_length = packet[4] as usize;
+        if 4 + adaptation_field_length + 4 >= packet.len() {
+            return None;
+        }
+
+        let start_code = &packet[4 + adaptation_field_length..4 + adaptation_field_length + 3];
+        if start_code != PES_START_CODE_PREFIX {
+            return None;
+        }
+
+        let stream_id = packet[4 + adaptation_field_length + 3];
+        if stream_id >= PES_HEADER_START_CODE && stream_id <= 0xEF {
+            // This is a video stream
+            let pes_packet_length = ((packet[4 + adaptation_field_length + 4] as usize) << 8)
+                                    | packet[4 + adaptation_field_length + 5] as usize;
+
+            // Calculate the start of PES data
+            let pes_data_start = 4 + adaptation_field_length + 6 + pes_packet_length;
+            if pes_data_start < packet.len() {
+                return Some(pes_data_start);
+            }
+        }
+    }
+
+    None
+}
+
+const MPEG2_PICTURE_START_CODE: u32 = 0x00000100;
+const MPEG2_GROUP_START_CODE: u32 = 0x000001B8;
+const H264_IDR_NAL: u8 = 5;
+const H265_IDR_W_RADL: u8 = 19;
+const H265_IDR_N_LP: u8 = 20;
+
+#[derive(Clone, PartialEq)]
+enum Codec {
+    MPEG2,
+    H264,
+    H265,
+}
+
+impl fmt::Display for Codec {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Codec::MPEG2 => write!(f, "MPEG2"),
+            Codec::H264 => write!(f, "H264"),
+            Codec::H265 => write!(f, "H265"),
+        }
+    }
+}
+
+fn is_idr_frame(buffer: &[u8], codec: Codec) -> bool {
+    match codec {
+        Codec::MPEG2 => is_mpeg2_keyframe(buffer),
+        Codec::H264 => is_h264_idr_frame(buffer),
+        Codec::H265 => is_h265_idr_frame(buffer),
+    }
+}
+
+fn is_mpeg2_keyframe(buffer: &[u8]) -> bool {
+    let mut i = 0;
+    while i + 4 <= buffer.len() {
+        let code = ((buffer[i] as u32) << 24) | ((buffer[i + 1] as u32) << 16) |
+                   ((buffer[i + 2] as u32) << 8) | buffer[i + 3] as u32;
+
+        if code == MPEG2_GROUP_START_CODE {
+            return true; // Found a GOP header, indicating a keyframe
+        }
+        i += 1;
+    }
+    false
+}
+
+fn is_h264_idr_frame(buffer: &[u8]) -> bool {
+    buffer.windows(4).any(|window| {
+        window[0] == 0x00 && window[1] == 0x00 && window[2] == 0x01 && (window[3] & 0x1F) == H264_IDR_NAL
+    })
+}
+
+fn is_h265_idr_frame(buffer: &[u8]) -> bool {
+    buffer.windows(4).any(|window| {
+        window[0] == 0x00 && window[1] == 0x00 && window[2] == 0x01 && 
+        ((window[3] & 0x7E) >> 1 == H265_IDR_W_RADL || (window[3] & 0x7E) >> 1 == H265_IDR_N_LP)
+    })
+}
+
+// Extracts the PID from the MPEG-TS packet header
+fn get_pid(packet: &[u8]) -> Option<u16> {
+    if packet.len() < TS_PACKET_SIZE {
+        return None; // Packet size is incorrect
+    }
+
+    let transport_error = (packet[1] & 0x80) != 0;
+    if transport_error {
+        return None; // Packet has a transport error
+    }
+
+    Some(((packet[1] as u16 & 0x1F) << 8) | packet[2] as u16)
+}
+
 // Implement a function to extract PID from a packet
 fn extract_pid(packet: &[u8]) -> u16 {
-    profile_fn!(extract_pid);
     // Extract PID from packet
     // (You'll need to adjust the indices according to your packet format)
     ((packet[1] as u16 & 0x1F) << 8) | packet[2] as u16
@@ -490,7 +619,6 @@ fn extract_pid(packet: &[u8]) -> u16 {
 
 // Helper function to parse PAT and update global PAT packet storage
 fn parse_and_store_pat(packet: &[u8]) {
-    profile_fn!(parse_and_store_pat);
     let pat_entries = parse_pat(packet);
     unsafe {
         // Store the specific PAT chunk for later use
@@ -504,76 +632,58 @@ fn parse_and_store_pat(packet: &[u8]) {
 }
 
 fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
-    profile_fn!(parse_pat);
     let mut entries = Vec::new();
+
+    // Check for minimum packet size
+    if packet.len() < TS_PACKET_SIZE {
+        return entries;
+    }
 
     // Check if Payload Unit Start Indicator (PUSI) is set
     let pusi = (packet[1] & 0x40) != 0;
-    let adaptation_field_control = (packet[3] & 0x30) >> 4;
-    let mut pat_start = 4; // start after TS header
+    if !pusi {
+        // If PUSI is not set, this packet does not start a new PAT
+        return entries;
+    }
 
+    let adaptation_field_control = (packet[3] & 0x30) >> 4;
+    let mut offset = 4; // start after TS header
+
+    // Check for adaptation field and skip it
     if adaptation_field_control == 0x02 || adaptation_field_control == 0x03 {
         let adaptation_field_length = packet[4] as usize;
-        pat_start += 1 + adaptation_field_length; // +1 for the length byte itself
-        debug!(
-            "ParsePAT: Adaptation Field Length: {}",
-            adaptation_field_length
-        );
-    } else {
-        debug!(
-            "ParsePAT: Skipping Adaptation Field Control: {}",
-            adaptation_field_control
-        );
+        offset += 1 + adaptation_field_length; // +1 for the length byte itself
     }
 
-    if pusi {
-        // PUSI is set, so the first byte after the TS header is the pointer field
-        let pointer_field = packet[pat_start] as usize;
-        //pat_start += 1 + pointer_field; // Skip pointer field
-        debug!(
-            "ParsePAT: PUSI set as {}, skipping pointer field {} as packet value {} {}",
-            pusi, pointer_field, packet[0], packet[1]
-        );
-    } else {
-        debug!("ParsePAT: PUSI not set as {}", pusi);
-    }
+    // Pointer field indicates the start of the PAT section
+    let pointer_field = packet[offset] as usize;
+    offset += 1 + pointer_field; // Skip pointer field
 
-    debug!("ParsePAT: PAT start: {}", pat_start);
+    // Now, 'offset' points to the start of the PAT section
+    while offset + 4 <= packet.len() {
+        let program_number = ((packet[offset] as u16) << 8) | (packet[offset + 1] as u16);
+        let pmt_pid = (((packet[offset + 2] as u16) & 0x1F) << 8) | (packet[offset + 3] as u16);
 
-    // Check for the presence of a pointer field
-    let pointer_field = packet[pat_start] as usize;
-    pat_start += 1 + pointer_field; // Move past the pointer field
-
-    let mut i = pat_start; // Starting index of the PAT data
-
-    while i + 4 <= packet.len() {
-        let program_number = ((packet[i] as u16) << 8) | (packet[i + 1] as u16);
-        // Mask the lower 13 bits for the PMT PID
-        let pmt_pid = (((packet[i + 2] as u16) & 0x1F) << 8) | (packet[i + 3] as u16);
-
-        //debug!("ParsePAT: Packet1 {}, Packet2 {}, Packet3 {}, Packet4 {}", packet[i], packet[i + 1], packet[i + 2], packet[i + 3]);
-
-        if program_number != 0 && program_number != 65535 && pmt_pid != 0 && program_number < 30
-        /* FIXME: kludge fix for now */
-        {
-            debug!(
-                "ParsePAT: Program Number: {} PMT PID: {}",
-                program_number, pmt_pid
-            );
+        // Only add valid entries (non-zero program_number and pmt_pid)
+        if program_number != 0 && pmt_pid != 0 && pmt_pid < 0x1FFF && program_number < 100 {
             entries.push(PatEntry {
                 program_number,
                 pmt_pid,
             });
         }
 
-        i += 4;
+        debug!(
+            "ParsePAT: Program Number: {} PMT PID: {}",
+            program_number, pmt_pid
+        );
+
+        offset += 4; // Move to the next PAT entry
     }
 
     entries
 }
 
-fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
-    profile_fn!(parse_pmt);
+fn parse_pmt(packet: &[u8]) -> Pmt {
     let mut entries = Vec::new();
     let program_number = ((packet[8] as u16) << 8) | (packet[9] as u16);
 
@@ -584,7 +694,7 @@ fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
 
     debug!(
         "ParsePMT: Program Number: {} PMT PID: {} starting at position {}",
-        program_number, pmt_pid, i
+        program_number, extract_pid(packet), i
     );
     while i + 5 <= packet.len() && i < 17 + section_length - 4 {
         let stream_type = packet[i];
@@ -605,9 +715,22 @@ fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
     Pmt { entries }
 }
 
+// Helper function to identify the video PID from the stored PAT packet and return the PID and codec
+fn identify_video_pid(pmt_packet: &[u8]) -> Option<(u16, Codec)> {
+    let pmt = parse_pmt(pmt_packet);
+    pmt.entries.iter().find_map(|entry| {
+        let codec = match entry.stream_type {
+            0x01..=0x02 => Some(Codec::MPEG2), // MPEG-2 Video
+            0x1B => Some(Codec::H264),         // H.264 Video
+            0x24 => Some(Codec::H265),         // H.265 Video
+            _ => None,
+        };
+        codec.map(|c| (entry.stream_pid, c))
+    })
+}
+
 // Modify the function to use the stored PAT packet
 fn update_pid_map(pmt_packet: &[u8]) {
-    profile_fn!(update_pid_map);
     let mut pid_map = PID_MAP.lock().unwrap();
 
     // Process the stored PAT packet to find program numbers and corresponding PMT PIDs
@@ -629,7 +752,7 @@ fn update_pid_map(pmt_packet: &[u8]) {
 
         // Ensure the current PMT packet matches the PMT PID from the PAT
         if extract_pid(pmt_packet) == pmt_pid {
-            let pmt = parse_pmt(pmt_packet, pmt_pid);
+            let pmt = parse_pmt(pmt_packet);
 
             for pmt_entry in pmt.entries.iter() {
                 debug!(
@@ -707,6 +830,9 @@ fn update_pid_map(pmt_packet: &[u8]) {
 
                     // print out each field of structure similar to json but not wrapping into json
                     info!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
+                
+                    // write the stream_data back to the pid_map with modified values
+                    pid_map.insert(stream_pid, stream_data);
                 }
             }
         } else {
@@ -716,7 +842,6 @@ fn update_pid_map(pmt_packet: &[u8]) {
 }
 
 fn determine_stream_type(pid: u16) -> String {
-    profile_fn!(determine_stream_type);
     let pid_map = PID_MAP.lock().unwrap();
 
     // check if pid already is mapped, if so return the stream type already stored
@@ -812,15 +937,7 @@ struct Args {
 }
 
 fn main() {
-    if firestorm::enabled() {
-        if let Err(e) = firestorm::bench("./flames/", || {
-            rscap();
-        }) {
-            println!("Error occurred: {:?}", e);
-        }
-    } else {
-        rscap();
-    }
+    rscap();
 }
 
 // MAIN Function
@@ -849,7 +966,7 @@ fn rscap() {
     #[cfg(not(target_os = "linux"))]
     let use_wireless = args.use_wireless;
     //let send_json_header = args.send_json_header;
-    let mut packet_count = args.packet_count;
+    let packet_count = args.packet_count;
     let no_progress = args.no_progress;
     let no_zmq = args.no_zmq;
 
@@ -1111,7 +1228,6 @@ fn rscap() {
         }
     });
 
-
     // Perform TR 101 290 checks
     let mut tr101290_errors = Tr101290Errors::new();
 
@@ -1122,6 +1238,11 @@ fn rscap() {
 
     // Start packet capture
     let mut batch = Vec::new();
+    let mut video_pid: Option<u16> = Some(0xFFFF);
+    let mut video_codec: Option<Codec> = Some(Codec::H264);
+    let mut current_video_frame = Vec::new();
+    let mut is_frame_start = false;
+
     loop {
         if packet_count > 0 && packets_captured > packet_count {
             running.store(false, Ordering::SeqCst);
@@ -1162,9 +1283,11 @@ fn rscap() {
                     // Extract the necessary slice for PID extraction and parsing
                     let packet_chunk = &stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
 
+                    let mut pid: u16 = 0xFFFF;
+                    
                     if is_mpegts {
+                        pid = extract_pid(&packet_chunk);
                         // Handle PAT and PMT packets
-                        let pid = extract_pid(&packet_chunk);
                         match pid {
                             PAT_PID => {
                                 log::debug!("ProcessPacket: PAT packet detected with PID {}", pid);
@@ -1180,6 +1303,50 @@ fn rscap() {
                                         );
                                         // Update PID_MAP with new stream types
                                         update_pid_map(&packet_chunk);
+                                        // Identify the video PID (if not already identified)
+                                        if let Some((new_pid, new_codec)) = identify_video_pid(&packet_chunk) {
+                                            if video_pid.map_or(true, |vp| vp != new_pid) {
+                                                video_pid = Some(new_pid);
+                                                info!("STATUS::VIDEO_PID:CHANGE: to {}/{} from {}/{}", new_pid, new_codec.clone(), video_pid.unwrap(), video_codec.unwrap());
+                                                video_codec = Some(new_codec.clone());
+                                                // Reset video frame as the video stream has changed
+                                                current_video_frame.clear();
+                                            } else if video_codec != Some(new_codec.clone()) {
+                                                info!("STATUS::VIDEO_CODEC:CHANGE: to {} from {}", new_codec, video_codec.unwrap());
+                                                video_codec = Some(new_codec);
+                                                // Reset video frame as the codec has changed
+                                                current_video_frame.clear();
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Check if this is a video packet
+                                if video_pid != Some(0xFFFF) {
+                                    if let Some(vid_pid) = video_pid {
+                                        if pid == vid_pid {
+                                            if let Some(pes_payload_offset) = pes_start_offset(&stream_data.packet) {
+                                                let pes_payload = &stream_data.packet[pes_payload_offset..];
+
+                                                 // Ensure video_codec is not None before calling is_idr_frame
+                                                if let Some(codec) = video_codec.as_ref() {
+                                                    if is_idr_frame(pes_payload, codec.clone()) {
+                                                        // Send current video frame if it's complete
+                                                        if is_frame_start && !current_video_frame.is_empty() {
+                                                            info!("STATUS::FRAME:COMPLETE: queue {}", current_video_frame.len());
+                                                            // TODO: Display video frame information and extract SEI, Captions, Images, etc.
+                                                            current_video_frame.clear();
+                                                        }
+                                                        is_frame_start = true;
+                                                        info!("STATUS::FRAME:START: size {}", current_video_frame.len());
+                                                    }
+                                                }
+                                            }
+
+                                            if is_frame_start {
+                                                current_video_frame.push(packet.clone());
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1193,6 +1360,12 @@ fn rscap() {
                     // print out each field of structure similar to json but not wrapping into json
                     info!("STATUS::TR101290:ERRORS: {}", tr101290_errors);
                     
+                    if pid == 0x1FFF {
+                        // clear the Arc so it can be reused
+                        stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
+                        // Skip null packets
+                        continue;
+                    }
                     batch.push(stream_data);
 
                     // Check if batch is full
@@ -1208,7 +1381,7 @@ fn rscap() {
                         }
                     } else {
                         // go through each stream_data and release the packet Arc so it can be reused
-                        for mut stream_data in batch.iter_mut() {
+                        for stream_data in batch.iter_mut() {
                             stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
                         }
                         // disgard the batch, we don't send it anywhere
@@ -1237,8 +1410,6 @@ fn rscap() {
 
 // Check if the packet is MPEG-TS or SMPTE 2110
 fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
-    profile_fn!(is_mpegts_or_smpte2110);
-
     // Check for MPEG-TS (starts with 0x47 sync byte)
     if packet.starts_with(&[0x47]) {
         return 1;
@@ -1260,32 +1431,26 @@ const RFC_4175_EXT_SEQ_NUM_LEN: usize = 2;
 const RFC_4175_HEADER_LEN: usize = 6; // Note: extended sequence number not included
 
 fn get_extended_sequence_number(buf: &[u8]) -> u16 {
-    profile_fn!(get_extended_sequence_number);
     ((buf[0] as u16) << 8) | buf[1] as u16
 }
 
 fn get_line_length(buf: &[u8]) -> u16 {
-    profile_fn!(get_line_length);
     ((buf[0] as u16) << 8) | buf[1] as u16
 }
 
 fn get_line_field_id(buf: &[u8]) -> u8 {
-    profile_fn!(get_line_field_id);
     buf[2] >> 7
 }
 
 fn get_line_number(buf: &[u8]) -> u16 {
-    profile_fn!(get_line_number);
     ((buf[2] as u16 & 0x7f) << 8) | buf[3] as u16
 }
 
 fn get_line_continuation(buf: &[u8]) -> u8 {
-    profile_fn!(get_line_continuation);
     buf[4] >> 7
 }
 
 fn get_line_offset(buf: &[u8]) -> u16 {
-    profile_fn!(get_line_offset);
     ((buf[4] as u16 & 0x7f) << 8) | buf[5] as u16
 }
 // ## End of RFC 4175 SMPTE2110 header functions ##
@@ -1297,7 +1462,6 @@ fn process_smpte2110_packet(
     packet_size: usize,
     start_time: u64,
 ) -> Vec<StreamData> {
-    profile_fn!(process_smpte2110_packet);
     let start = payload_offset;
     let mut streams = Vec::new();
 
@@ -1374,7 +1538,6 @@ fn process_mpegts_packet(
     packet_size: usize,
     start_time: u64,
 ) -> Vec<StreamData> {
-    profile_fn!(process_mpegts_packet);
     let mut start = payload_offset;
     let mut read_size = packet_size;
     let mut streams = Vec::new();
@@ -1422,8 +1585,6 @@ fn process_mpegts_packet(
 
 // Print a hexdump of the packet
 fn hexdump(packet_arc: &Arc<Vec<u8>>, packet_offset: usize, packet_len: usize) {
-    profile_fn!(hexdump);
-
     let packet = &packet_arc[packet_offset..packet_offset + packet_len];
     let pid = extract_pid(packet);
     println!("--------------------------------------------------");

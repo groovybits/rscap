@@ -8,7 +8,7 @@ license-file = "LICENSE"
 homepage = "https://github.com/groovybits/wiki"
 repository = "https://github.com/groovybits/rscap"
 authors = ["Chris Kennedy"]
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -31,6 +31,3 @@ dotenv = "0.15"
 lazy_static = "1.4.0"
 rtp-rs = "0.6.0"
 clap = { version = "4.4.11", features = ["derive", "env"] }
-## Uncomment this line and comment the next line for profiling to ./flames/
-#firestorm = { version="0.5.1", features=["enable_system_time"] }
-firestorm = { version="0.5.1" }

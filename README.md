@@ -158,20 +158,6 @@ Check the output file capture.ts (or what you set in .env or environment variabl
 ffmpeg -i capture.ts
 ```
 
-## Profiling with Firestorm (built in) <https://www.reddit.com/r/rust/comments/lkvlya/introducing_the_firestorm_profiler/>
-
-```
-Edit Cargo.toml and change the following lines...
-
-## Uncomment this line and comment the next line for profiling to ./flames/
-#firestorm = { version="0.5.1", features=["enable_system_time"] }
-firestorm = { version="0.5.1" }
-
-Effectively setting the features to have enable_system_time which will enable profiling.
-
-Browse to the ./flames/ directory with a webbrowser to see the profiling results.
-```
-
 ## Profiling with Intel Vtune (Linux/Windows)
 
 ```
