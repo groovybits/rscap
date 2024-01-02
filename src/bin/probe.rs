@@ -22,7 +22,6 @@ use std::sync::mpsc;
 use std::sync::Mutex;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
-use firestorm::{profile_fn};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
@@ -217,31 +216,24 @@ impl StreamData {
         self.rtp_line_continuation = rtp_line_continuation;
     }
     fn set_pmt_pid(&mut self, pmt_pid: u16) {
-        profile_fn!(set_pmt_pid);
         self.pmt_pid = pmt_pid;
     }
     fn update_program_number(&mut self, program_number: u16) {
-        profile_fn!(update_program_number);
         self.program_number = program_number;
     }
     fn update_stream_type(&mut self, stream_type: String) {
-        profile_fn!(update_stream_type);
         self.stream_type = stream_type;
     }
     fn update_timestamp(&mut self, timestamp: u64) {
-        profile_fn!(update_timestamp);
         self.timestamp = timestamp;
     }
     fn increment_error_count(&mut self, error_count: u32) {
-        profile_fn!(increment_error_count);
         self.error_count += error_count;
     }
     fn increment_count(&mut self, count: u32) {
-        profile_fn!(increment_count);
         self.count += count;
     }
     fn set_continuity_counter(&mut self, continuity_counter: u8) {
-        profile_fn!(set_continuity_counter);
         // check for continuity continuous increment and wrap around from 0 to 15
         let previous_continuity_counter = self.continuity_counter;
         self.continuity_counter = continuity_counter & 0x0F;
@@ -265,7 +257,6 @@ impl StreamData {
         self.continuity_counter = continuity_counter;
     }
     fn update_stats(&mut self, packet_size: usize, arrival_time: u64) {
-        profile_fn!(update_stats);
         let bits = packet_size as u64 * 8; // Convert bytes to bits
 
         // Elapsed time in milliseconds
@@ -390,7 +381,6 @@ impl Tr101290Errors {
 
 // TR 101 290 Priority 1 Check
 fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors) {
-    profile_fn!(tr101290_p1_check);
     // p1
     if packet[0] != 0x47 {
         errors.sync_byte_errors += 1;
@@ -401,7 +391,6 @@ fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors) {
 
 // TR 101 290 Priority 2 Check
 fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
-    profile_fn!(tr101290_p2_check);
     // p2
 
     if (packet[1] & 0x80) != 0 {
@@ -436,7 +425,6 @@ impl VideoFrame {
 
 // Invoke this function for each MPEG-TS packet
 fn process_packet(stream_data_packet: &mut StreamData, errors: &mut Tr101290Errors, is_mpegts: bool) {
-    profile_fn!(process_packet);
     let packet: &[u8] = &stream_data_packet.packet[stream_data_packet.packet_start..stream_data_packet.packet_start + stream_data_packet.packet_len];
     tr101290_p1_check(packet, errors);
     tr101290_p2_check(packet, errors);
@@ -624,7 +612,6 @@ fn get_pid(packet: &[u8]) -> Option<u16> {
 
 // Implement a function to extract PID from a packet
 fn extract_pid(packet: &[u8]) -> u16 {
-    profile_fn!(extract_pid);
     // Extract PID from packet
     // (You'll need to adjust the indices according to your packet format)
     ((packet[1] as u16 & 0x1F) << 8) | packet[2] as u16
@@ -632,7 +619,6 @@ fn extract_pid(packet: &[u8]) -> u16 {
 
 // Helper function to parse PAT and update global PAT packet storage
 fn parse_and_store_pat(packet: &[u8]) {
-    profile_fn!(parse_and_store_pat);
     let pat_entries = parse_pat(packet);
     unsafe {
         // Store the specific PAT chunk for later use
@@ -698,7 +684,6 @@ fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
 }
 
 fn parse_pmt(packet: &[u8]) -> Pmt {
-    profile_fn!(parse_pmt);
     let mut entries = Vec::new();
     let program_number = ((packet[8] as u16) << 8) | (packet[9] as u16);
 
@@ -746,7 +731,6 @@ fn identify_video_pid(pmt_packet: &[u8]) -> Option<(u16, Codec)> {
 
 // Modify the function to use the stored PAT packet
 fn update_pid_map(pmt_packet: &[u8]) {
-    profile_fn!(update_pid_map);
     let mut pid_map = PID_MAP.lock().unwrap();
 
     // Process the stored PAT packet to find program numbers and corresponding PMT PIDs
@@ -858,7 +842,6 @@ fn update_pid_map(pmt_packet: &[u8]) {
 }
 
 fn determine_stream_type(pid: u16) -> String {
-    profile_fn!(determine_stream_type);
     let pid_map = PID_MAP.lock().unwrap();
 
     // check if pid already is mapped, if so return the stream type already stored
@@ -954,15 +937,7 @@ struct Args {
 }
 
 fn main() {
-    if firestorm::enabled() {
-        if let Err(e) = firestorm::bench("./flames/", || {
-            rscap();
-        }) {
-            println!("Error occurred: {:?}", e);
-        }
-    } else {
-        rscap();
-    }
+    rscap();
 }
 
 // MAIN Function
@@ -1435,8 +1410,6 @@ fn rscap() {
 
 // Check if the packet is MPEG-TS or SMPTE 2110
 fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
-    profile_fn!(is_mpegts_or_smpte2110);
-
     // Check for MPEG-TS (starts with 0x47 sync byte)
     if packet.starts_with(&[0x47]) {
         return 1;
@@ -1458,32 +1431,26 @@ const RFC_4175_EXT_SEQ_NUM_LEN: usize = 2;
 const RFC_4175_HEADER_LEN: usize = 6; // Note: extended sequence number not included
 
 fn get_extended_sequence_number(buf: &[u8]) -> u16 {
-    profile_fn!(get_extended_sequence_number);
     ((buf[0] as u16) << 8) | buf[1] as u16
 }
 
 fn get_line_length(buf: &[u8]) -> u16 {
-    profile_fn!(get_line_length);
     ((buf[0] as u16) << 8) | buf[1] as u16
 }
 
 fn get_line_field_id(buf: &[u8]) -> u8 {
-    profile_fn!(get_line_field_id);
     buf[2] >> 7
 }
 
 fn get_line_number(buf: &[u8]) -> u16 {
-    profile_fn!(get_line_number);
     ((buf[2] as u16 & 0x7f) << 8) | buf[3] as u16
 }
 
 fn get_line_continuation(buf: &[u8]) -> u8 {
-    profile_fn!(get_line_continuation);
     buf[4] >> 7
 }
 
 fn get_line_offset(buf: &[u8]) -> u16 {
-    profile_fn!(get_line_offset);
     ((buf[4] as u16 & 0x7f) << 8) | buf[5] as u16
 }
 // ## End of RFC 4175 SMPTE2110 header functions ##
@@ -1495,7 +1462,6 @@ fn process_smpte2110_packet(
     packet_size: usize,
     start_time: u64,
 ) -> Vec<StreamData> {
-    profile_fn!(process_smpte2110_packet);
     let start = payload_offset;
     let mut streams = Vec::new();
 
@@ -1572,7 +1538,6 @@ fn process_mpegts_packet(
     packet_size: usize,
     start_time: u64,
 ) -> Vec<StreamData> {
-    profile_fn!(process_mpegts_packet);
     let mut start = payload_offset;
     let mut read_size = packet_size;
     let mut streams = Vec::new();
@@ -1620,8 +1585,6 @@ fn process_mpegts_packet(
 
 // Print a hexdump of the packet
 fn hexdump(packet_arc: &Arc<Vec<u8>>, packet_offset: usize, packet_len: usize) {
-    profile_fn!(hexdump);
-
     let packet = &packet_arc[packet_offset..packet_offset + packet_len];
     let pid = extract_pid(packet);
     println!("--------------------------------------------------");
