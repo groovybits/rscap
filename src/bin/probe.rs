@@ -410,6 +410,30 @@ fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
     // TODO: ... other checks, updating the respective counters ...
 }
 
+// Define a struct to hold information about the current video frame
+struct VideoFrame {
+    packets: Vec<StreamData>,
+    is_complete: bool,
+}
+
+impl VideoFrame {
+    fn new() -> Self {
+        VideoFrame {
+            packets: Vec::new(),
+            is_complete: false,
+        }
+    }
+
+    fn add_packet(&mut self, stream_data: StreamData) {
+        self.packets.push(stream_data);
+    }
+
+    fn clear(&mut self) {
+        self.packets.clear();
+        self.is_complete = false;
+    }
+}
+
 // Invoke this function for each MPEG-TS packet
 fn process_packet(stream_data_packet: &mut StreamData, errors: &mut Tr101290Errors, is_mpegts: bool) {
     profile_fn!(process_packet);
@@ -532,10 +556,21 @@ const H264_IDR_NAL: u8 = 5;
 const H265_IDR_W_RADL: u8 = 19;
 const H265_IDR_N_LP: u8 = 20;
 
+#[derive(Clone, PartialEq)]
 enum Codec {
     MPEG2,
     H264,
     H265,
+}
+
+impl fmt::Display for Codec {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Codec::MPEG2 => write!(f, "MPEG2"),
+            Codec::H264 => write!(f, "H264"),
+            Codec::H265 => write!(f, "H265"),
+        }
+    }
 }
 
 fn is_idr_frame(buffer: &[u8], codec: Codec) -> bool {
@@ -662,7 +697,7 @@ fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
     entries
 }
 
-fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
+fn parse_pmt(packet: &[u8]) -> Pmt {
     profile_fn!(parse_pmt);
     let mut entries = Vec::new();
     let program_number = ((packet[8] as u16) << 8) | (packet[9] as u16);
@@ -674,7 +709,7 @@ fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
 
     debug!(
         "ParsePMT: Program Number: {} PMT PID: {} starting at position {}",
-        program_number, pmt_pid, i
+        program_number, extract_pid(packet), i
     );
     while i + 5 <= packet.len() && i < 17 + section_length - 4 {
         let stream_type = packet[i];
@@ -693,6 +728,20 @@ fn parse_pmt(packet: &[u8], pmt_pid: u16) -> Pmt {
     }
 
     Pmt { entries }
+}
+
+// Helper function to identify the video PID from the stored PAT packet and return the PID and codec
+fn identify_video_pid(pmt_packet: &[u8]) -> Option<(u16, Codec)> {
+    let pmt = parse_pmt(pmt_packet);
+    pmt.entries.iter().find_map(|entry| {
+        let codec = match entry.stream_type {
+            0x01..=0x02 => Some(Codec::MPEG2), // MPEG-2 Video
+            0x1B => Some(Codec::H264),         // H.264 Video
+            0x24 => Some(Codec::H265),         // H.265 Video
+            _ => None,
+        };
+        codec.map(|c| (entry.stream_pid, c))
+    })
 }
 
 // Modify the function to use the stored PAT packet
@@ -719,7 +768,7 @@ fn update_pid_map(pmt_packet: &[u8]) {
 
         // Ensure the current PMT packet matches the PMT PID from the PAT
         if extract_pid(pmt_packet) == pmt_pid {
-            let pmt = parse_pmt(pmt_packet, pmt_pid);
+            let pmt = parse_pmt(pmt_packet);
 
             for pmt_entry in pmt.entries.iter() {
                 debug!(
@@ -942,7 +991,7 @@ fn rscap() {
     #[cfg(not(target_os = "linux"))]
     let use_wireless = args.use_wireless;
     //let send_json_header = args.send_json_header;
-    let mut packet_count = args.packet_count;
+    let packet_count = args.packet_count;
     let no_progress = args.no_progress;
     let no_zmq = args.no_zmq;
 
@@ -1204,7 +1253,6 @@ fn rscap() {
         }
     });
 
-
     // Perform TR 101 290 checks
     let mut tr101290_errors = Tr101290Errors::new();
 
@@ -1215,6 +1263,11 @@ fn rscap() {
 
     // Start packet capture
     let mut batch = Vec::new();
+    let mut video_pid: Option<u16> = Some(0xFFFF);
+    let mut video_codec: Option<Codec> = Some(Codec::H264);
+    let mut current_video_frame = Vec::new();
+    let mut is_frame_start = false;
+
     loop {
         if packet_count > 0 && packets_captured > packet_count {
             running.store(false, Ordering::SeqCst);
@@ -1255,8 +1308,10 @@ fn rscap() {
                     // Extract the necessary slice for PID extraction and parsing
                     let packet_chunk = &stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
 
-                    let pid = extract_pid(&packet_chunk);
+                    let mut pid: u16 = 0xFFFF;
+                    
                     if is_mpegts {
+                        pid = extract_pid(&packet_chunk);
                         // Handle PAT and PMT packets
                         match pid {
                             PAT_PID => {
@@ -1273,6 +1328,50 @@ fn rscap() {
                                         );
                                         // Update PID_MAP with new stream types
                                         update_pid_map(&packet_chunk);
+                                        // Identify the video PID (if not already identified)
+                                        if let Some((new_pid, new_codec)) = identify_video_pid(&packet_chunk) {
+                                            if video_pid.map_or(true, |vp| vp != new_pid) {
+                                                video_pid = Some(new_pid);
+                                                info!("STATUS::VIDEO_PID:CHANGE: to {}/{} from {}/{}", new_pid, new_codec.clone(), video_pid.unwrap(), video_codec.unwrap());
+                                                video_codec = Some(new_codec.clone());
+                                                // Reset video frame as the video stream has changed
+                                                current_video_frame.clear();
+                                            } else if video_codec != Some(new_codec.clone()) {
+                                                info!("STATUS::VIDEO_CODEC:CHANGE: to {} from {}", new_codec, video_codec.unwrap());
+                                                video_codec = Some(new_codec);
+                                                // Reset video frame as the codec has changed
+                                                current_video_frame.clear();
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Check if this is a video packet
+                                if video_pid != Some(0xFFFF) {
+                                    if let Some(vid_pid) = video_pid {
+                                        if pid == vid_pid {
+                                            if let Some(pes_payload_offset) = pes_start_offset(&stream_data.packet) {
+                                                let pes_payload = &stream_data.packet[pes_payload_offset..];
+
+                                                 // Ensure video_codec is not None before calling is_idr_frame
+                                                if let Some(codec) = video_codec.as_ref() {
+                                                    if is_idr_frame(pes_payload, codec.clone()) {
+                                                        // Send current video frame if it's complete
+                                                        if is_frame_start && !current_video_frame.is_empty() {
+                                                            info!("STATUS::FRAME:COMPLETE: queue {}", current_video_frame.len());
+                                                            // TODO: Display video frame information and extract SEI, Captions, Images, etc.
+                                                            current_video_frame.clear();
+                                                        }
+                                                        is_frame_start = true;
+                                                        info!("STATUS::FRAME:START: size {}", current_video_frame.len());
+                                                    }
+                                                }
+                                            }
+
+                                            if is_frame_start {
+                                                current_video_frame.push(packet.clone());
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1307,7 +1406,7 @@ fn rscap() {
                         }
                     } else {
                         // go through each stream_data and release the packet Arc so it can be reused
-                        for mut stream_data in batch.iter_mut() {
+                        for stream_data in batch.iter_mut() {
                             stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
                         }
                         // disgard the batch, we don't send it anywhere
