@@ -1251,33 +1251,24 @@ fn rscap() {
                     None
                 };
 
-                // Handle different cases based on flags
-                if send_raw_stream {
-                    // Send packet data
-                    let packet_msg = zmq::Message::from(packet_slice);
-                    publisher.send(packet_msg, 0).unwrap();
+                if send_json_header && send_raw_stream {
+                    if let Some(meta_msg) = metadata_msg {
+                        // Send metadata as the first message
+                        publisher.send(meta_msg, zmq::SNDMORE).unwrap();
 
-                    // Optionally send metadata
+                        // Send packet data as the second message
+                        let packet_msg = zmq::Message::from(packet_slice);
+                        publisher.send(packet_msg, 0).unwrap();
+                    }
+                } else if send_json_header {
+                    // Send metadata only if send_json_header is false
                     if let Some(meta_msg) = metadata_msg {
                         publisher.send(meta_msg, 0).unwrap();
                     }
-                } else {
-                    // Use the old way of sending a JSON header followed by binary data
-                    if send_json_header {
-                        if let Some(meta_msg) = metadata_msg {
-                            // Send metadata as the first message
-                            publisher.send(meta_msg, zmq::SNDMORE).unwrap();
-
-                            // Send packet data as the second message
-                            let packet_msg = zmq::Message::from(packet_slice);
-                            publisher.send(packet_msg, 0).unwrap();
-                        }
-                    } else {
-                        // Send metadata only if send_json_header is false
-                        if let Some(meta_msg) = metadata_msg {
-                            publisher.send(meta_msg, 0).unwrap();
-                        }
-                    }
+                } else if send_raw_stream {
+                    // Send packet data only if send_raw_stream is ftrue
+                    let packet_msg = zmq::Message::from(packet_slice);
+                    publisher.send(packet_msg, 0).unwrap();
                 }
             }
             batch.clear();

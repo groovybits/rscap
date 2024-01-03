@@ -113,41 +113,52 @@ async fn main() {
     let mut expecting_metadata = recv_json_header; // Expect metadata only if recv_json_header is true
 
     while let Ok(msg) = zmq_sub.recv_bytes(0) {
+        let more = zmq_sub.get_rcvmore().unwrap();
+    
         if expecting_metadata {
-            let json_header = String::from_utf8(msg.clone()).unwrap();
-            info!(
-                "#{} Received JSON header: {}",
-                mpeg_packets + 1,
-                json_header
-            );
-            expecting_metadata = false; // Next message will be data
+            // Process JSON header if expecting metadata
+            if recv_json_header {
+                let json_header = String::from_utf8(msg.clone()).unwrap();
+                info!(
+                    "Monitor: #{} Received JSON header: {}",
+                    mpeg_packets + 1,
+                    json_header
+                );
+            }
+    
+            // If not expecting more parts or not receiving raw data, continue to next message
+            if !more || !recv_raw_stream {
+                expecting_metadata = recv_json_header; // Reset for next message if applicable
+                continue;
+            }
+    
+            expecting_metadata = false; // Next message will be raw data
         } else {
+            // Process raw data packet
             total_bytes += msg.len();
             mpeg_packets += 1;
+    
+            info!(
+                "Monitor: #{} Received {}/{} bytes",
+                mpeg_packets,
+                msg.len(),
+                total_bytes
+            );
 
-            if debug_on {
-                debug!(
-                    "#{} Received {}/{} bytes",
-                    mpeg_packets,
-                    msg.len(),
-                    total_bytes
-                );
-            } else if !no_progress {
+            if !no_progress {
                 print!(".");
                 std::io::stdout().flush().unwrap();
             }
-
+    
             // check for packet count
             if packet_count > 0 && mpeg_packets >= packet_count {
                 break;
             }
-
+    
             // write to file, appending if not first chunk
             file.write_all(&msg).unwrap();
-
-            if recv_json_header {
-                expecting_metadata = true; // Expect metadata again if recv_json_header is true
-            }
+    
+            expecting_metadata = recv_json_header; // Reset for next message if applicable
         }
     }
 
