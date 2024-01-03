@@ -916,8 +916,12 @@ struct Args {
     use_wireless: bool,
 
     /// Sets if JSON header should be sent
-    /*#[clap(long, env = "SEND_JSON_HEADER", default_value_t = false)]
-    send_json_header: bool,*/
+    #[clap(long, env = "SEND_JSON_HEADER", default_value_t = false)]
+    send_json_header: bool,
+
+    /// Sets if Raw Stream should be sent
+    #[clap(long, env = "SEND_RAW_STREAM", default_value_t = false)]
+    send_raw_stream: bool,
 
     /// number of packets to capture
     #[clap(long, env = "PACKET_COUNT", default_value_t = 0)]
@@ -934,6 +938,10 @@ struct Args {
     /// Force smpte2110 mode
     #[clap(long, env = "SMPT2110", default_value_t = false)]
     smpte2110: bool,
+
+    /// Use promiscuous mode
+    #[clap(long, env = "PROMISCUOUS", default_value_t = false)]
+    promiscuous: bool,
 }
 
 fn main() {
@@ -942,7 +950,7 @@ fn main() {
 
 // MAIN Function
 fn rscap() {
-    println!("Starting rscap probe");
+    println!("RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap.");
    
     dotenv::dotenv().ok(); // read .env file
 
@@ -965,10 +973,12 @@ fn rscap() {
     let silent = args.silent;
     #[cfg(not(target_os = "linux"))]
     let use_wireless = args.use_wireless;
-    //let send_json_header = args.send_json_header;
+    let send_json_header = args.send_json_header;
+    let send_raw_stream = args.send_raw_stream;
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
     let no_zmq = args.no_zmq;
+    let promiscuous = args.promiscuous;
 
     if args.smpte2110 {
         packet_size = 1500; // set packet size to 1500 for smpte2110
@@ -1137,12 +1147,6 @@ fn rscap() {
             source_device
         ));
 
-    #[cfg(not(target_os = "linux"))]
-    let promiscuous: bool = false;
-
-    #[cfg(target_os = "linux")]
-    let promiscuous: bool = true;
-
     // Filter pcap
     let source_host_and_port = format!(
         "{} dst port {} and ip dst host {}",
@@ -1211,18 +1215,45 @@ fn rscap() {
 
         for mut batch in rx {
             for stream_data in batch.iter() {
-                // Clone StreamData to get a version without the packet
-                let cloned_stream_data = stream_data.clone(); // This clone avoids copying the Arc<Vec<u8>>
-                let metadata = serde_json::to_string(&cloned_stream_data).unwrap();
-                let metadata_msg = zmq::Message::from(metadata.as_bytes());
-
-                // Send metadata as the first message
-                publisher.send(metadata_msg, zmq::SNDMORE).unwrap();
-
-                // Send packet data as the second message
                 let packet_slice = &stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
-                let packet_msg = zmq::Message::from(packet_slice);
-                publisher.send(packet_msg, 0).unwrap();
+
+                // Serialize metadata only if necessary
+                let metadata_msg = if send_json_header {
+                    let cloned_stream_data = stream_data.clone(); // Clone avoids copying the Arc<Vec<u8>>
+                    let metadata = serde_json::to_string(&cloned_stream_data).unwrap();
+                    Some(zmq::Message::from(metadata.as_bytes()))
+                } else {
+                    None
+                };
+
+                // Handle different cases based on flags
+                if send_raw_stream {
+                    // Send packet data
+                    let packet_msg = zmq::Message::from(packet_slice);
+                    publisher.send(packet_msg, 0).unwrap();
+
+                    // Optionally send metadata
+                    if let Some(meta_msg) = metadata_msg {
+                        publisher.send(meta_msg, 0).unwrap();
+                    }
+                } else {
+                    // Use the old way of sending a JSON header followed by binary data
+                    if send_json_header {
+                        if let Some(meta_msg) = metadata_msg {
+                            // Send metadata as the first message
+                            publisher.send(meta_msg, zmq::SNDMORE).unwrap();
+
+                            // Send packet data as the second message
+                            let packet_msg = zmq::Message::from(packet_slice);
+                            publisher.send(packet_msg, 0).unwrap();
+                        }
+                    } else {
+                        // Send metadata only if send_json_header is false
+                        if let Some(meta_msg) = metadata_msg {
+                            publisher.send(meta_msg, 0).unwrap();
+                        }
+                    }
+                }
             }
             batch.clear();
         }

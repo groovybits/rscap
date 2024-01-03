@@ -12,42 +12,89 @@
  */
 
 extern crate zmq;
+use clap::Parser;
 use log::{debug, error, info};
 use std::env;
 use std::fs::File;
 use std::io::Write;
 use tokio;
-//use ffmpeg_next as ffmpeg; // You might need to configure FFmpeg flags
+
+
+#[derive(Parser, Debug)]
+#[clap(
+    author = "Chris Kennedy",
+    version = "1.0",
+    about = "RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe."
+)]
+struct Args {
+    /// Sets the target port
+    #[clap(long, env = "TARGET_PORT", default_value_t = 5556)]
+    source_port: i32,
+
+    /// Sets the target IP
+    #[clap(long, env = "TARGET_IP", default_value = "127.0.0.1")]
+    source_ip: String,
+
+    /// Sets the debug mode
+    #[clap(long, env = "DEBUG", default_value_t = false)]
+    debug_on: bool,
+
+    /// Sets the silent mode
+    #[clap(long, env = "SILENT", default_value_t = false)]
+    silent: bool,
+
+    /// Sets if JSON header should be sent
+    #[clap(long, env = "RECV_JSON_HEADER", default_value_t = false)]
+    recv_json_header: bool,
+
+    /// Sets if Raw Stream should be sent
+    #[clap(long, env = "RECV_RAW_STREAM", default_value_t = false)]
+    recv_raw_stream: bool,
+
+    /// number of packets to capture
+    #[clap(long, env = "PACKET_COUNT", default_value_t = 0)]
+    packet_count: u64,
+
+    /// Turn off progress output dots
+    #[clap(long, env = "NO_PROGRESS", default_value_t = false)]
+    no_progress: bool,
+
+    /// Force smpte2110 mode
+    #[clap(long, env = "SMPT2110", default_value_t = false)]
+    smpte2110: bool,
+
+    /// Output Filename
+    #[clap(long, env = "OUTPUT_FILE", default_value = "output.ts")]
+    output_file: String,
+}
 
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().ok(); // read .env file
 
-    // Get environment variables or use default values, set in .env file
-    let source_port: i32 = env::var("TARGET_PORT")
-        .unwrap_or("5556".to_string())
-        .parse()
-        .expect(&format!("Invalid format for TARGET_PORT"));
-    let source_ip: &str = &env::var("TARGET_IP").unwrap_or("127.0.0.1".to_string());
-    let debug_on: bool = env::var("DEBUG")
-        .unwrap_or("false".to_string())
-        .parse()
-        .expect(&format!("Invalid format for DEBUG"));
-    let silent: bool = env::var("SILENT")
-        .unwrap_or("false".to_string())
-        .parse()
-        .expect(&format!("Invalid format for SILENT"));
-    let output_file: &str = &env::var("OUTPUT_FILE").unwrap_or("output.ts".to_string());
+    println!("RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe.");
 
-    info!("Starting rscap client");
+    let args = Args::parse();
 
-    if !silent {
-        let mut log_level: log::LevelFilter = log::LevelFilter::Info;
-        if debug_on {
-            log_level = log::LevelFilter::Debug;
-        }
-        env_logger::Builder::new().filter_level(log_level).init();
+    // Use the parsed arguments directly
+    let source_port = args.source_port;
+    let source_ip = args.source_ip;
+    let debug_on = args.debug_on;
+    let silent = args.silent;
+    let recv_json_header = args.recv_json_header;
+    let recv_raw_stream = args.recv_raw_stream;
+    let packet_count = args.packet_count;
+    let no_progress = args.no_progress;
+    let smpte2110 = args.smpte2110;
+    let output_file: String = args.output_file;
+
+    if silent {
+        // set log level to error
+        std::env::set_var("RUST_LOG", "error");
     }
+
+    // Initialize logging
+    let _ = env_logger::try_init();
 
     // Setup ZeroMQ subscriber
     let context = zmq::Context::new();
@@ -63,12 +110,11 @@ async fn main() {
     let mut file = File::create(output_file).unwrap();
 
     let mut total_bytes = 0;
-    let mut count = 0;
     let mut mpeg_packets = 0;
+    let mut expecting_metadata = recv_json_header; // Expect metadata only if recv_json_header is true
+
     while let Ok(msg) = zmq_sub.recv_bytes(0) {
-        // Check for JSON header if enabled, it will alternate as the first message before each MPEG-TS chunk
-        if count % 2 == 0 {
-            count += 1;
+        if expecting_metadata {
             let json_header = String::from_utf8(msg.clone()).unwrap();
             if debug_on {
                 info!(
@@ -77,51 +123,36 @@ async fn main() {
                     json_header
                 );
             }
-            continue;
-        }
-        total_bytes += msg.len();
-        count += 1;
-        mpeg_packets += 1;
-        if debug_on {
-            debug!(
-                "#{} Received {}/{} bytes",
-                mpeg_packets,
-                msg.len(),
-                total_bytes
-            );
-        } else if !silent {
-            print!(".");
-            std::io::stdout().flush().unwrap();
-        }
-        // write to file, appending if not first chunk
-        file.write_all(&msg).unwrap();
-    }
+            expecting_metadata = false; // Next message will be data
+        } else {
+            total_bytes += msg.len();
+            mpeg_packets += 1;
 
-    // Now check the file with FFmpeg for MPEG-TS integrity
-    // ... FFmpeg checking logic goes here ...
-    //check_mpegts_integrity("output.ts");
+            if debug_on {
+                debug!(
+                    "#{} Received {}/{} bytes",
+                    mpeg_packets,
+                    msg.len(),
+                    total_bytes
+                );
+            } else if !silent {
+                print!(".");
+                std::io::stdout().flush().unwrap();
+            }
+
+            // check for packet count
+            if packet_count > 0 && mpeg_packets >= packet_count {
+                break;
+            }
+
+            // write to file, appending if not first chunk
+            file.write_all(&msg).unwrap();
+
+            if recv_json_header {
+                expecting_metadata = true; // Expect metadata again if recv_json_header is true
+            }
+        }
+    }
 
     info!("Finished rscap client");
 }
-
-/*
-fn check_mpegts_integrity(file_path: &str) {
-    // Initialize FFmpeg
-    ffmpeg::init().unwrap();
-
-    // Open the file with FFmpeg
-    let mut format_context = ffmpeg::format::input(&file_path).unwrap();
-
-    // Iterate over the packets and check MPEG-TS headers and continuity counters
-    // ... Detailed FFmpeg packet checking logic goes here ...
-    while let Some(packet) = format_context.packets().next() {
-        let packet = packet.unwrap();
-        // Check MPEG-TS header
-        let mpegts_header = packet.data();
-        println!("MPEG-TS header: {:?}", mpegts_header);
-        // Check continuity counter
-        let continuity_counter = mpegts_header[3] & 0x0F;
-        println!("Continuity counter: {}", continuity_counter);
-    }
-}
-*/
