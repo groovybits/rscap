@@ -1568,25 +1568,27 @@ fn process_smpte2110_packet(
     packet_size: usize,
     start_time: u64,
 ) -> Vec<StreamData> {
-    let start = payload_offset;
     let mut streams = Vec::new();
 
-    if packet_size > start + 12 {
-        if packet[start] == 0x80 || packet[start] == 0x81 {
-            let rtp_packet = &packet[start..];
+    // Check if the packet is large enough to contain an RTP header
+    if packet_size > payload_offset + 12 {
+        // Check for RTP header marker
+        if packet[payload_offset] == 0x80 || packet[payload_offset] == 0x81 {
+            let rtp_packet = &packet[payload_offset..];
 
             // Create an RtpReader
             if let Ok(rtp) = RtpReader::new(rtp_packet) {
-                // Extract the timestamp
+                // Extract the timestamp and payload type
                 let timestamp = rtp.timestamp();
-
                 let payload_type = rtp.payload_type();
 
-                let payload_offset = rtp.payload_offset();
+                // Calculate the actual start of the RTP payload
+                let rtp_payload_offset = payload_offset + rtp.payload_offset();
 
-                // size of rtp payload
-                let chunk_len = packet_size - payload_offset;
+                // Calculate the length of the RTP payload
+                let rtp_payload_length = packet_size - rtp_payload_offset;
 
+                // Extract SMPTE 2110 specific fields
                 let line_length = get_line_length(rtp_packet);
                 let line_number = get_line_number(rtp_packet);
                 let extended_sequence_number = get_extended_sequence_number(rtp_packet);
@@ -1595,20 +1597,24 @@ fn process_smpte2110_packet(
 
                 let line_continuation = get_line_continuation(rtp_packet);
 
-                let pid = payload_type as u16; /* FIXME */
-                let stream_type = payload_type.to_string(); /* FIXME */
+                // Use payload type as PID (for the purpose of this example)
+                let pid = payload_type as u16; 
+                let stream_type = payload_type.to_string(); 
+
+                // Create new StreamData instance
                 let mut stream_data = StreamData::new(
                     Arc::clone(packet),
-                    payload_offset,
-                    chunk_len,
+                    rtp_payload_offset,
+                    rtp_payload_length,
                     pid,
                     stream_type,
                     start_time,
                     timestamp as u64,
-                    0, /* fix me */
+                    0,
                 );
-                // update streams details in stream_data structure
-                stream_data.update_stats(chunk_len, current_unix_timestamp_ms().unwrap_or(0));
+
+                // Update StreamData stats and RTP fields
+                stream_data.update_stats(rtp_payload_length, current_unix_timestamp_ms().unwrap_or(0));
                 stream_data.set_rtp_fields(
                     timestamp,
                     payload_type,
@@ -1620,6 +1626,7 @@ fn process_smpte2110_packet(
                     line_continuation,
                 );
 
+                // Add the StreamData to the stream list
                 streams.push(stream_data);
             } else {
                 hexdump(&packet, 0, packet_size);
