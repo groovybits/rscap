@@ -29,12 +29,6 @@ use std::sync::mpsc::{Receiver, Sender};
 // constant for PAT PID
 const PAT_PID: u16 = 0;
 
-// global variable to store last PAT packet
-static mut LAST_PAT_PACKET: Option<Vec<u8>> = None;
-
-// global variable to store PMT PID (initially set to an invalid PID)
-static mut PMT_PID: u16 = 0xFFFF;
-
 // global variable to store the MpegTS PID Map (initially empty)
 lazy_static! {
     static ref PID_MAP: Mutex<HashMap<u16, Arc<StreamData>>> = Mutex::new(HashMap::new());
@@ -55,7 +49,7 @@ struct Pmt {
 }
 
 // StreamData struct
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct StreamData {
     pid: u16,
     pmt_pid: u16,
@@ -424,15 +418,18 @@ impl VideoFrame {
 }
 
 // Invoke this function for each MPEG-TS packet
-fn process_packet(stream_data_packet: &mut StreamData, errors: &mut Tr101290Errors, is_mpegts: bool) {
+fn process_packet(stream_data_packet: &mut StreamData, errors: &mut Tr101290Errors, is_mpegts: bool, pmt_pid: u16) {
     let packet: &[u8] = &stream_data_packet.packet[stream_data_packet.packet_start..stream_data_packet.packet_start + stream_data_packet.packet_len];
     tr101290_p1_check(packet, errors);
     tr101290_p2_check(packet, errors);
 
-    let pid = extract_pid(packet);
+    let pid = stream_data_packet.pid;
     let arrival_time = current_unix_timestamp_ms().unwrap_or(0);
 
     let mut pid_map = PID_MAP.lock().unwrap();
+
+    // TODO: high debug level output, may need a flag specific to this dump
+    //info!("PID Map Contents: {:#?}", pid_map);
 
     // Check if the PID map already has an entry for this PID
     match pid_map.get_mut(&pid) {
@@ -447,20 +444,15 @@ fn process_packet(stream_data_packet: &mut StreamData, errors: &mut Tr101290Erro
             let uptime = arrival_time - stream_data.start_time;
 
             // print out each field of structure similar to json but not wrapping into json
-            info!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, uptime); 
+            debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, uptime); 
 
             // write the stream_data back to the pid_map with modified values
             pid_map.insert(pid, stream_data);
         }
         None => {
             // No StreamData instance found for this PID, possibly no PMT yet
-            let mut pmt_pid = 0xFFFF;
-            unsafe {
-                pmt_pid = PMT_PID;
-            }
-
             if pmt_pid != 0xFFFF {
-                info!("ProcessPacket: New PID {} Found, adding to PID map.", pid);
+                debug!("ProcessPacket: New PID {} Found, adding to PID map.", pid);
             } else {
                 // PMT packet not found yet, add the stream_data_packet to the pid_map
                 let mut stream_data = Arc::new(StreamData::new(
@@ -617,18 +609,27 @@ fn extract_pid(packet: &[u8]) -> u16 {
     ((packet[1] as u16 & 0x1F) << 8) | packet[2] as u16
 }
 
-// Helper function to parse PAT and update global PAT packet storage
-fn parse_and_store_pat(packet: &[u8]) {
-    let pat_entries = parse_pat(packet);
-    unsafe {
-        // Store the specific PAT chunk for later use
-        LAST_PAT_PACKET = Some(packet.to_vec());
-    }
+// Story the PAT packet and PMT PID
+struct PmtInfo {
+    pid: u16,
+    packet: Vec<u8>,
+}
 
+// Helper function to parse PAT and update global PAT packet storage
+fn parse_and_store_pat(packet: &[u8]) -> PmtInfo {
+    let pat_entries = parse_pat(packet);
+    let mut pmt_info = PmtInfo {
+        pid: 0xFFFF,
+        packet: Vec::new(),
+    };
+    pmt_info.packet = packet.to_vec();
+    
     // Assuming there's only one program for simplicity, update PMT PID
+    let mut pmt_pid = 0xFFFF;
     if let Some(first_entry) = pat_entries.first() {
-        unsafe { PMT_PID = first_entry.pmt_pid };
+        pmt_info.pid = first_entry.pmt_pid;
     }
+    pmt_info
 }
 
 fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
@@ -729,16 +730,15 @@ fn identify_video_pid(pmt_packet: &[u8]) -> Option<(u16, Codec)> {
     })
 }
 
-// Modify the function to use the stored PAT packet
-fn update_pid_map(pmt_packet: &[u8]) {
+// Use the stored PAT packet
+fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8]) {
     let mut pid_map = PID_MAP.lock().unwrap();
 
     // Process the stored PAT packet to find program numbers and corresponding PMT PIDs
-    let program_pids = unsafe {
-        LAST_PAT_PACKET
-            .as_ref()
-            .map_or_else(Vec::new, |pat_packet| parse_pat(pat_packet))
-    };
+    let program_pids = last_pat_packet
+        .chunks_exact(TS_PACKET_SIZE)
+        .flat_map(parse_pat)
+        .collect::<Vec<_>>();
 
     for pat_entry in program_pids.iter() {
         let program_number = pat_entry.program_number;
@@ -829,7 +829,7 @@ fn update_pid_map(pmt_packet: &[u8]) {
                     Arc::make_mut(&mut stream_data).update_stream_type(stream_type.to_string());
 
                     // print out each field of structure similar to json but not wrapping into json
-                    info!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
+                    debug!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
                 
                     // write the stream_data back to the pid_map with modified values
                     pid_map.insert(stream_pid, stream_data);
@@ -1004,7 +1004,7 @@ fn rscap() {
     let devices = pcap::Device::list().unwrap();
     // List all devices and their flags
     for device in &devices {
-        info!("Device: {:?}, Flags: {:?}", device.name, device.flags);
+        debug!("Device: {:?}, Flags: {:?}", device.name, device.flags);
     }
     #[cfg(target_os = "linux")]
     let mut target_device = devices
@@ -1105,10 +1105,10 @@ fn rscap() {
             .expect(&format!("Target device not found {}", source_device));
 
         // Check if device has an IPv4 address
-        info!("Target Device: {:?}", target_device_discovered);
+        debug!("Target Device: {:?}", target_device_discovered);
         for addr in target_device_discovered.addresses.iter() {
             if let std::net::IpAddr::V4(ipv4_addr) = addr.addr {
-                info!("Found ipv4_addr: {:?}", ipv4_addr);
+                info!("Found ipv4_addr {:?} on device {}", ipv4_addr, source_device);
                 interface_addr = ipv4_addr;
                 target_device_found = true;
                 target_device = target_device_discovered;
@@ -1242,6 +1242,10 @@ fn rscap() {
     let mut video_codec: Option<Codec> = Some(Codec::H264);
     let mut current_video_frame = Vec::new();
     let mut is_frame_start = false;
+    let mut pmt_info: PmtInfo = PmtInfo {
+        pid: 0xFFFF,
+        packet: Vec::new(),
+    };
 
     loop {
         if packet_count > 0 && packets_captured > packet_count {
@@ -1252,9 +1256,9 @@ fn rscap() {
             Ok(packet) => {
                 packets_captured += 1;
                 
-                if silent && !no_progress {
+                if !no_progress {
                     print!(".");
-                    // flush stdout TODO: output in ncurses or something w/less output
+                    // flush stdout (wastes resources) TODO: output in ncurses or something w/less output
                     //std::io::stdout().flush().unwrap();
                 }
 
@@ -1290,33 +1294,31 @@ fn rscap() {
                         // Handle PAT and PMT packets
                         match pid {
                             PAT_PID => {
-                                log::debug!("ProcessPacket: PAT packet detected with PID {}", pid);
-                                parse_and_store_pat(&packet_chunk);
+                                debug!("ProcessPacket: PAT packet detected with PID {}", pid);
+                                pmt_info = parse_and_store_pat(&packet_chunk);
                             }
                             _ => {
                                 // Check if this is a PMT packet
-                                unsafe {
-                                    if pid == PMT_PID {
-                                        log::debug!(
-                                            "ProcessPacket: PMT packet detected with PID {}",
-                                            pid
-                                        );
-                                        // Update PID_MAP with new stream types
-                                        update_pid_map(&packet_chunk);
-                                        // Identify the video PID (if not already identified)
-                                        if let Some((new_pid, new_codec)) = identify_video_pid(&packet_chunk) {
-                                            if video_pid.map_or(true, |vp| vp != new_pid) {
-                                                video_pid = Some(new_pid);
-                                                info!("STATUS::VIDEO_PID:CHANGE: to {}/{} from {}/{}", new_pid, new_codec.clone(), video_pid.unwrap(), video_codec.unwrap());
-                                                video_codec = Some(new_codec.clone());
-                                                // Reset video frame as the video stream has changed
-                                                current_video_frame.clear();
-                                            } else if video_codec != Some(new_codec.clone()) {
-                                                info!("STATUS::VIDEO_CODEC:CHANGE: to {} from {}", new_codec, video_codec.unwrap());
-                                                video_codec = Some(new_codec);
-                                                // Reset video frame as the codec has changed
-                                                current_video_frame.clear();
-                                            }
+                                if pid == pmt_info.pid {
+                                    debug!(
+                                        "ProcessPacket: PMT packet detected with PID {}",
+                                        pid
+                                    );
+                                    // Update PID_MAP with new stream types
+                                    update_pid_map(&packet_chunk, &pmt_info.packet);
+                                    // Identify the video PID (if not already identified)
+                                    if let Some((new_pid, new_codec)) = identify_video_pid(&packet_chunk) {
+                                        if video_pid.map_or(true, |vp| vp != new_pid) {
+                                            video_pid = Some(new_pid);
+                                            info!("STATUS::VIDEO_PID:CHANGE: to {}/{} from {}/{}", new_pid, new_codec.clone(), video_pid.unwrap(), video_codec.unwrap());
+                                            video_codec = Some(new_codec.clone());
+                                            // Reset video frame as the video stream has changed
+                                            current_video_frame.clear();
+                                        } else if video_codec != Some(new_codec.clone()) {
+                                            info!("STATUS::VIDEO_CODEC:CHANGE: to {} from {}", new_codec, video_codec.unwrap());
+                                            video_codec = Some(new_codec);
+                                            // Reset video frame as the codec has changed
+                                            current_video_frame.clear();
                                         }
                                     }
                                 }
@@ -1354,11 +1356,13 @@ fn rscap() {
                     }
 
                     // Check for TR 101 290 errors
-                    process_packet(&mut stream_data, &mut tr101290_errors, is_mpegts);
+                    process_packet(&mut stream_data, &mut tr101290_errors, is_mpegts, pmt_info.pid);
 
                     // Print TR 101 290 errors
                     // print out each field of structure similar to json but not wrapping into json
-                    info!("STATUS::TR101290:ERRORS: {}", tr101290_errors);
+                    
+                    // TODO: print only after an error occurs or on a time interval
+                    //debug!("STATUS::TR101290:ERRORS: {}", tr101290_errors);
                     
                     if pid == 0x1FFF {
                         // clear the Arc so it can be reused
