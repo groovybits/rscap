@@ -15,7 +15,6 @@
 extern crate zmq;
 use clap::Parser;
 use log::{debug, error, info};
-use std::env;
 use std::fs::File;
 use std::io::Write;
 use tokio;
@@ -151,6 +150,11 @@ async fn main() {
             if recv_json_header {
                 expecting_metadata = true; // Expect metadata again if recv_json_header is true
             }
+        }
+
+        // print progress
+        if !no_progress {
+            print!(".");
         }
     }
 

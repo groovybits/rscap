@@ -642,7 +642,6 @@ fn parse_and_store_pat(packet: &[u8]) -> PmtInfo {
     pmt_info.packet = packet.to_vec();
 
     // Assuming there's only one program for simplicity, update PMT PID
-    let mut pmt_pid = 0xFFFF;
     if let Some(first_entry) = pat_entries.first() {
         pmt_info.pid = first_entry.pmt_pid;
     }
