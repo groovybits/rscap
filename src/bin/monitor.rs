@@ -58,10 +58,6 @@ struct Args {
     #[clap(long, env = "NO_PROGRESS", default_value_t = false)]
     no_progress: bool,
 
-    /// Force smpte2110 mode
-    #[clap(long, env = "SMPT2110", default_value_t = false)]
-    smpte2110: bool,
-
     /// Output Filename
     #[clap(long, env = "OUTPUT_FILE", default_value = "output.ts")]
     output_file: String,
@@ -84,7 +80,6 @@ async fn main() {
     let recv_raw_stream = args.recv_raw_stream;
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
-    let smpte2110 = args.smpte2110;
     let output_file: String = args.output_file;
 
     if silent {
