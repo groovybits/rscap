@@ -878,7 +878,7 @@ fn determine_stream_type(pid: u16) -> String {
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "1.0",
+    version = "1.1",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {

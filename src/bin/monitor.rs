@@ -23,7 +23,7 @@ use tokio;
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "1.0",
+    version = "1.1",
     about = "RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe."
 )]
 struct Args {
