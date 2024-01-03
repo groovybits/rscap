@@ -115,13 +115,11 @@ async fn main() {
     while let Ok(msg) = zmq_sub.recv_bytes(0) {
         if expecting_metadata {
             let json_header = String::from_utf8(msg.clone()).unwrap();
-            if debug_on {
-                info!(
-                    "#{} Received JSON header: {}",
-                    mpeg_packets + 1,
-                    json_header
-                );
-            }
+            info!(
+                "#{} Received JSON header: {}",
+                mpeg_packets + 1,
+                json_header
+            );
             expecting_metadata = false; // Next message will be data
         } else {
             total_bytes += msg.len();
@@ -134,7 +132,7 @@ async fn main() {
                     msg.len(),
                     total_bytes
                 );
-            } else if !silent {
+            } else if !no_progress {
                 print!(".");
                 std::io::stdout().flush().unwrap();
             }
@@ -150,11 +148,6 @@ async fn main() {
             if recv_json_header {
                 expecting_metadata = true; // Expect metadata again if recv_json_header is true
             }
-        }
-
-        // print progress
-        if !no_progress {
-            print!(".");
         }
     }
 
