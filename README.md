@@ -49,40 +49,18 @@ Options:
 
 ![rscap](https://storage.googleapis.com/gaib/2/rscap/rscap.png)
 
-## This consists of two programs, a probe and a client.
+## This consists of two programs, a probe and a monitor client.
 
 - The probe takes MpegTS via Packet Capture and publishes
 batches of the MpegTS 188 byte packets to a ZeroMQ output.
 
-- The client reads from the ZeroMQ socket and writes out a
+- The monitor client reads from the ZeroMQ socket and writes out a
 a file containing the MpegTS stream matching the one
 captured by the probe.
 
 ## Configuration with environment variables using [.env](.env.example)
 
-```text
-## rsCap Configuration
-RUST_LOG="info" # debug, info, error
-
-DEBUG=true
-#SILENT=true
-SEND_JSON_HEADER=true # Send metadata in a json header
-USE_WIRELESS=true # Allow wireless interface usage
-
-# ZeroMQ output host and port to TCP Publish
-TARGET_IP="127.0.0.1"
-TARGET_PORT=5556
-
-# Pcap device to listen to, empty for autodetection
-SOURCE_DEVICE=""
-
-# Pcap filter for MpegTS multicast host and port
-SOURCE_IP="224.0.0.200"
-SOURCE_PORT=10000
-
-# Output file name for client capture from ZeroMQ output
-OUTPUT_FILE=capture.ts
-```
+Use .env and/or command line args to override the default/env variables.
 
 ## Building and executing
 
@@ -137,19 +115,16 @@ sudo RUST_LOG=info target/release/probe \
 
 ```
 
-Build and run the zmq capture client...
+Build and run the zmq capture monitor client...
 
 ```text
-# TODO: add additional cmdline args to override env args
-DEBUG=true \
-      RUST_LOG=debug \
-      DEBUG=true \
-      SILENT=false \
-      TARGET_IP="127.0.0.1" \
-      TARGET_PORT="5556" \
-      SEND_JSON_HEADER=true \
-      OUTPUT_FILE=capture.ts \
-                  target/release/client
+# Use ENV Variable RUST_LOG= for logging level and cmdline args
+RUST_LOG=info target/release/monitor \
+         --source-ip 127.0.0.1 \
+         --source-port 5556 \
+         --recv-json-header \
+         --debug
+
 ```
 
 Check the output file capture.ts (or what you set in .env or environment variables)
