@@ -1,7 +1,7 @@
 /*
- * rscap: probe - Rust Stream Capture with pcap, output to ZeroMQ
+ * rscap: probe.rs - Rust Stream Capture with pcap, output json stats to ZeroMQ
  *
- * Written in 2023 by Chris Kennedy (C) LTN Global
+ * Written in 2024 by Chris Kennedy (C) LTN Global
  *
  * License: LGPL v2.1
  *
@@ -18,13 +18,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::net::{Ipv4Addr, UdpSocket};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, Sender};
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
 
 // constant for PAT PID
 const PAT_PID: u16 = 0;
@@ -71,9 +71,9 @@ struct StreamData {
     total_bits: u64, // field for total bits
     count: u32,      // field for count
     #[serde(skip)]
-    packet: Arc<Vec<u8>>,   // The actual MPEG-TS packet data
-    packet_start: usize,   // Offset into the data
-    packet_len: usize,   // Offset into the data
+    packet: Arc<Vec<u8>>, // The actual MPEG-TS packet data
+    packet_start: usize, // Offset into the data
+    packet_len: usize, // Offset into the data
     // SMPTE 2110 fields
     rtp_timestamp: u32,
     rtp_payload_type: u8,
@@ -232,7 +232,9 @@ impl StreamData {
         let previous_continuity_counter = self.continuity_counter;
         self.continuity_counter = continuity_counter & 0x0F;
         // check if we incremented without loss
-        if self.continuity_counter != previous_continuity_counter + 1 && self.continuity_counter  != previous_continuity_counter {
+        if self.continuity_counter != previous_continuity_counter + 1
+            && self.continuity_counter != previous_continuity_counter
+        {
             // check if we wrapped around from 15 to 0
             if self.continuity_counter == 0 {
                 // check if previous value was 15
@@ -418,8 +420,14 @@ impl VideoFrame {
 }
 
 // Invoke this function for each MPEG-TS packet
-fn process_packet(stream_data_packet: &mut StreamData, errors: &mut Tr101290Errors, is_mpegts: bool, pmt_pid: u16) {
-    let packet: &[u8] = &stream_data_packet.packet[stream_data_packet.packet_start..stream_data_packet.packet_start + stream_data_packet.packet_len];
+fn process_packet(
+    stream_data_packet: &mut StreamData,
+    errors: &mut Tr101290Errors,
+    is_mpegts: bool,
+    pmt_pid: u16,
+) {
+    let packet: &[u8] = &stream_data_packet.packet[stream_data_packet.packet_start
+        ..stream_data_packet.packet_start + stream_data_packet.packet_len];
     tr101290_p1_check(packet, errors);
     tr101290_p2_check(packet, errors);
 
@@ -439,12 +447,13 @@ fn process_packet(stream_data_packet: &mut StreamData, errors: &mut Tr101290Erro
             Arc::make_mut(&mut stream_data).update_stats(packet.len(), arrival_time);
             Arc::make_mut(&mut stream_data).increment_count(1);
             if stream_data.pid != 0x1FFF && is_mpegts {
-                Arc::make_mut(&mut stream_data).set_continuity_counter(stream_data_packet.continuity_counter);
+                Arc::make_mut(&mut stream_data)
+                    .set_continuity_counter(stream_data_packet.continuity_counter);
             }
             let uptime = arrival_time - stream_data.start_time;
 
             // print out each field of structure similar to json but not wrapping into json
-            debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, uptime); 
+            debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, uptime);
 
             // write the stream_data back to the pid_map with modified values
             pid_map.insert(pid, stream_data);
@@ -517,7 +526,7 @@ fn pes_start_offset(packet: &[u8]) -> Option<usize> {
         if stream_id >= PES_HEADER_START_CODE && stream_id <= 0xEF {
             // This is a video stream
             let pes_packet_length = ((packet[4 + adaptation_field_length + 4] as usize) << 8)
-                                    | packet[4 + adaptation_field_length + 5] as usize;
+                | packet[4 + adaptation_field_length + 5] as usize;
 
             // Calculate the start of PES data
             let pes_data_start = 4 + adaptation_field_length + 6 + pes_packet_length;
@@ -564,8 +573,10 @@ fn is_idr_frame(buffer: &[u8], codec: Codec) -> bool {
 fn is_mpeg2_keyframe(buffer: &[u8]) -> bool {
     let mut i = 0;
     while i + 4 <= buffer.len() {
-        let code = ((buffer[i] as u32) << 24) | ((buffer[i + 1] as u32) << 16) |
-                   ((buffer[i + 2] as u32) << 8) | buffer[i + 3] as u32;
+        let code = ((buffer[i] as u32) << 24)
+            | ((buffer[i + 1] as u32) << 16)
+            | ((buffer[i + 2] as u32) << 8)
+            | buffer[i + 3] as u32;
 
         if code == MPEG2_GROUP_START_CODE {
             return true; // Found a GOP header, indicating a keyframe
@@ -577,14 +588,20 @@ fn is_mpeg2_keyframe(buffer: &[u8]) -> bool {
 
 fn is_h264_idr_frame(buffer: &[u8]) -> bool {
     buffer.windows(4).any(|window| {
-        window[0] == 0x00 && window[1] == 0x00 && window[2] == 0x01 && (window[3] & 0x1F) == H264_IDR_NAL
+        window[0] == 0x00
+            && window[1] == 0x00
+            && window[2] == 0x01
+            && (window[3] & 0x1F) == H264_IDR_NAL
     })
 }
 
 fn is_h265_idr_frame(buffer: &[u8]) -> bool {
     buffer.windows(4).any(|window| {
-        window[0] == 0x00 && window[1] == 0x00 && window[2] == 0x01 && 
-        ((window[3] & 0x7E) >> 1 == H265_IDR_W_RADL || (window[3] & 0x7E) >> 1 == H265_IDR_N_LP)
+        window[0] == 0x00
+            && window[1] == 0x00
+            && window[2] == 0x01
+            && ((window[3] & 0x7E) >> 1 == H265_IDR_W_RADL
+                || (window[3] & 0x7E) >> 1 == H265_IDR_N_LP)
     })
 }
 
@@ -623,7 +640,7 @@ fn parse_and_store_pat(packet: &[u8]) -> PmtInfo {
         packet: Vec::new(),
     };
     pmt_info.packet = packet.to_vec();
-    
+
     // Assuming there's only one program for simplicity, update PMT PID
     let mut pmt_pid = 0xFFFF;
     if let Some(first_entry) = pat_entries.first() {
@@ -695,7 +712,9 @@ fn parse_pmt(packet: &[u8]) -> Pmt {
 
     debug!(
         "ParsePMT: Program Number: {} PMT PID: {} starting at position {}",
-        program_number, extract_pid(packet), i
+        program_number,
+        extract_pid(packet),
+        i
     );
     while i + 5 <= packet.len() && i < 17 + section_length - 4 {
         let stream_type = packet[i];
@@ -830,7 +849,7 @@ fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8]) {
 
                     // print out each field of structure similar to json but not wrapping into json
                     debug!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
-                
+
                     // write the stream_data back to the pid_map with modified values
                     pid_map.insert(stream_pid, stream_data);
                 }
@@ -951,7 +970,7 @@ fn main() {
 // MAIN Function
 fn rscap() {
     println!("RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap.");
-   
+
     dotenv::dotenv().ok(); // read .env file
 
     let source_device_ip: &str = "0.0.0.0";
@@ -983,7 +1002,7 @@ fn rscap() {
     if args.smpte2110 {
         packet_size = 1500; // set packet size to 1500 for smpte2110
 
-        // TODO: fix so this is a limit in the args input 
+        // TODO: fix so this is a limit in the args input
         // or fix smpte2110 to work with batch size less than 7 without memory backup
         if batch_size < 7 {
             batch_size = 7;
@@ -1118,7 +1137,10 @@ fn rscap() {
         debug!("Target Device: {:?}", target_device_discovered);
         for addr in target_device_discovered.addresses.iter() {
             if let std::net::IpAddr::V4(ipv4_addr) = addr.addr {
-                info!("Found ipv4_addr {:?} on device {}", ipv4_addr, source_device);
+                info!(
+                    "Found ipv4_addr {:?} on device {}",
+                    ipv4_addr, source_device
+                );
                 interface_addr = ipv4_addr;
                 target_device_found = true;
                 target_device = target_device_discovered;
@@ -1155,17 +1177,18 @@ fn rscap() {
 
     let (ptx, prx): (Sender<Arc<Vec<u8>>>, Receiver<Arc<Vec<u8>>>) = mpsc::channel();
 
-
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
 
     // Spawn a new thread for packet capture
     let capture_thread = thread::spawn(move || {
-        let mut cap = Capture::from_device(target_device).unwrap()
+        let mut cap = Capture::from_device(target_device)
+            .unwrap()
             .promisc(promiscuous)
             .timeout(read_time_out)
             .snaplen(read_size)
-            .open().unwrap();
+            .open()
+            .unwrap();
 
         cap.filter(&source_host_and_port, true).unwrap();
 
@@ -1173,7 +1196,7 @@ fn rscap() {
             match cap.next_packet() {
                 Ok(packet) => {
                     let packet_data = Arc::new(packet.data.to_owned()); // Wrap in Arc
-                    // Send the packet data directly without copying
+                                                                        // Send the packet data directly without copying
                     ptx.send(packet_data).unwrap();
                 }
                 Err(e) => {
@@ -1191,9 +1214,11 @@ fn rscap() {
             }
             if debug_on {
                 let stats = cap.stats().unwrap();
-                println!("Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
-                         stats.received, stats.dropped, stats.if_dropped);
-            }            
+                println!(
+                    "Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
+                    stats.received, stats.dropped, stats.if_dropped
+                );
+            }
         }
 
         let stats = cap.stats().unwrap();
@@ -1215,7 +1240,8 @@ fn rscap() {
 
         for mut batch in rx {
             for stream_data in batch.iter() {
-                let packet_slice = &stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
+                let packet_slice = &stream_data.packet
+                    [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
 
                 // Serialize metadata only if necessary
                 let metadata_msg = if send_json_header {
@@ -1286,7 +1312,7 @@ fn rscap() {
         match prx.recv() {
             Ok(packet) => {
                 packets_captured += 1;
-                
+
                 if !no_progress {
                     print!(".");
                     // flush stdout (wastes resources) TODO: output in ncurses or something w/less output
@@ -1312,14 +1338,19 @@ fn rscap() {
                 // Process each chunk
                 for mut stream_data in chunks {
                     if debug_on {
-                        hexdump(&stream_data.packet, stream_data.packet_start, stream_data.packet_len);
+                        hexdump(
+                            &stream_data.packet,
+                            stream_data.packet_start,
+                            stream_data.packet_len,
+                        );
                     }
 
                     // Extract the necessary slice for PID extraction and parsing
-                    let packet_chunk = &stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
+                    let packet_chunk = &stream_data.packet[stream_data.packet_start
+                        ..stream_data.packet_start + stream_data.packet_len];
 
                     let mut pid: u16 = 0xFFFF;
-                    
+
                     if is_mpegts {
                         pid = extract_pid(&packet_chunk);
                         // Handle PAT and PMT packets
@@ -1331,22 +1362,31 @@ fn rscap() {
                             _ => {
                                 // Check if this is a PMT packet
                                 if pid == pmt_info.pid {
-                                    debug!(
-                                        "ProcessPacket: PMT packet detected with PID {}",
-                                        pid
-                                    );
+                                    debug!("ProcessPacket: PMT packet detected with PID {}", pid);
                                     // Update PID_MAP with new stream types
                                     update_pid_map(&packet_chunk, &pmt_info.packet);
                                     // Identify the video PID (if not already identified)
-                                    if let Some((new_pid, new_codec)) = identify_video_pid(&packet_chunk) {
+                                    if let Some((new_pid, new_codec)) =
+                                        identify_video_pid(&packet_chunk)
+                                    {
                                         if video_pid.map_or(true, |vp| vp != new_pid) {
                                             video_pid = Some(new_pid);
-                                            info!("STATUS::VIDEO_PID:CHANGE: to {}/{} from {}/{}", new_pid, new_codec.clone(), video_pid.unwrap(), video_codec.unwrap());
+                                            info!(
+                                                "STATUS::VIDEO_PID:CHANGE: to {}/{} from {}/{}",
+                                                new_pid,
+                                                new_codec.clone(),
+                                                video_pid.unwrap(),
+                                                video_codec.unwrap()
+                                            );
                                             video_codec = Some(new_codec.clone());
                                             // Reset video frame as the video stream has changed
                                             current_video_frame.clear();
                                         } else if video_codec != Some(new_codec.clone()) {
-                                            info!("STATUS::VIDEO_CODEC:CHANGE: to {} from {}", new_codec, video_codec.unwrap());
+                                            info!(
+                                                "STATUS::VIDEO_CODEC:CHANGE: to {} from {}",
+                                                new_codec,
+                                                video_codec.unwrap()
+                                            );
                                             video_codec = Some(new_codec);
                                             // Reset video frame as the codec has changed
                                             current_video_frame.clear();
@@ -1358,20 +1398,31 @@ fn rscap() {
                                 if video_pid != Some(0xFFFF) {
                                     if let Some(vid_pid) = video_pid {
                                         if pid == vid_pid {
-                                            if let Some(pes_payload_offset) = pes_start_offset(&stream_data.packet) {
-                                                let pes_payload = &stream_data.packet[pes_payload_offset..];
+                                            if let Some(pes_payload_offset) =
+                                                pes_start_offset(&stream_data.packet)
+                                            {
+                                                let pes_payload =
+                                                    &stream_data.packet[pes_payload_offset..];
 
-                                                 // Ensure video_codec is not None before calling is_idr_frame
+                                                // Ensure video_codec is not None before calling is_idr_frame
                                                 if let Some(codec) = video_codec.as_ref() {
                                                     if is_idr_frame(pes_payload, codec.clone()) {
                                                         // Send current video frame if it's complete
-                                                        if is_frame_start && !current_video_frame.is_empty() {
-                                                            info!("STATUS::FRAME:COMPLETE: queue {}", current_video_frame.len());
+                                                        if is_frame_start
+                                                            && !current_video_frame.is_empty()
+                                                        {
+                                                            info!(
+                                                                "STATUS::FRAME:COMPLETE: queue {}",
+                                                                current_video_frame.len()
+                                                            );
                                                             // TODO: Display video frame information and extract SEI, Captions, Images, etc.
                                                             current_video_frame.clear();
                                                         }
                                                         is_frame_start = true;
-                                                        info!("STATUS::FRAME:START: size {}", current_video_frame.len());
+                                                        info!(
+                                                            "STATUS::FRAME:START: size {}",
+                                                            current_video_frame.len()
+                                                        );
                                                     }
                                                 }
                                             }
@@ -1387,18 +1438,23 @@ fn rscap() {
                     }
 
                     // Check for TR 101 290 errors
-                    process_packet(&mut stream_data, &mut tr101290_errors, is_mpegts, pmt_info.pid);
+                    process_packet(
+                        &mut stream_data,
+                        &mut tr101290_errors,
+                        is_mpegts,
+                        pmt_info.pid,
+                    );
 
                     // Print TR 101 290 errors
                     // print out each field of structure similar to json but not wrapping into json
-                    
+
                     // TODO: print only after an error occurs or on a time interval
                     //debug!("STATUS::TR101290:ERRORS: {}", tr101290_errors);
-                    
+
                     if pid == 0x1FFF {
                         // clear the Arc so it can be reused
                         stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
-                        // Skip null packets
+                                                                   // Skip null packets
                         continue;
                     }
                     batch.push(stream_data);
@@ -1440,7 +1496,6 @@ fn rscap() {
     // Wait for the zmq_thread to finish
     zmq_thread.join().unwrap();
     capture_thread.join().unwrap();
-
 }
 
 // Check if the packet is MPEG-TS or SMPTE 2110

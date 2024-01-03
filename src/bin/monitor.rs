@@ -1,11 +1,12 @@
 /*
- * client.rs
+ * monitor.rs
  *
  * This is a part of a simple ZeroMQ-based MPEG-TS capture and playback system.
- * This file contains the client-side code that receives MPEG-TS chunks from the
- * server and writes them to a file.
+ * This file contains the client-side code that receives json metadata, or binary
+ * structured packets with potentially raw MPEG-TS chunks from the rscap
+ * probe and writes them to a file.
  *
- * Author: Chris Kennedy (C) 2023 LTN Global
+ * Author: Chris Kennedy (C) 2024 LTN Global
  *
  * License: LGPL v2.1
  *
@@ -18,7 +19,6 @@ use std::env;
 use std::fs::File;
 use std::io::Write;
 use tokio;
-
 
 #[derive(Parser, Debug)]
 #[clap(
@@ -154,5 +154,5 @@ async fn main() {
         }
     }
 
-    info!("Finished rscap client");
+    info!("Finished rscap monitor");
 }
