@@ -1015,12 +1015,9 @@ struct Args {
     show_tr101290: bool,
 }
 
-fn main() {
-    rscap();
-}
-
 // MAIN Function
-fn rscap() {
+#[tokio::main]
+async fn main() {
     println!("RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap.");
 
     dotenv::dotenv().ok(); // read .env file
@@ -1240,6 +1237,8 @@ fn rscap() {
             .promisc(promiscuous)
             .timeout(read_time_out)
             .snaplen(read_size)
+            .immediate_mode(false)
+            .buffer_size(10_000_000)
             .open()
             .unwrap();
 
