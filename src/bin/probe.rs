@@ -1047,7 +1047,7 @@ async fn main() {
     let use_wireless = args.use_wireless;
     let send_json_header = args.send_json_header;
     let send_raw_stream = args.send_raw_stream;
-    let mut packet_count = args.packet_count;
+    let packet_count = args.packet_count;
     let no_progress = args.no_progress;
     let no_zmq = args.no_zmq;
     let promiscuous = args.promiscuous;
@@ -1056,7 +1056,6 @@ async fn main() {
 
     if args.smpte2110 {
         packet_size = 1250; // set packet size to 1250 for smpte2110
-        packet_count = 1; // set packet count to 1 for smpte2110
         buffer_size = 10 * 1250 * 1024 * 1024; // set buffer size to 10GB for smpte2110
     }
 
