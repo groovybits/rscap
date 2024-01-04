@@ -104,6 +104,62 @@ Check the output file capture.ts (or what you set in .env or environment variabl
 ffmpeg -i capture.ts
 ```
 
+## Probe Command Line Options (as of 01/04/2024)
+
+```text
+Usage: probe [OPTIONS]
+
+Options:
+      --batch-size <BATCH_SIZE>
+          Sets the batch size [env: BATCH_SIZE=] [default: 7]
+      --payload-offset <PAYLOAD_OFFSET>
+          Sets the payload offset [env: PAYLOAD_OFFSET=] [default: 42]
+      --packet-size <PACKET_SIZE>
+          Sets the packet size [env: PACKET_SIZE=] [default: 188]
+      --read-time-out <READ_TIME_OUT>
+          Sets the read timeout [env: READ_TIME_OUT=] [default: 60000]
+      --target-port <TARGET_PORT>
+          Sets the target port [env: TARGET_PORT=5556] [default: 5556]
+      --target-ip <TARGET_IP>
+          Sets the target IP [env: TARGET_IP=127.0.0.1] [default: 127.0.0.1]
+      --source-device <SOURCE_DEVICE>
+          Sets the source device [env: SOURCE_DEVICE=en7] [default: ]
+      --source-ip <SOURCE_IP>
+          Sets the source IP [env: SOURCE_IP=224.0.0.200] [default: 224.0.0.200]
+      --source-protocol <SOURCE_PROTOCOL>
+          Sets the source protocol [env: SOURCE_PROTOCOL=] [default: udp]
+      --source-port <SOURCE_PORT>
+          Sets the source port [env: SOURCE_PORT=10000] [default: 10000]
+      --debug-on
+          Sets the debug mode [env: DEBUG=]
+      --silent
+          Sets the silent mode [env: SILENT=]
+      --use-wireless
+          Sets if wireless is used [env: USE_WIRELESS=]
+      --send-json-header
+          Sets if JSON header should be sent [env: SEND_JSON_HEADER=false]
+      --send-raw-stream
+          Sets if Raw Stream should be sent [env: SEND_RAW_STREAM=]
+      --packet-count <PACKET_COUNT>
+          number of packets to capture [env: PACKET_COUNT=] [default: 0]
+      --no-progress
+          Turn off progress output dots [env: NO_PROGRESS=]
+      --no-zmq
+          Turn off ZeroMQ send [env: NO_ZMQ=]
+      --smpte2110
+          Force smpte2110 mode [env: SMPT2110=]
+      --promiscuous
+          Use promiscuous mode [env: PROMISCUOUS=]
+      --show-tr101290
+          Show the TR101290 p1, p2 and p3 errors if any [env: SHOW_TR101290=]
+      --buffer-size <BUFFER_SIZE>
+          Sets the pcap buffer size [env: BUFFER_SIZE=] [default: 2847932416]
+  -h, --help
+          Print help
+  -V, --version
+          Print version
+```
+
 ## Profiling with Intel Vtune (Linux/Windows)
 
 ```text
@@ -171,5 +227,5 @@ vtune -report summary -result-dir results -format html -report-output results/re
 - SMPTE2110 data stream and audio stream support (need to have more than one pcap ip/port and distinguish them apart).
 - Meme like overlay of current frame and stream metrics on the thumbnail images with precise timing and frame information like a scope. (phone/pad usage)
 
-### Chris Kennedy (C) 2023 LGPL
+### Chris Kennedy (C) 2024 LGPL
 
