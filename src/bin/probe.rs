@@ -7,13 +7,12 @@
  *
  */
 
-use rtp_rs as rtp;
-use zmq;
 use clap::Parser;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use pcap::Capture;
 use rtp::RtpReader;
+use rtp_rs as rtp;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -25,13 +24,15 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
-use capnp;
-use capnp::message::{Builder, HeapAllocator};
+use zmq;
+//use capnp;
+/*use capnp::message::{Builder, HeapAllocator};*/
 // Include the generated paths for the Cap'n Proto schema
-include!("stream_data_capnp.rs");
+include!("../stream_data_capnp.rs");
 
 // constant for PAT PID
 const PAT_PID: u16 = 0;
+const TS_PACKET_SIZE: usize = 188;
 
 // global variable to store the MpegTS PID Map (initially empty)
 lazy_static! {
@@ -50,6 +51,24 @@ struct PmtEntry {
 
 struct Pmt {
     entries: Vec<PmtEntry>,
+}
+
+#[derive(Clone, PartialEq)]
+enum Codec {
+    NONE,
+    MPEG2,
+    H264,
+    H265,
+}
+impl fmt::Display for Codec {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Codec::NONE => write!(f, "NONE"),
+            Codec::MPEG2 => write!(f, "MPEG2"),
+            Codec::H264 => write!(f, "H264"),
+            Codec::H265 => write!(f, "H265"),
+        }
+    }
 }
 
 // StreamData struct
@@ -87,6 +106,7 @@ struct StreamData {
     rtp_line_length: u16,
     rtp_field_id: u8,
     rtp_line_continuation: u8,
+    rtp_extended_sequence_number: u16,
 }
 
 impl Clone for StreamData {
@@ -122,6 +142,7 @@ impl Clone for StreamData {
             rtp_line_length: self.rtp_line_length,
             rtp_field_id: self.rtp_field_id,
             rtp_line_continuation: self.rtp_line_continuation,
+            rtp_extended_sequence_number: self.rtp_extended_sequence_number,
         }
     }
 }
@@ -138,15 +159,6 @@ impl StreamData {
         timestamp: u64,
         continuity_counter: u8,
     ) -> Self {
-        let bitrate = 0;
-        let bitrate_max = 0;
-        let bitrate_min = 0;
-        let bitrate_avg = 0;
-        let iat = 0;
-        let iat_max = 0;
-        let iat_min = 0;
-        let iat_avg = 0;
-        let error_count = 0;
         let last_arrival_time = current_unix_timestamp_ms().unwrap_or(0);
         StreamData {
             pid,
@@ -155,15 +167,15 @@ impl StreamData {
             stream_type,
             continuity_counter,
             timestamp,
-            bitrate,
-            bitrate_max,
-            bitrate_min,
-            bitrate_avg,
-            iat,
-            iat_max,
-            iat_min,
-            iat_avg,
-            error_count,
+            bitrate: 0,
+            bitrate_max: 0,
+            bitrate_min: 0,
+            bitrate_avg: 0,
+            iat: 0,
+            iat_max: 0,
+            iat_min: 0,
+            iat_avg: 0,
+            error_count: 0,
             last_arrival_time,
             start_time,    // Initialize start time
             total_bits: 0, // Initialize total bits
@@ -180,8 +192,10 @@ impl StreamData {
             rtp_line_length: 0,
             rtp_field_id: 0,
             rtp_line_continuation: 0,
+            rtp_extended_sequence_number: 0,
         }
     }
+    /*
     // give packet reference to the packet data and the packet length
     fn set_packet(&mut self, packet: Arc<Vec<u8>>, packet_start: usize, packet_len: usize) {
         self.packet = packet;
@@ -191,7 +205,7 @@ impl StreamData {
     // return packet reference to the packet data and the packet length as a tuple
     fn get_packet(&self) -> (Arc<Vec<u8>>, usize, usize) {
         (Arc::clone(&self.packet), self.packet_start, self.packet_len)
-    }
+    }*/
     // set RTP fields
     fn set_rtp_fields(
         &mut self,
@@ -203,6 +217,7 @@ impl StreamData {
         rtp_line_length: u16,
         rtp_field_id: u8,
         rtp_line_continuation: u8,
+        rtp_extended_sequence_number: u16,
     ) {
         self.rtp_timestamp = rtp_timestamp;
         self.rtp_payload_type = rtp_payload_type;
@@ -212,19 +227,26 @@ impl StreamData {
         self.rtp_line_length = rtp_line_length;
         self.rtp_field_id = rtp_field_id;
         self.rtp_line_continuation = rtp_line_continuation;
+        self.rtp_extended_sequence_number = rtp_extended_sequence_number;
     }
+    /*
     fn set_pmt_pid(&mut self, pmt_pid: u16) {
         self.pmt_pid = pmt_pid;
     }
+    */
+    /*
     fn update_program_number(&mut self, program_number: u16) {
         self.program_number = program_number;
     }
+    */
     fn update_stream_type(&mut self, stream_type: String) {
         self.stream_type = stream_type;
     }
+    /*
     fn update_timestamp(&mut self, timestamp: u64) {
         self.timestamp = timestamp;
     }
+    */
     fn increment_error_count(&mut self, error_count: u32) {
         self.error_count += error_count;
     }
@@ -405,7 +427,7 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
     let mut message = Builder::new_default();
     {
         let mut stream_data_msg = message.init_root::<stream_data_capnp::stream_data::Builder>();
-        
+
         stream_data_msg.set_pid(stream_data.pid);
         stream_data_msg.set_pmt_pid(stream_data.pmt_pid);
         stream_data_msg.set_program_number(stream_data.program_number);
@@ -434,6 +456,8 @@ fn capnp_to_stream_data(reader: stream_data_capnp::stream_data::Reader) -> capnp
 }
 */
 
+/*
+
 // Define a struct to hold information about the current video frame
 struct VideoFrame {
     packets: Vec<StreamData>,
@@ -457,6 +481,7 @@ impl VideoFrame {
         self.is_complete = false;
     }
 }
+*/
 
 // Invoke this function for each MPEG-TS packet
 fn process_packet(
@@ -532,7 +557,7 @@ fn current_unix_timestamp_ms() -> Result<u64, &'static str> {
         .map_err(|_| "System time is before the UNIX epoch")
 }
 
-const TS_PACKET_SIZE: usize = 188;
+/*
 const PES_START_CODE: [u8; 3] = [0x00, 0x00, 0x01];
 
 // Returns the start offset of the PES payload if the packet is the start of a PES packet, else None
@@ -590,25 +615,6 @@ const H264_IDR_NAL: u8 = 5;
 const H265_IDR_W_RADL: u8 = 19;
 const H265_IDR_N_LP: u8 = 20;
 
-#[derive(Clone, PartialEq)]
-enum Codec {
-    NONE,
-    MPEG2,
-    H264,
-    H265,
-}
-
-impl fmt::Display for Codec {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Codec::NONE => write!(f, "NONE"),
-            Codec::MPEG2 => write!(f, "MPEG2"),
-            Codec::H264 => write!(f, "H264"),
-            Codec::H265 => write!(f, "H265"),
-        }
-    }
-}
-
 fn is_idr_frame(buffer: &[u8], codec: Codec) -> bool {
     match codec {
         Codec::NONE => false,
@@ -652,25 +658,20 @@ fn is_h265_idr_frame(buffer: &[u8]) -> bool {
                 || (window[3] & 0x7E) >> 1 == H265_IDR_N_LP)
     })
 }
+*/
 
-// Extracts the PID from the MPEG-TS packet header
-fn get_pid(packet: &[u8]) -> Option<u16> {
+// Implement a function to extract PID from a packet
+fn extract_pid(packet: &[u8]) -> u16 {
     if packet.len() < TS_PACKET_SIZE {
-        return None; // Packet size is incorrect
+        return 0; // Packet size is incorrect
     }
 
     let transport_error = (packet[1] & 0x80) != 0;
     if transport_error {
-        return None; // Packet has a transport error
+        return 0xFFFF; // Packet has a transport error
     }
 
-    Some(((packet[1] as u16 & 0x1F) << 8) | packet[2] as u16)
-}
-
-// Implement a function to extract PID from a packet
-fn extract_pid(packet: &[u8]) -> u16 {
     // Extract PID from packet
-    // (You'll need to adjust the indices according to your packet format)
     ((packet[1] as u16 & 0x1F) << 8) | packet[2] as u16
 }
 
@@ -1341,11 +1342,13 @@ fn rscap() {
     let mut video_pid: Option<u16> = Some(0xFFFF);
     let mut video_codec: Option<Codec> = Some(Codec::NONE);
     let mut current_video_frame = Vec::<StreamData>::new();
-    let mut is_frame_start = false;
     let mut pmt_info: PmtInfo = PmtInfo {
         pid: 0xFFFF,
         packet: Vec::new(),
     };
+
+    /*let mut is_frame_start = false;*/
+    // TODO: implement frame start detection
 
     loop {
         if packet_count > 0 && packets_captured > packet_count {
@@ -1572,8 +1575,8 @@ fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
 }
 
 // ## RFC 4175 SMPTE2110 header functions ##
-const RFC_4175_EXT_SEQ_NUM_LEN: usize = 2;
-const RFC_4175_HEADER_LEN: usize = 6; // Note: extended sequence number not included
+/*const RFC_4175_EXT_SEQ_NUM_LEN: usize = 2;
+const RFC_4175_HEADER_LEN: usize = 6; // Note: extended sequence number not included*/ // TODO: implement RFC 4175 SMPTE2110 header functions
 
 fn get_extended_sequence_number(buf: &[u8]) -> u16 {
     ((buf[0] as u16) << 8) | buf[1] as u16
@@ -1637,8 +1640,8 @@ fn process_smpte2110_packet(
                 let line_continuation = get_line_continuation(rtp_packet);
 
                 // Use payload type as PID (for the purpose of this example)
-                let pid = payload_type as u16; 
-                let stream_type = payload_type.to_string(); 
+                let pid = payload_type as u16;
+                let stream_type = payload_type.to_string();
 
                 // Create new StreamData instance
                 let mut stream_data = StreamData::new(
@@ -1653,7 +1656,8 @@ fn process_smpte2110_packet(
                 );
 
                 // Update StreamData stats and RTP fields
-                stream_data.update_stats(rtp_payload_length, current_unix_timestamp_ms().unwrap_or(0));
+                stream_data
+                    .update_stats(rtp_payload_length, current_unix_timestamp_ms().unwrap_or(0));
                 stream_data.set_rtp_fields(
                     timestamp,
                     payload_type,
@@ -1663,6 +1667,7 @@ fn process_smpte2110_packet(
                     line_length,
                     field_id,
                     line_continuation,
+                    extended_sequence_number,
                 );
 
                 // Add the StreamData to the stream list

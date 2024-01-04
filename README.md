@@ -60,11 +60,11 @@ sudo make install
 Build and run the pcap stream probe...
 
 ```text
-# Build release,release-with-debug, and release  versions in target/ directories.
-./build.sh
+# Compile release,release-with-debug, and release  versions in target/ directories.
+[./compile.sh](compile.sh)
 
 # Use ENV Variable RUST_LOG= for logging level and cmdline args
-sudo RUST_LOG=info target/release/probe \
+sudo RUST_LOG=info target/release/[probe](src/bin/probe.rs) \
          --source-ip 224.0.0.1 \
          --source-port 10000 \
          --target-ip 127.0.0.1 \

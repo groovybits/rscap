@@ -14,7 +14,7 @@
 
 extern crate zmq;
 use clap::Parser;
-use log::{debug, error, info};
+use log::{/*debug, */ error, info};
 use std::fs::File;
 use std::io::Write;
 use tokio;
@@ -74,7 +74,8 @@ async fn main() {
     // Use the parsed arguments directly
     let source_port = args.source_port;
     let source_ip = args.source_ip;
-    let debug_on = args.debug_on;
+    /*let debug_on = args.debug_on;*/
+    // TODO: implement frame hex dumps, move from probe and test capture with them.
     let silent = args.silent;
     let recv_json_header = args.recv_json_header;
     let recv_raw_stream = args.recv_raw_stream;
@@ -109,7 +110,7 @@ async fn main() {
 
     while let Ok(msg) = zmq_sub.recv_bytes(0) {
         let more = zmq_sub.get_rcvmore().unwrap();
-    
+
         if expecting_metadata {
             // Process JSON header if expecting metadata
             if recv_json_header {
@@ -120,19 +121,19 @@ async fn main() {
                     json_header
                 );
             }
-    
+
             // If not expecting more parts or not receiving raw data, continue to next message
             if !more || !recv_raw_stream {
                 expecting_metadata = recv_json_header; // Reset for next message if applicable
                 continue;
             }
-    
+
             expecting_metadata = false; // Next message will be raw data
         } else {
             // Process raw data packet
             total_bytes += msg.len();
             mpeg_packets += 1;
-    
+
             info!(
                 "Monitor: #{} Received {}/{} bytes",
                 mpeg_packets,
@@ -144,15 +145,15 @@ async fn main() {
                 print!(".");
                 std::io::stdout().flush().unwrap();
             }
-    
+
             // check for packet count
             if packet_count > 0 && mpeg_packets >= packet_count {
                 break;
             }
-    
+
             // write to file, appending if not first chunk
             file.write_all(&msg).unwrap();
-    
+
             expecting_metadata = recv_json_header; // Reset for next message if applicable
         }
     }
