@@ -177,6 +177,28 @@ Options:
           Print version
 ```
 
+## Monitor Command Line Options (as of 01/04/2024)
+
+```text
+Usage: monitor [OPTIONS]
+
+Options:
+      --source-port <SOURCE_PORT>    Sets the target port [env: TARGET_PORT=5556] [default: 5556]
+      --source-ip <SOURCE_IP>        Sets the target IP [env: TARGET_IP=127.0.0.1] [default: 127.0.0.1]
+      --debug-on                     Sets the debug mode [env: DEBUG=]
+      --silent                       Sets the silent mode [env: SILENT=]
+      --recv-json-header             Sets if JSON header should be sent [env: RECV_JSON_HEADER=]
+      --recv-raw-stream              Sets if Raw Stream should be sent [env: RECV_RAW_STREAM=]
+      --packet-count <PACKET_COUNT>  number of packets to capture [env: PACKET_COUNT=] [default: 0]
+      --no-progress                  Turn off progress output dots [env: NO_PROGRESS=]
+      --output-file <OUTPUT_FILE>    Output Filename [env: OUTPUT_FILE=capture.ts] [default: output.ts]
+      --kafka-broker <KAFKA_BROKER>  Kafka Broker [env: KAFKA_BROKER=] [default: localhost:9092]
+      --kafka-topic <KAFKA_TOPIC>    Kafka Topic [env: KAFKA_TOPIC=] [default: rscap]
+      --send-to-kafka                Send to Kafka if true [env: SEND_TO_KAFKA=]
+  -h, --help                         Print help
+  -V, --version                      Print version
+```
+
 ## Profiling with Intel Vtune (Linux/Windows)
 
 ```text
