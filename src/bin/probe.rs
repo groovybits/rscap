@@ -7,8 +7,8 @@
  *
  */
 
-extern crate rtp_rs as rtp;
-extern crate zmq;
+use rtp_rs as rtp;
+use zmq;
 use clap::Parser;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
@@ -25,6 +25,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
+use capnp;
+use capnp::message::{Builder, HeapAllocator};
 
 // constant for PAT PID
 const PAT_PID: u16 = 0;
@@ -394,6 +396,41 @@ fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
     }
     // TODO: ... other checks, updating the respective counters ...
 }
+
+/*
+// Function to convert StreamData to a Cap'n Proto message
+fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapAllocator>> {
+    let mut message = Builder::new_default();
+    {
+        let mut stream_data_msg = message.init_root::<stream_data_capnp::stream_data::Builder>();
+        
+        stream_data_msg.set_pid(stream_data.pid);
+        stream_data_msg.set_pmt_pid(stream_data.pmt_pid);
+        stream_data_msg.set_program_number(stream_data.program_number);
+        stream_data_msg.set_stream_type(&stream_data.stream_type);
+        // ... Continue setting other fields
+    }
+
+    Ok(message)
+}
+
+// Function to convert a Cap'n Proto message back to StreamData
+fn capnp_to_stream_data(reader: stream_data_capnp::stream_data::Reader) -> capnp::Result<StreamData> {
+    let stream_data = StreamData {
+        pid: reader.get_pid()?,
+        pmt_pid: reader.get_pmt_pid()?,
+        program_number: reader.get_program_number()?,
+        stream_type: reader.get_stream_type()?.to_string(),
+        // ... Continue setting other fields
+        packet: Arc::new(Vec::new()), // Initialize packet as empty
+        packet_start: 0,
+        packet_len: 0,
+        // ... Initialize other fields as required
+    };
+
+    Ok(stream_data)
+}
+*/
 
 // Define a struct to hold information about the current video frame
 struct VideoFrame {
@@ -973,6 +1010,10 @@ struct Args {
     /// Show the TR101290 p1, p2 and p3 errors if any
     #[clap(long, env = "SHOW_TR101290", default_value_t = false)]
     show_tr101290: bool,
+}
+
+mod stream_data_capnp {
+    include!(concat!(env!("OUT_DIR"), "/schema/stream_data_capnp.rs"));
 }
 
 fn main() {

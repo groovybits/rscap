@@ -31,3 +31,8 @@ dotenv = "0.15"
 lazy_static = "1.4.0"
 rtp-rs = "0.6.0"
 clap = { version = "4.4.11", features = ["derive", "env"] }
+capnp = "0.18.0"
+
+[build-dependencies]
+capnpc = "0.18.0"
+
