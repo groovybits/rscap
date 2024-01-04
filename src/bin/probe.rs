@@ -27,6 +27,8 @@ use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use capnp;
 use capnp::message::{Builder, HeapAllocator};
+// Include the generated paths for the Cap'n Proto schema
+include!("stream_data_capnp.rs");
 
 // constant for PAT PID
 const PAT_PID: u16 = 0;
@@ -1010,10 +1012,6 @@ struct Args {
     /// Show the TR101290 p1, p2 and p3 errors if any
     #[clap(long, env = "SHOW_TR101290", default_value_t = false)]
     show_tr101290: bool,
-}
-
-mod stream_data_capnp {
-    include!(concat!(env!("OUT_DIR"), "/schema/stream_data_capnp.rs"));
 }
 
 fn main() {
