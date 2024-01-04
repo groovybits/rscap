@@ -110,7 +110,8 @@ ffmpeg -i capture.ts
 
 ## Kafka output of json metrics from the monitor process after processing and extraction
 
-- [Kafka Schema](schema/kafka.json)
+- [Kafka Schema](schema/kafka.json) That is sent into Kafka
+- [Kafka / Prometheus / Grafana / JS Dashboard UI](probe_ui) Allowing remove viewing of dashboards in Grafana/Prometheus/JS (WIP: not conforming schemawise yet)
 
 ```text
 target/release/monitor \
