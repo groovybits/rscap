@@ -1015,7 +1015,7 @@ struct Args {
     show_tr101290: bool,
 
     /// Sets the pcap buffer size
-    #[clap(long, env = "BUFFER_SIZE", default_value_t = 2 * 1358 * 1024 * 1024)]
+    #[clap(long, env = "BUFFER_SIZE", default_value_t = 1 * 1358 * 1000)]
     buffer_size: usize,
 }
 
@@ -1056,7 +1056,7 @@ async fn main() {
 
     if args.smpte2110 {
         packet_size = 1250; // set packet size to 1250 for smpte2110
-        buffer_size = 10 * 1250 * 1024 * 1024; // set buffer size to 10GB for smpte2110
+        buffer_size = 10 * 1250 * 1000; // set buffer size to 10GB for smpte2110
     }
 
     if silent {
