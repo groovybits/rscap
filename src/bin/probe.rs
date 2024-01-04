@@ -1237,8 +1237,8 @@ async fn main() {
             .promisc(promiscuous)
             .timeout(read_time_out)
             .snaplen(read_size)
-            .immediate_mode(false)
-            .buffer_size(10_000_000)
+            .immediate_mode(true)
+            .buffer_size(50_000_000)
             .open()
             .unwrap();
 
