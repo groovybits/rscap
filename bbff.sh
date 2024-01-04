@@ -34,6 +34,7 @@ packet_count=${packet_count:-1000000}
 # Loop until buffer size is greater than 0
 while [ $buffer_size -gt 0 ]
 do
+    echo "---"
     echo "$buffer_size bytes pcap buffer..."
     # Run the probe command with the current buffer size
     output=$(sudo RUST_LOG=info target/release/probe --no-progress --packet-count $packet_count --packet-size $packet_size --buffer-size $buffer_size)
