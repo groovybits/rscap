@@ -1013,14 +1013,15 @@ struct Args {
     /// Show the TR101290 p1, p2 and p3 errors if any
     #[clap(long, env = "SHOW_TR101290", default_value_t = false)]
     show_tr101290: bool,
-}
 
-fn main() {
-    rscap();
+    /// Sets the pcap buffer size
+    #[clap(long, env = "BUFFER_SIZE", default_value_t = 2 * 1358 * 1024 * 1024)] // 2.5GB default
+    buffer_size: usize,
 }
 
 // MAIN Function
-fn rscap() {
+#[tokio::main]
+async fn main() {
     println!("RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap.");
 
     dotenv::dotenv().ok(); // read .env file
@@ -1030,7 +1031,7 @@ fn rscap() {
     let args = Args::parse();
 
     // Use the parsed arguments directly
-    let mut batch_size = args.batch_size;
+    let batch_size = args.batch_size;
     let payload_offset = args.payload_offset;
     let mut packet_size = args.packet_size;
     let read_time_out = args.read_time_out;
@@ -1051,15 +1052,11 @@ fn rscap() {
     let no_zmq = args.no_zmq;
     let promiscuous = args.promiscuous;
     let show_tr101290 = args.show_tr101290;
+    let mut buffer_size = args.buffer_size as i32;
 
     if args.smpte2110 {
-        packet_size = 1500; // set packet size to 1500 for smpte2110
-
-        // TODO: fix so this is a limit in the args input
-        // or fix smpte2110 to work with batch size less than 7 without memory backup
-        if batch_size < 7 {
-            batch_size = 7;
-        }
+        packet_size = 1250; // set packet size to 1250 for smpte2110
+        buffer_size = 10 * 1250 * 1024 * 1024; // set buffer size to 10GB for smpte2110
     }
 
     if silent {
@@ -1240,6 +1237,8 @@ fn rscap() {
             .promisc(promiscuous)
             .timeout(read_time_out)
             .snaplen(read_size)
+            .immediate_mode(false)
+            .buffer_size(buffer_size) // Huge buffer for high speed capture
             .open()
             .unwrap();
 

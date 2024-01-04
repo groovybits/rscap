@@ -14,10 +14,54 @@
 
 extern crate zmq;
 use clap::Parser;
-use log::{/*debug, */ error, info};
+use log::{debug, error, info};
 use std::fs::File;
 use std::io::Write;
 use tokio;
+use std::time::Duration;
+use kafka::error::Error as KafkaError;
+use kafka::producer::{Producer, Record, RequiredAcks};
+
+fn produce_message<'a, 'b>(
+    data: &'a [u8],
+    topic: &'b str,
+    brokers: Vec<String>,
+) -> Result<(), KafkaError> {
+    println!("About to publish a Kafka message at {:?} to: {}", brokers, topic);
+
+    // ~ create a producer. this is a relatively costly operation, so
+    // you'll do this typically once in your application and re-use
+    // the instance many times.
+    let mut producer = Producer::from_hosts(brokers)
+        // ~ give the brokers one second time to ack the message
+        .with_ack_timeout(Duration::from_secs(1))
+        // ~ require only one broker to ack the message
+        .with_required_acks(RequiredAcks::One)
+        // ~ build the producer with the above settings
+        .create()?;
+
+    // ~ now send a single message.  this is a synchronous/blocking
+    // operation.
+
+    // ~ we're sending 'data' as a 'value'. there will be no key
+    // associated with the sent message.
+
+    // ~ we leave the partition "unspecified" - this is a negative
+    // partition - which causes the producer to find out one on its
+    // own using its underlying partitioner.
+    producer.send(&Record {
+        topic,
+        partition: -1,
+        key: (),
+        value: data,
+    })?;
+
+    // ~ we can achieve exactly the same as above in a shorter way with
+    // the following call
+    //producer.send(&Record::from_value(topic, data))?;
+
+    Ok(())
+}
 
 #[derive(Parser, Debug)]
 #[clap(
@@ -61,6 +105,18 @@ struct Args {
     /// Output Filename
     #[clap(long, env = "OUTPUT_FILE", default_value = "output.ts")]
     output_file: String,
+
+    /// Kafka Broker
+    #[clap(long, env = "KAFKA_BROKER", default_value = "localhost:9092")]
+    kafka_broker: String,
+
+    /// Kafka Topic
+    #[clap(long, env = "KAFKA_TOPIC", default_value = "rscap")]
+    kafka_topic: String,
+
+    /// Send to Kafka if true
+    #[clap(long, env = "SEND_TO_KAFKA", default_value_t = false)]
+    send_to_kafka: bool,
 }
 
 #[tokio::main]
@@ -82,6 +138,9 @@ async fn main() {
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
     let output_file: String = args.output_file;
+    let kafka_broker: String = args.kafka_broker;
+    let kafka_topic: String = args.kafka_topic;
+    let send_to_kafka = args.send_to_kafka;
 
     if silent {
         // set log level to error
@@ -115,11 +174,28 @@ async fn main() {
             // Process JSON header if expecting metadata
             if recv_json_header {
                 let json_header = String::from_utf8(msg.clone()).unwrap();
-                info!(
+                debug!(
                     "Monitor: #{} Received JSON header: {}",
                     mpeg_packets + 1,
                     json_header
                 );
+
+                // Send to Kafka
+                if send_to_kafka {
+                    let brokers = vec![kafka_broker.clone()];
+                    let topic = kafka_topic.clone();
+                    let data = msg.clone();
+                    match produce_message(&data, &topic, brokers) {
+                        Ok(_) => info!("Sent message to Kafka"),
+                        Err(e) => info!("Error sending message to Kafka: {:?}", e),
+                    }
+                    debug!("Sent message to Kafka");
+                }
+
+                if !no_progress {
+                    print!("*");
+                    //std::io::stdout().flush().unwrap();
+                }
             }
 
             // If not expecting more parts or not receiving raw data, continue to next message
@@ -134,7 +210,7 @@ async fn main() {
             total_bytes += msg.len();
             mpeg_packets += 1;
 
-            info!(
+            debug!(
                 "Monitor: #{} Received {}/{} bytes",
                 mpeg_packets,
                 msg.len(),
@@ -143,7 +219,7 @@ async fn main() {
 
             if !no_progress {
                 print!(".");
-                std::io::stdout().flush().unwrap();
+                //std::io::stdout().flush().unwrap();
             }
 
             // check for packet count
