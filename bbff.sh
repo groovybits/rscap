@@ -31,13 +31,16 @@ packet_size=${packet_size:-1500}
 # check if environment overrides packet-count
 packet_count=${packet_count:-1000000}
 
+# add extra args to probe command freeform
+extra_args=${extra_args:-"--no-zmq"}
+
 # Loop until buffer size is greater than 0
 while [ $buffer_size -gt 0 ]
 do
     echo "---"
     echo "$buffer_size bytes pcap buffer..."
     # Run the probe command with the current buffer size
-    output=$(sudo RUST_LOG=info target/release/probe --no-progress --packet-count $packet_count --packet-size $packet_size --buffer-size $buffer_size)
+    output=$(sudo RUST_LOG=info target/release/probe --no-progress --packet-count $packet_count --packet-size $packet_size --buffer-size $buffer_size $extra_args)
     echo "$output"
 
     # Decrement the buffer size
