@@ -14,7 +14,7 @@
 
 extern crate zmq;
 use clap::Parser;
-use log::{/*debug, */ error, info};
+use log::{debug, error, info};
 use std::fs::File;
 use std::io::Write;
 use tokio;
@@ -174,7 +174,7 @@ async fn main() {
             // Process JSON header if expecting metadata
             if recv_json_header {
                 let json_header = String::from_utf8(msg.clone()).unwrap();
-                info!(
+                debug!(
                     "Monitor: #{} Received JSON header: {}",
                     mpeg_packets + 1,
                     json_header
@@ -189,6 +189,12 @@ async fn main() {
                         Ok(_) => info!("Sent message to Kafka"),
                         Err(e) => info!("Error sending message to Kafka: {:?}", e),
                     }
+                    debug!("Sent message to Kafka");
+                }
+
+                if !no_progress {
+                    print!("*");
+                    //std::io::stdout().flush().unwrap();
                 }
             }
 
@@ -204,7 +210,7 @@ async fn main() {
             total_bytes += msg.len();
             mpeg_packets += 1;
 
-            info!(
+            debug!(
                 "Monitor: #{} Received {}/{} bytes",
                 mpeg_packets,
                 msg.len(),
@@ -213,7 +219,7 @@ async fn main() {
 
             if !no_progress {
                 print!(".");
-                std::io::stdout().flush().unwrap();
+                //std::io::stdout().flush().unwrap();
             }
 
             // check for packet count
