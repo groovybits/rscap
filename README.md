@@ -1,5 +1,7 @@
 ## Packet Capture MpegTS/SMPTE2110 for ZeroMQ Distributed Processing
 
+[![Rust](https://github.com/groovybits/rscap/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/groovybits/rscap/actions/workflows/rust.yml)
+
 Distribute an MpegTS network stream over ZeroMQ. Capture
 the TS using pcap with filter rules for specifying
 which stream. Validate the stream for conformance
