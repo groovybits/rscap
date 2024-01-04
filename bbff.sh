@@ -4,7 +4,7 @@
 #
 
 # Initial buffer size
-buffer_size=1000000000
+buffer_size=10000000
 # Loop until buffer size is greater than 0
 while [ $buffer_size -gt 0 ]
 do
@@ -20,6 +20,6 @@ do
     # Print the current buffer size and packet loss details
     echo "Buffer Size: $buffer_size, Received: $received, Dropped: $dropped, Interface Dropped: $iface_dropped"
 
-    # Decrement the buffer size by 500000
-    buffer_size=$((buffer_size - 500000))
+    # Decrement the buffer size
+    buffer_size=$((buffer_size - 125000))
 done
