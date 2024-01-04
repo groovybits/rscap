@@ -8,6 +8,8 @@ Capture the TS/SMPTE2110 using pcap with filter rules for specifying which strea
 keeping the ZeroMQ output clean without any non-legal TS/SMPTE2110 packets. Store metadata extracted in zeromq json headers (Cap'n Proto soon).
 Share out multicast to many clients for distributed stream processing. Zero pcap buffer copies are the target goal.
 
+Optionally the monitor process can output final json metrics to kafka for distributed probes sending to some kafka based centralized processing system for the data collected.
+
 ![rscap](https://storage.googleapis.com/gaib/2/rscap/rscap.png)
 
 ## This consists of two programs, a probe and a monitor client.
@@ -86,6 +88,8 @@ sudo RUST_LOG=info target/release/probe \
 
 ```
 
+Output by default is the original data packet, you can add the json header with --send-json-header.
+
 Build and run the zmq capture monitor client...
 
 ```text
@@ -102,6 +106,18 @@ Check the output file capture.ts (or what you set in .env or environment variabl
 
 ```text
 ffmpeg -i capture.ts
+```
+
+## Kafka output of json metrics from the monitor process after processing and extraction
+
+- [Kafka Schema](schema/kafka.json)
+
+```text
+target/release/monitor \
+        --kafka-broker sun:9092 \
+        --kafka-topic test \
+        --send-to-kafka \
+        --recv-json-header # Must add to both probe and monitor for Kafka metrics
 ```
 
 ## Probe Command Line Options (as of 01/04/2024)
