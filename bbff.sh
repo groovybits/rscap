@@ -11,7 +11,7 @@ if [ "$1" == "-h" ]; then
     echo ""
     echo "  The probe command will be run using the following environment variables..."
     echo ""
-    echo "Usage: [buffer_size] [increment_size] [packet_size] [packet_count] $0"
+    echo "Usage: [buffer_size=N] [increment_size=N] [packet_size=N] [packet_count=N] $0"
     echo "  buffer_size:    The initial buffer size to start with. Default: 10000000"
     echo "  increment_size: The amount to decrement the buffer size by. Default: 125000"
     echo "  packet_size:    The size of the packets to send. Default: 1500"
