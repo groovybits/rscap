@@ -1015,7 +1015,7 @@ struct Args {
     show_tr101290: bool,
 
     /// Sets the pcap buffer size
-    #[clap(long, env = "BUFFER_SIZE", default_value_t = 2 * 1358 * 1024 * 1024)] // 2.5GB default
+    #[clap(long, env = "BUFFER_SIZE", default_value_t = 10 * 1358 * 1024)] // 2.5GB default
     buffer_size: usize,
 }
 
