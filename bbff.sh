@@ -31,14 +31,7 @@ do
     echo "$buffer_size bytes pcap buffer..."
     # Run the probe command with the current buffer size
     output=$(sudo RUST_LOG=info target/release/probe --no-progress --packet-count $packet_count --packet-size $packet_size --buffer-size $buffer_size)
-
-    # Extract packet loss information from the output
-    received=$(echo "$output" | grep -oP 'Received: \K\d+')
-    dropped=$(echo "$output" | grep -oP 'Dropped: \K\d+')
-    iface_dropped=$(echo "$output" | grep -oP 'Interface Dropped: \K\d+')
-
-    # Print the current buffer size and packet loss details
-    echo "Buffer Size: $buffer_size, Received: $received, Dropped: $dropped, Interface Dropped: $iface_dropped"
+    echo "$output"
 
     # Decrement the buffer size
     buffer_size=$((buffer_size - increment_size))
