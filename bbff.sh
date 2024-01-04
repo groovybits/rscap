@@ -5,11 +5,17 @@
 
 # check for -h on the command line and output help if given and exit
 if [ "$1" == "-h" ]; then
-    echo "Usage: $0 [buffer_size] [increment_size] [packet_size] [packet_count]"
-    echo "  buffer_size:    The initial buffer size to start with"
-    echo "  increment_size: The amount to decrement the buffer size by"
-    echo "  packet_size:    The size of the packets to send"
-    echo "  packet_count:   The number of packets to send"
+    echo "Best Buffer Source Find BBSF"
+    echo "  This script will run the probe command with a decreasing buffer size until the probe command fails."
+    echo "  The last successful buffer size will be the best buffer size to use for the current system."
+    echo ""
+    echo "  The probe command will be run using the following environment variables..."
+    echo ""
+    echo "Usage: [buffer_size] [increment_size] [packet_size] [packet_count] $0"
+    echo "  buffer_size:    The initial buffer size to start with. Default: 10000000"
+    echo "  increment_size: The amount to decrement the buffer size by. Default: 125000"
+    echo "  packet_size:    The size of the packets to send. Default: 1500"
+    echo "  packet_count:   The number of packets to send. Default: 1000000"
     exit 0
 fi
 
