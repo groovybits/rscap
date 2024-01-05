@@ -195,17 +195,6 @@ impl StreamData {
             rtp_extended_sequence_number: 0,
         }
     }
-    /*
-    // give packet reference to the packet data and the packet length
-    fn set_packet(&mut self, packet: Arc<Vec<u8>>, packet_start: usize, packet_len: usize) {
-        self.packet = packet;
-        self.packet_start = packet_start;
-        self.packet_len = packet_len;
-    }
-    // return packet reference to the packet data and the packet length as a tuple
-    fn get_packet(&self) -> (Arc<Vec<u8>>, usize, usize) {
-        (Arc::clone(&self.packet), self.packet_start, self.packet_len)
-    }*/
     // set RTP fields
     fn set_rtp_fields(
         &mut self,
@@ -229,24 +218,9 @@ impl StreamData {
         self.rtp_line_continuation = rtp_line_continuation;
         self.rtp_extended_sequence_number = rtp_extended_sequence_number;
     }
-    /*
-    fn set_pmt_pid(&mut self, pmt_pid: u16) {
-        self.pmt_pid = pmt_pid;
-    }
-    */
-    /*
-    fn update_program_number(&mut self, program_number: u16) {
-        self.program_number = program_number;
-    }
-    */
     fn update_stream_type(&mut self, stream_type: String) {
         self.stream_type = stream_type;
     }
-    /*
-    fn update_timestamp(&mut self, timestamp: u64) {
-        self.timestamp = timestamp;
-    }
-    */
     fn increment_error_count(&mut self, error_count: u32) {
         self.error_count += error_count;
     }
@@ -556,109 +530,6 @@ fn current_unix_timestamp_ms() -> Result<u64, &'static str> {
         .map(|d| d.as_millis() as u64)
         .map_err(|_| "System time is before the UNIX epoch")
 }
-
-/*
-const PES_START_CODE: [u8; 3] = [0x00, 0x00, 0x01];
-
-// Returns the start offset of the PES payload if the packet is the start of a PES packet, else None
-const PES_START_CODE_PREFIX: [u8; 3] = [0x00, 0x00, 0x01];
-const PES_HEADER_START_CODE: u8 = 0xE0; // Start codes for video streams range from 0xE0 to 0xEF
-
-fn pes_start_offset(packet: &[u8]) -> Option<usize> {
-    if packet.len() < TS_PACKET_SIZE {
-        error!("PESStartOffset: Packet size is incorrect {}", packet.len());
-        return None;
-    }
-
-    let payload_unit_start_indicator = (packet[1] & 0x40) != 0;
-    if !payload_unit_start_indicator {
-        error!("PESStartOffset: Packet does not have Payload Unit Start Indicator set");
-        return None;
-    }
-
-    let adaptation_field_control = (packet[3] & 0x30) >> 4;
-    if adaptation_field_control == 0x02 || adaptation_field_control == 0x03 {
-        let adaptation_field_length = packet[4] as usize;
-        if 4 + adaptation_field_length + 4 >= packet.len() {
-            error!("PESStartOffset: Packet Adaption Field size is incorrect {}", packet.len());
-            return None;
-        }
-
-        let start_code = &packet[4 + adaptation_field_length..4 + adaptation_field_length + 3];
-        if start_code != PES_START_CODE_PREFIX {
-            error!("PESStartOffset: Packet does not have PES start code prefix");
-            return None;
-        }
-
-        let stream_id = packet[4 + adaptation_field_length + 3];
-        if stream_id >= PES_HEADER_START_CODE && stream_id <= 0xEF {
-            // This is a video stream
-            let pes_packet_length = ((packet[4 + adaptation_field_length + 4] as usize) << 8)
-                | packet[4 + adaptation_field_length + 5] as usize;
-
-            // Calculate the start of PES data
-            let pes_data_start = 4 + adaptation_field_length + 6 + pes_packet_length;
-            if pes_data_start < packet.len() {
-                return Some(pes_data_start);
-            }
-        }
-    }
-
-    error!("PESStartOffset: Failed to find PES start offset");
-
-    None
-}
-
-const MPEG2_PICTURE_START_CODE: u32 = 0x00000100;
-const MPEG2_GROUP_START_CODE: u32 = 0x000001B8;
-const H264_IDR_NAL: u8 = 5;
-const H265_IDR_W_RADL: u8 = 19;
-const H265_IDR_N_LP: u8 = 20;
-
-fn is_idr_frame(buffer: &[u8], codec: Codec) -> bool {
-    match codec {
-        Codec::NONE => false,
-        Codec::MPEG2 => is_mpeg2_keyframe(buffer),
-        Codec::H264 => is_h264_idr_frame(buffer),
-        Codec::H265 => is_h265_idr_frame(buffer),
-    }
-}
-
-fn is_mpeg2_keyframe(buffer: &[u8]) -> bool {
-    let mut i = 0;
-    while i + 4 <= buffer.len() {
-        let code = ((buffer[i] as u32) << 24)
-            | ((buffer[i + 1] as u32) << 16)
-            | ((buffer[i + 2] as u32) << 8)
-            | buffer[i + 3] as u32;
-
-        if code == MPEG2_GROUP_START_CODE {
-            return true; // Found a GOP header, indicating a keyframe
-        }
-        i += 1;
-    }
-    false
-}
-
-fn is_h264_idr_frame(buffer: &[u8]) -> bool {
-    buffer.windows(4).any(|window| {
-        window[0] == 0x00
-            && window[1] == 0x00
-            && window[2] == 0x01
-            && (window[3] & 0x1F) == H264_IDR_NAL
-    })
-}
-
-fn is_h265_idr_frame(buffer: &[u8]) -> bool {
-    buffer.windows(4).any(|window| {
-        window[0] == 0x00
-            && window[1] == 0x00
-            && window[2] == 0x01
-            && ((window[3] & 0x7E) >> 1 == H265_IDR_W_RADL
-                || (window[3] & 0x7E) >> 1 == H265_IDR_N_LP)
-    })
-}
-*/
 
 // Implement a function to extract PID from a packet
 fn extract_pid(packet: &[u8]) -> u16 {
@@ -1346,9 +1217,6 @@ async fn main() {
         packet: Vec::new(),
     };
 
-    /*let mut is_frame_start = false;*/
-    // TODO: implement frame start detection
-
     loop {
         if packet_count > 0 && packets_captured > packet_count {
             running.store(false, Ordering::SeqCst);
@@ -1442,60 +1310,6 @@ async fn main() {
                                         }
                                     }
                                 }
-
-                                // Check if this is a video packet
-                                /*if video_pid != Some(0xFFFF) {
-                                    if let Some(vid_pid) = video_pid {
-                                        if pid == vid_pid {
-                                            if let Some(pes_payload_offset) =
-                                                pes_start_offset(&packet_chunk)
-                                            {
-                                                let pes_payload =
-                                                    &packet_chunk[pes_payload_offset..];
-
-                                                info!("Video PID: Comparing {} to {} with pes payload offset of {} with codec {}",
-                                                    pid,
-                                                    vid_pid,
-                                                    pes_payload_offset,
-                                                    video_codec.as_ref().unwrap());
-
-                                                // Ensure video_codec is not None before calling is_idr_frame
-                                                if let Some(codec) = video_codec.as_ref() {
-                                                    if is_idr_frame(pes_payload, codec.clone()) {
-                                                        // Send current video frame if it's complete
-                                                        if is_frame_start
-                                                            && !current_video_frame.is_empty()
-                                                        {
-                                                            info!(
-                                                                "STATUS::FRAME:COMPLETE: queue {}",
-                                                                current_video_frame.len()
-                                                            );
-                                                            // TODO: Display video frame information and extract SEI, Captions, Images, etc.
-                                                            current_video_frame.clear();
-                                                        }
-                                                        is_frame_start = true;
-                                                        info!(
-                                                            "STATUS::FRAME:START: size {}",
-                                                            current_video_frame.len()
-                                                        );
-                                                    }
-                                                }
-
-                                                if is_frame_start {
-                                                    // copy stream data into current_video_frame using Arc to avoid copying
-                                                    //current_video_frame.push(stream_data.clone());
-                                                }
-                                            } else {
-                                                error!("Video PID: PES payload offset not found in {} size chunk.", packet_chunk.len());
-                                                hexdump(
-                                                    &packet,
-                                                    0,
-                                                    packet_chunk.len(),
-                                                );
-                                            }
-                                        }
-                                    }
-                                }*/
                             }
                         }
                     }
