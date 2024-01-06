@@ -1354,7 +1354,7 @@ async fn main() {
                 pmt_info.pid,
             );
 
-            if pid == 0x1FFF {
+            if pid == 0x1FFF && is_mpegts {
                 // clear the Arc so it can be reused
                 stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
                                                            // Skip null packets
