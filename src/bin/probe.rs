@@ -1362,13 +1362,17 @@ async fn main() {
             }
             batch.push(stream_data);
 
+            info!("STATUS::PACKETS:CAPTURED: {}", packets_captured);
             // Check if batch is full
             if !no_zmq {
                 if batch.len() >= batch_size {
+                    info!("STATUS::BATCH:SEND: {}", batch.len());
                     // Send the batch to the channel
                     tx.send(batch).await.unwrap();
                     // release the packet Arc so it can be reused
                     batch = Vec::new(); // Create a new Vec for the next batch
+                } else {
+                    info!("STATUS::BATCH:WAIT: {}", batch.len());
                 }
             } else {
                 // go through each stream_data and release the packet Arc so it can be reused
@@ -1378,6 +1382,7 @@ async fn main() {
                 // disgard the batch, we don't send it anywhere
                 batch.clear();
                 batch = Vec::new(); // Create a new Vec for the next batch
+                info!("STATUS::BATCH:DISCARD: {}", batch.len());
             }
         }
     }
