@@ -904,6 +904,10 @@ struct Args {
     /// PCAP immediate mode
     #[clap(long, env = "IMMEDIATE_MODE", default_value_t = false)]
     immediate_mode: bool,
+
+    /// PCAP output capture stats mode
+    #[clap(long, env = "PCAP_STATS", default_value_t = false)]
+    pcap_stats: bool,
 }
 
 // MAIN Function
@@ -941,6 +945,7 @@ async fn main() {
     let show_tr101290 = args.show_tr101290;
     let mut buffer_size = args.buffer_size as i32;
     let immediate_mode = args.immediate_mode;
+    let pcap_stats = args.pcap_stats;
 
     if args.smpte2110 {
         packet_size = 1250; // set packet size to 1250 for smpte2110
@@ -1135,13 +1140,22 @@ async fn main() {
 
         // Create a PacketStream from the Capture
         let mut stream = cap.stream(BoxCodec).unwrap();
+        let mut count = 0;
 
         while running_clone.load(Ordering::SeqCst) {
             while let Some(packet) = stream.next().await {
                 match packet {
                     Ok(data) => {
+                        count += 1;
                         let packet_data = Arc::new(data.to_vec());
                         ptx.send(packet_data).await.unwrap();
+                        if pcap_stats && count % 1000 == 0 {
+                            let stats = stream.capture_mut().stats().unwrap();
+                            println!(
+                                "Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
+                                stats.received, stats.dropped, stats.if_dropped
+                            );
+                        }
                     }
                     Err(e) => {
                         // Print error and information about it
