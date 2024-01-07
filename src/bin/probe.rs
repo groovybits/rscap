@@ -952,14 +952,18 @@ async fn main() {
     let promiscuous = args.promiscuous;
     let show_tr101290 = args.show_tr101290;
     let mut buffer_size = args.buffer_size as i32;
-    let immediate_mode = args.immediate_mode;
+    let mut immediate_mode = args.immediate_mode;
     let pcap_stats = args.pcap_stats;
-    let pcap_channel_size = args.pcap_channel_size;
-    let zmq_channel_size = args.zmq_channel_size;
+    let mut pcap_channel_size = args.pcap_channel_size;
+    let mut zmq_channel_size = args.zmq_channel_size;
 
     if args.smpte2110 {
+        // --batch-size 1 --buffer-size 10000000000 --pcap-channel-size 100000 --zmq-channel-size 10000 --packet-size 1250 --immediate-mode --no-zmq
         packet_size = 1250; // set packet size to 1250 for smpte2110
         buffer_size = 10 * 1250 * 1000; // set buffer size to 10GB for smpte2110
+        pcap_channel_size = 100000; // set pcap channel size to 100000 for smpte2110
+        zmq_channel_size = 10000; // set zmq channel size to 10000 for smpte2110
+        immediate_mode = true; // set immediate mode to true for smpte2110
     }
 
     if silent {
