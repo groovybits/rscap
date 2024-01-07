@@ -908,6 +908,14 @@ struct Args {
     /// PCAP output capture stats mode
     #[clap(long, env = "PCAP_STATS", default_value_t = false)]
     pcap_stats: bool,
+
+    ///  MPSC Channel Size for ZeroMQ
+    #[clap(long, env = "PCAP_CHANNEL_SIZE", default_value_t = 1000)]
+    pcap_channel_size: usize,
+
+    /// MPSC Channel Size for PCAP
+    #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 1000)]
+    zmq_channel_size: usize,
 }
 
 // MAIN Function
@@ -946,6 +954,8 @@ async fn main() {
     let mut buffer_size = args.buffer_size as i32;
     let immediate_mode = args.immediate_mode;
     let pcap_stats = args.pcap_stats;
+    let pcap_channel_size = args.pcap_channel_size;
+    let zmq_channel_size = args.zmq_channel_size;
 
     if args.smpte2110 {
         packet_size = 1250; // set packet size to 1250 for smpte2110
@@ -1118,7 +1128,7 @@ async fn main() {
         source_protocol, source_port, source_ip
     );
 
-    let (ptx, mut prx) = mpsc::channel::<Arc<Vec<u8>>>(100);
+    let (ptx, mut prx) = mpsc::channel::<Arc<Vec<u8>>>(pcap_channel_size);
 
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
@@ -1188,7 +1198,7 @@ async fn main() {
     });
 
     // Setup channel for passing data between threads
-    let (tx, mut rx) = mpsc::channel::<Vec<StreamData>>(100);
+    let (tx, mut rx) = mpsc::channel::<Vec<StreamData>>(zmq_channel_size);
 
     // Spawn a new thread for ZeroMQ communication
     let zmq_thread = tokio::spawn(async move {
