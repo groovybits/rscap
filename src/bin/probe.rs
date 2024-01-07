@@ -1145,7 +1145,7 @@ async fn main() {
             .timeout(read_time_out)
             .snaplen(read_size)
             .immediate_mode(immediate_mode)
-            .buffer_size(buffer_size.try_into().unwrap()) // Huge buffer for high speed capture
+            .buffer_size(buffer_size as i32) // Huge buffer for high speed capture
             .open()
             .unwrap();
 
