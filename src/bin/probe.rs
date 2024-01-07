@@ -951,7 +951,7 @@ async fn main() {
     let no_zmq = args.no_zmq;
     let promiscuous = args.promiscuous;
     let show_tr101290 = args.show_tr101290;
-    let mut buffer_size = args.buffer_size;
+    let mut buffer_size = args.buffer_size as i64;
     let mut immediate_mode = args.immediate_mode;
     let pcap_stats = args.pcap_stats;
     let mut pcap_channel_size = args.pcap_channel_size;
