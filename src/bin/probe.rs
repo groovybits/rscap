@@ -826,11 +826,11 @@ struct Args {
     packet_size: usize,
 
     /// Sets the read timeout
-    #[clap(long, env = "READ_TIME_OUT", default_value_t = 60000)]
+    #[clap(long, env = "READ_TIME_OUT", default_value_t = 60_000)]
     read_time_out: i32,
 
     /// Sets the target port
-    #[clap(long, env = "TARGET_PORT", default_value_t = 5556)]
+    #[clap(long, env = "TARGET_PORT", default_value_t = 5_556)]
     target_port: i32,
 
     /// Sets the target IP
@@ -850,7 +850,7 @@ struct Args {
     source_protocol: String,
 
     /// Sets the source port
-    #[clap(long, env = "SOURCE_PORT", default_value_t = 10000)]
+    #[clap(long, env = "SOURCE_PORT", default_value_t = 10_000)]
     source_port: i32,
 
     /// Sets the debug mode
@@ -898,7 +898,7 @@ struct Args {
     show_tr101290: bool,
 
     /// Sets the pcap buffer size
-    #[clap(long, env = "BUFFER_SIZE", default_value_t = 1 * 1358 * 1000)]
+    #[clap(long, env = "BUFFER_SIZE", default_value_t = 1 * 1_358 * 1_000)]
     buffer_size: usize,
 
     /// PCAP immediate mode
@@ -910,11 +910,11 @@ struct Args {
     pcap_stats: bool,
 
     ///  MPSC Channel Size for ZeroMQ
-    #[clap(long, env = "PCAP_CHANNEL_SIZE", default_value_t = 1000)]
+    #[clap(long, env = "PCAP_CHANNEL_SIZE", default_value_t = 1_000)]
     pcap_channel_size: usize,
 
     /// MPSC Channel Size for PCAP
-    #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 1000)]
+    #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 1_000)]
     zmq_channel_size: usize,
 }
 
@@ -951,7 +951,7 @@ async fn main() {
     let no_zmq = args.no_zmq;
     let promiscuous = args.promiscuous;
     let show_tr101290 = args.show_tr101290;
-    let mut buffer_size = args.buffer_size as i64;
+    let mut buffer_size = args.buffer_size as i32;
     let mut immediate_mode = args.immediate_mode;
     let pcap_stats = args.pcap_stats;
     let mut pcap_channel_size = args.pcap_channel_size;
@@ -960,7 +960,7 @@ async fn main() {
     if args.smpte2110 {
         // --batch-size 1 --buffer-size 10000000000 --pcap-channel-size 100000 --zmq-channel-size 10000 --packet-size 1208 --immediate-mode --no-zmq
         packet_size = 1208; // set packet size to 1208 for smpte2110
-        buffer_size = 10_000_000_000; // set buffer size to 10GB for smpte2110
+        buffer_size = 10 * 1208 * 1024; // set buffer size to 10GB for smpte2110
         pcap_channel_size = 100_000; // set pcap channel size to 100000 for smpte2110
         zmq_channel_size = 10_000; // set zmq channel size to 10000 for smpte2110
         immediate_mode = true; // set immediate mode to true for smpte2110
@@ -1145,7 +1145,7 @@ async fn main() {
             .timeout(read_time_out)
             .snaplen(read_size)
             .immediate_mode(immediate_mode)
-            .buffer_size(buffer_size as i32) // Huge buffer for high speed capture
+            .buffer_size(buffer_size) // Huge buffer for high speed capture
             .open()
             .unwrap();
 
