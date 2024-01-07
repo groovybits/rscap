@@ -19,52 +19,50 @@ use kafka::producer::{Producer, Record, RequiredAcks};
 use log::{debug, error, info};
 use std::fs::File;
 use std::io::Write;
-use std::time::Duration;
+use std::time::Duration as StdDuration;
 use tokio;
+use tokio::time::{timeout, Duration};
 use zmq::SUB;
 
-fn produce_message<'a, 'b>(
-    data: &'a [u8],
-    topic: &'b str,
+async fn produce_message(
+    data: Vec<u8>, // Changed to Vec<u8> to allow cloning
+    topic: String,
     brokers: Vec<String>,
+    kafka_timeout: u64,
 ) -> Result<(), KafkaError> {
-    println!(
-        "About to publish a Kafka message at {:?} to: {}",
-        brokers, topic
-    );
+    let kafka_operation_timeout = Duration::from_secs(kafka_timeout);
 
-    // ~ create a producer. this is a relatively costly operation, so
-    // you'll do this typically once in your application and re-use
-    // the instance many times.
-    let mut producer = Producer::from_hosts(brokers)
-        // ~ give the brokers one second time to ack the message
-        .with_ack_timeout(Duration::from_secs(1))
-        // ~ require only one broker to ack the message
-        .with_required_acks(RequiredAcks::One)
-        // ~ build the producer with the above settings
-        .create()?;
+    match timeout(
+        kafka_operation_timeout,
+        tokio::task::spawn_blocking(move || {
+            let mut producer = Producer::from_hosts(brokers)
+                .with_ack_timeout(StdDuration::from_secs(1))
+                .with_required_acks(RequiredAcks::One)
+                .create()?;
 
-    // ~ now send a single message.  this is a synchronous/blocking
-    // operation.
+            producer.send(&Record {
+                topic: &topic,
+                partition: -1,
+                key: (),
+                value: data, // Pass Vec<u8> directly
+            })?;
 
-    // ~ we're sending 'data' as a 'value'. there will be no key
-    // associated with the sent message.
-
-    // ~ we leave the partition "unspecified" - this is a negative
-    // partition - which causes the producer to find out one on its
-    // own using its underlying partitioner.
-    producer.send(&Record {
-        topic,
-        partition: -1,
-        key: (),
-        value: data,
-    })?;
-
-    // ~ we can achieve exactly the same as above in a shorter way with
-    // the following call
-    //producer.send(&Record::from_value(topic, data))?;
-
-    Ok(())
+            Ok::<(), KafkaError>(())
+        }),
+    )
+    .await
+    {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(e))) => Err(e),
+        Ok(Err(e)) => Err(KafkaError::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("JoinError: {}", e),
+        ))),
+        Err(_) => Err(KafkaError::Io(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "Kafka operation timed out",
+        ))),
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -121,6 +119,10 @@ struct Args {
     /// Send to Kafka if true
     #[clap(long, env = "SEND_TO_KAFKA", default_value_t = false)]
     send_to_kafka: bool,
+
+    /// Kafka timeout to drop packets
+    #[clap(long, env = "KAFKA_TIMEOUT", default_value_t = 0)]
+    kafka_timeout: u64,
 }
 
 #[tokio::main]
@@ -188,16 +190,16 @@ async fn main() {
                     json_header
                 );
 
-                // Send to Kafka
                 if send_to_kafka {
                     let brokers = vec![kafka_broker.clone()];
                     let topic = kafka_topic.clone();
-                    let data = msg.clone();
-                    match produce_message(&data, &topic, brokers) {
+                    let data = msg.clone(); // Clone the data
+                    let kafka_timeout = args.kafka_timeout;
+
+                    match produce_message(data, topic, brokers, kafka_timeout).await {
                         Ok(_) => info!("Sent message to Kafka"),
-                        Err(e) => info!("Error sending message to Kafka: {:?}", e),
+                        Err(e) => error!("Error sending message to Kafka: {:?}", e),
                     }
-                    debug!("Sent message to Kafka");
                 }
 
                 if !no_progress {
