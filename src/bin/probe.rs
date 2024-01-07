@@ -7,6 +7,7 @@
  *
  */
 
+use async_zmq;
 use clap::Parser;
 use futures::stream::StreamExt;
 use lazy_static::lazy_static;
@@ -25,7 +26,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::mpsc::{self};
-use zmq;
+use zmq::PUB;
 //use capnp;
 /*use capnp::message::{Builder, HeapAllocator};*/
 // Include the generated paths for the Cap'n Proto schema
@@ -826,11 +827,11 @@ struct Args {
     packet_size: usize,
 
     /// Sets the read timeout
-    #[clap(long, env = "READ_TIME_OUT", default_value_t = 60000)]
+    #[clap(long, env = "READ_TIME_OUT", default_value_t = 60_000)]
     read_time_out: i32,
 
     /// Sets the target port
-    #[clap(long, env = "TARGET_PORT", default_value_t = 5556)]
+    #[clap(long, env = "TARGET_PORT", default_value_t = 5_556)]
     target_port: i32,
 
     /// Sets the target IP
@@ -850,7 +851,7 @@ struct Args {
     source_protocol: String,
 
     /// Sets the source port
-    #[clap(long, env = "SOURCE_PORT", default_value_t = 10000)]
+    #[clap(long, env = "SOURCE_PORT", default_value_t = 10_000)]
     source_port: i32,
 
     /// Sets the debug mode
@@ -898,7 +899,7 @@ struct Args {
     show_tr101290: bool,
 
     /// Sets the pcap buffer size
-    #[clap(long, env = "BUFFER_SIZE", default_value_t = 1 * 1358 * 1000)]
+    #[clap(long, env = "BUFFER_SIZE", default_value_t = 1 * 1_358 * 1_000)]
     buffer_size: usize,
 
     /// PCAP immediate mode
@@ -908,6 +909,14 @@ struct Args {
     /// PCAP output capture stats mode
     #[clap(long, env = "PCAP_STATS", default_value_t = false)]
     pcap_stats: bool,
+
+    ///  MPSC Channel Size for ZeroMQ
+    #[clap(long, env = "PCAP_CHANNEL_SIZE", default_value_t = 1_000)]
+    pcap_channel_size: usize,
+
+    /// MPSC Channel Size for PCAP
+    #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 1_000)]
+    zmq_channel_size: usize,
 }
 
 // MAIN Function
@@ -943,13 +952,19 @@ async fn main() {
     let no_zmq = args.no_zmq;
     let promiscuous = args.promiscuous;
     let show_tr101290 = args.show_tr101290;
-    let mut buffer_size = args.buffer_size as i32;
-    let immediate_mode = args.immediate_mode;
+    let mut buffer_size = args.buffer_size as i64;
+    let mut immediate_mode = args.immediate_mode;
     let pcap_stats = args.pcap_stats;
+    let mut pcap_channel_size = args.pcap_channel_size;
+    let mut zmq_channel_size = args.zmq_channel_size;
 
     if args.smpte2110 {
-        packet_size = 1250; // set packet size to 1250 for smpte2110
-        buffer_size = 10 * 1250 * 1000; // set buffer size to 10GB for smpte2110
+        // --batch-size 1 --buffer-size 10000000000 --pcap-channel-size 100000 --zmq-channel-size 10000 --packet-size 1208 --immediate-mode
+        buffer_size = 10000000000; // set buffer size to 10GB for smpte2110
+        pcap_channel_size = 100_000; // set pcap channel size to 100000 for smpte2110
+        zmq_channel_size = 10_000; // set zmq channel size to 10000 for smpte2110
+        packet_size = 1208; // set packet size to 1208 for smpte2110
+        immediate_mode = true; // set immediate mode to true for smpte2110
     }
 
     if silent {
@@ -1118,7 +1133,7 @@ async fn main() {
         source_protocol, source_port, source_ip
     );
 
-    let (ptx, mut prx) = mpsc::channel::<Arc<Vec<u8>>>(100);
+    let (ptx, mut prx) = mpsc::channel::<Arc<Vec<u8>>>(pcap_channel_size);
 
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
@@ -1131,7 +1146,7 @@ async fn main() {
             .timeout(read_time_out)
             .snaplen(read_size)
             .immediate_mode(immediate_mode)
-            .buffer_size(buffer_size) // Huge buffer for high speed capture
+            .buffer_size(buffer_size as i32) // Huge buffer for high speed capture
             .open()
             .unwrap();
 
@@ -1188,17 +1203,20 @@ async fn main() {
     });
 
     // Setup channel for passing data between threads
-    let (tx, mut rx) = mpsc::channel::<Vec<StreamData>>(100);
+    let (tx, mut rx) = mpsc::channel::<Vec<StreamData>>(zmq_channel_size);
 
     // Spawn a new thread for ZeroMQ communication
     let zmq_thread = tokio::spawn(async move {
-        let context = zmq::Context::new();
-        let publisher = context.socket(zmq::PUB).unwrap();
+        let context = async_zmq::Context::new();
+        let publisher = context.socket(PUB).unwrap();
         let source_port_ip = format!("tcp://{}:{}", target_ip, target_port);
         publisher.bind(&source_port_ip).unwrap();
 
+        info!("ZeroMQ publisher startup {}", source_port_ip);
+
         while let Some(mut batch) = rx.recv().await {
             for stream_data in batch.iter() {
+                info!("Batch processing {} packets", batch.len());
                 let packet_slice = &stream_data.packet
                     [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
 
@@ -1362,13 +1380,17 @@ async fn main() {
             }
             batch.push(stream_data);
 
+            //info!("STATUS::PACKETS:CAPTURED: {}", packets_captured);
             // Check if batch is full
             if !no_zmq {
                 if batch.len() >= batch_size {
+                    //info!("STATUS::BATCH:SEND: {}", batch.len());
                     // Send the batch to the channel
                     tx.send(batch).await.unwrap();
                     // release the packet Arc so it can be reused
                     batch = Vec::new(); // Create a new Vec for the next batch
+                } else {
+                    //info!("STATUS::BATCH:WAIT: {}", batch.len());
                 }
             } else {
                 // go through each stream_data and release the packet Arc so it can be reused
@@ -1378,6 +1400,7 @@ async fn main() {
                 // disgard the batch, we don't send it anywhere
                 batch.clear();
                 batch = Vec::new(); // Create a new Vec for the next batch
+                                    //info!("STATUS::BATCH:DISCARD: {}", batch.len());
             }
         }
     }
