@@ -7,6 +7,7 @@
  *
  */
 
+use async_zmq;
 use clap::Parser;
 use futures::stream::StreamExt;
 use lazy_static::lazy_static;
@@ -25,7 +26,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::mpsc::{self};
-use zmq;
+use zmq::PUB;
 //use capnp;
 /*use capnp::message::{Builder, HeapAllocator};*/
 // Include the generated paths for the Cap'n Proto schema
@@ -1206,8 +1207,8 @@ async fn main() {
 
     // Spawn a new thread for ZeroMQ communication
     let zmq_thread = tokio::spawn(async move {
-        let context = zmq::Context::new();
-        let publisher = context.socket(zmq::PUB).unwrap();
+        let context = async_zmq::Context::new();
+        let publisher = context.socket(PUB).unwrap();
         let source_port_ip = format!("tcp://{}:{}", target_ip, target_port);
         publisher.bind(&source_port_ip).unwrap();
 

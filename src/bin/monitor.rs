@@ -12,22 +12,26 @@
  *
  */
 
-extern crate zmq;
+use async_zmq;
 use clap::Parser;
+use kafka::error::Error as KafkaError;
+use kafka::producer::{Producer, Record, RequiredAcks};
 use log::{debug, error, info};
 use std::fs::File;
 use std::io::Write;
-use tokio;
 use std::time::Duration;
-use kafka::error::Error as KafkaError;
-use kafka::producer::{Producer, Record, RequiredAcks};
+use tokio;
+use zmq::SUB;
 
 fn produce_message<'a, 'b>(
     data: &'a [u8],
     topic: &'b str,
     brokers: Vec<String>,
 ) -> Result<(), KafkaError> {
-    println!("About to publish a Kafka message at {:?} to: {}", brokers, topic);
+    println!(
+        "About to publish a Kafka message at {:?} to: {}",
+        brokers, topic
+    );
 
     // ~ create a producer. this is a relatively costly operation, so
     // you'll do this typically once in your application and re-use
@@ -151,8 +155,8 @@ async fn main() {
     let _ = env_logger::try_init();
 
     // Setup ZeroMQ subscriber
-    let context = zmq::Context::new();
-    let zmq_sub = context.socket(zmq::SUB).unwrap();
+    let context = async_zmq::Context::new();
+    let zmq_sub = context.socket(SUB).unwrap();
     let source_port_ip = format!("tcp://{}:{}", source_ip, source_port);
     if let Err(e) = zmq_sub.connect(&source_port_ip) {
         error!("Failed to connect ZeroMQ subscriber: {:?}", e);
