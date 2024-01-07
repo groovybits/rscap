@@ -107,7 +107,7 @@ struct Args {
     no_progress: bool,
 
     /// Output Filename
-    #[clap(long, env = "OUTPUT_FILE", default_value = "output.ts")]
+    #[clap(long, env = "OUTPUT_FILE", default_value = "")]
     output_file: String,
 
     /// Kafka Broker
@@ -165,11 +165,15 @@ async fn main() {
 
     zmq_sub.set_subscribe(b"").unwrap();
 
-    let mut file = File::create(output_file).unwrap();
-
     let mut total_bytes = 0;
     let mut mpeg_packets = 0;
     let mut expecting_metadata = recv_json_header; // Expect metadata only if recv_json_header is true
+                                                   // Initialize an Option<File> to None
+    let mut file = if !output_file.is_empty() {
+        Some(File::create(&output_file).unwrap())
+    } else {
+        None
+    };
 
     while let Ok(msg) = zmq_sub.recv_bytes(0) {
         let more = zmq_sub.get_rcvmore().unwrap();
@@ -231,8 +235,10 @@ async fn main() {
                 break;
             }
 
-            // write to file, appending if not first chunk
-            file.write_all(&msg).unwrap();
+            // Write to file if output_file is provided
+            if let Some(file) = file.as_mut() {
+                file.write_all(&msg).unwrap();
+            }
 
             expecting_metadata = recv_json_header; // Reset for next message if applicable
         }
