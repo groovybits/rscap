@@ -1179,7 +1179,7 @@ async fn main() {
                         count += 1;
                         let packet_data = Arc::new(data.to_vec());
                         ptx.send(packet_data).await.unwrap();
-                        if pcap_stats && count % 1000000 == 0 {
+                        if pcap_stats && count % 10_000 == 0 {
                             let stats = stream.capture_mut().stats().unwrap();
                             println!(
                                 "Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
