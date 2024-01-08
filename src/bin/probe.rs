@@ -506,6 +506,21 @@ fn process_packet(
             // print out each field of structure similar to json but not wrapping into json
             debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, uptime);
 
+            stream_data_packet.bitrate = stream_data.bitrate;
+            stream_data_packet.bitrate_avg = stream_data.bitrate_avg;
+            stream_data_packet.bitrate_max = stream_data.bitrate_max;
+            stream_data_packet.bitrate_min = stream_data.bitrate_min;
+            stream_data_packet.iat = stream_data.iat;
+            stream_data_packet.iat_avg = stream_data.iat_avg;
+            stream_data_packet.iat_max = stream_data.iat_max;
+            stream_data_packet.iat_min = stream_data.iat_min;
+            stream_data_packet.stream_type = stream_data.stream_type.clone();
+            stream_data_packet.start_time = stream_data.start_time;
+            stream_data_packet.error_count = stream_data.error_count;
+            stream_data_packet.last_arrival_time = stream_data.last_arrival_time;
+            stream_data_packet.total_bits = stream_data.total_bits;
+            stream_data_packet.count = stream_data.count;
+
             // write the stream_data back to the pid_map with modified values
             pid_map.insert(pid, stream_data);
         }
@@ -1222,8 +1237,28 @@ async fn main() {
 
                 // Serialize metadata only if necessary
                 let metadata_msg = if send_json_header {
-                    let cloned_stream_data = stream_data.clone(); // Clone avoids copying the Arc<Vec<u8>>
+                    let mut cloned_stream_data = stream_data.clone(); // Clone avoids copying the Arc<Vec<u8>>
+
+                    // get pid_map stream_data structure for this pid
+                    let pid_map = PID_MAP.lock().unwrap();
+                    let pid_stream_data = pid_map.get(&stream_data.pid).unwrap();
+                    cloned_stream_data.bitrate = pid_stream_data.bitrate;
+                    cloned_stream_data.bitrate_avg = pid_stream_data.bitrate_avg;
+                    cloned_stream_data.bitrate_max = pid_stream_data.bitrate_max;
+                    cloned_stream_data.bitrate_min = pid_stream_data.bitrate_min;
+                    cloned_stream_data.iat = pid_stream_data.iat;
+                    cloned_stream_data.iat_avg = pid_stream_data.iat_avg;
+                    cloned_stream_data.iat_max = pid_stream_data.iat_max;
+                    cloned_stream_data.iat_min = pid_stream_data.iat_min;
+                    cloned_stream_data.stream_type = pid_stream_data.stream_type.clone();
+                    cloned_stream_data.start_time = stream_data.start_time;
+                    cloned_stream_data.error_count = stream_data.error_count;
+                    cloned_stream_data.last_arrival_time = stream_data.last_arrival_time;
+                    cloned_stream_data.total_bits = stream_data.total_bits;
+                    cloned_stream_data.count = stream_data.count;
+
                     let metadata = serde_json::to_string(&cloned_stream_data).unwrap();
+
                     Some(zmq::Message::from(metadata.as_bytes()))
                 } else {
                     None
