@@ -838,18 +838,33 @@ impl std::fmt::Display for DeviceNotFoundError {
 
 impl StdError for DeviceNotFoundError {}
 
-// Placeholder function for DPDK initialization
 #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
-fn init_dpdk() {
-    // Placeholder for DPDK initialization logic
-    println!("Initializing DPDK (functionality not yet implemented)");
-    // TODO: Implement DPDK initialization here
+fn init_dpdk() -> Result<dpdk::eal::Port, Box<dyn std::error::Error>> {
+    // DPDK initialization logic here
+    let port_id = 0; // Example port ID
+    let config = load_config()?;
+    info!("DPDK config: {:?} setup on port {}", config, port_id);
+    dpdk::eal::init(config)?;
+
+    // Configure and start the network interface
+    let port = dpdk::eal::Port::new(port_id)?;
+    port.configure()?;
+    port.start()?;
+
+    // Set promiscuous mode if needed
+    if promiscuous_mode {
+        port.set_promiscuous(true)?;
+    }
+
+    info!("DPDK port {} initialized", port_id);
+
+    Ok(port)
 }
 
+// Placeholder for non-Linux or DPDK disabled builds
 #[cfg(not(all(feature = "dpdk_enabled", target_os = "linux")))]
-fn init_dpdk() {
-    // Placeholder for DPDK initialization logic
-    println!("DPDK not enabled");
+fn init_dpdk() -> Result<(), Box<dyn std::error::Error>> {
+    Err("DPDK is not supported on this OS".into())
 }
 
 fn init_pcap(
@@ -1104,6 +1119,7 @@ async fn main() {
     let pcap_stats = args.pcap_stats;
     let mut pcap_channel_size = args.pcap_channel_size;
     let mut zmq_channel_size = args.zmq_channel_size;
+    #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
     let use_dpdk = args.dpdk;
 
     if args.smpte2110 {
