@@ -1172,7 +1172,7 @@ async fn main() {
         let mut stream = cap.stream(BoxCodec).unwrap();
         let mut count = 0;
 
-        let stats_last_sent_ts = Instant::now();
+        let mut stats_last_sent_ts = Instant::now();
 
         while running_clone.load(Ordering::SeqCst) {
             while let Some(packet) = stream.next().await {
@@ -1183,8 +1183,10 @@ async fn main() {
                         ptx.send(packet_data).await.unwrap();
                         let current_ts = Instant::now();
                         if pcap_stats
-                            && current_ts.duration_since(stats_last_sent_ts).as_secs() >= 30
+                            && ((current_ts.duration_since(stats_last_sent_ts).as_secs() >= 30)
+                                || count == 1)
                         {
+                            stats_last_sent_ts = current_ts;
                             let stats = stream.capture_mut().stats().unwrap();
                             println!(
                                 "#{} Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
