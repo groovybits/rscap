@@ -844,7 +844,6 @@ fn init_dpdk() {
 fn init_pcap(
     source_device: &str,
     use_wireless: bool,
-    source_device_ip: &str,
     promiscuous: bool,
     read_time_out: i32,
     read_size: i32,
@@ -853,7 +852,7 @@ fn init_pcap(
     source_protocol: &str,
     source_port: i32,
     source_ip: &str,
-) -> Result<Capture<Active>, Box<dyn StdError>> {
+) -> Result<(Capture<Active>, UdpSocket), Box<dyn StdError>> {
     let devices = Device::list().map_err(|e| Box::new(e) as Box<dyn StdError>)?;
 
     debug!("init_pcap: devices: {:?}", devices);
@@ -939,7 +938,7 @@ fn init_pcap(
         target_device.name
     );
 
-    Ok(cap)
+    Ok((cap, socket))
 }
 
 /// RScap Probe Configuration
@@ -1066,8 +1065,6 @@ async fn main() {
 
     dotenv::dotenv().ok(); // read .env file
 
-    let source_device_ip: &str = "0.0.0.0";
-
     let args = Args::parse();
 
     // Use the parsed arguments directly
@@ -1128,10 +1125,9 @@ async fn main() {
     // Spawn a new thread for packet capture
     let capture_task = tokio::spawn(async move {
         // initialize the pcap
-        let cap = init_pcap(
+        let (cap, _socket) = init_pcap(
             &source_device,
             use_wireless,
-            source_device_ip,
             promiscuous,
             read_time_out,
             read_size,
