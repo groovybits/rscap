@@ -879,7 +879,6 @@ fn init_pcap(
     source_ip: &str,
 ) -> Result<(Capture<Active>, UdpSocket), Box<dyn StdError>> {
     let devices = Device::list().map_err(|e| Box::new(e) as Box<dyn StdError>)?;
-
     debug!("init_pcap: devices: {:?}", devices);
     info!("init_pcap: specified source_device: {}", source_device);
 
@@ -890,6 +889,11 @@ fn init_pcap(
         .find(|d| d.name == source_device || source_device.is_empty())
         .ok_or_else(|| Box::new(DeviceNotFoundError) as Box<dyn StdError>)?;
 
+    #[cfg(target_os = "linux")]
+    let use_wireless_local = if use_wireless { true } else { false };
+    #[cfg(not(target_os = "linux"))]
+    let use_wireless_local = use_wireless;
+
     #[cfg(not(target_os = "linux"))]
     let target_device = devices
         .into_iter()
@@ -898,7 +902,7 @@ fn init_pcap(
                 && d.flags.is_up()
                 && !d.flags.is_loopback()
                 && d.flags.is_running()
-                && (!d.flags.is_wireless() || use_wireless)
+                && (!d.flags.is_wireless() || use_wireless_local)
         })
         .ok_or_else(|| Box::new(DeviceNotFoundError) as Box<dyn StdError>)?;
 
