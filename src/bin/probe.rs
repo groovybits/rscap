@@ -1149,77 +1149,85 @@ async fn main() {
     let running_clone = running.clone();
 
     // Spawn a new thread for packet capture
-    let capture_task = tokio::spawn(async move {
-        // initialize the pcap
-        let (cap, _socket) = init_pcap(
-            &source_device,
-            use_wireless,
-            promiscuous,
-            read_time_out,
-            read_size,
-            immediate_mode,
-            buffer_size as i64,
-            &source_protocol,
-            source_port,
-            &source_ip,
-        )
-        .expect("Failed to initialize pcap");
+    let capture_task = if cfg!(feature = "dpdk_enabled") && args.dpdk {
+        // DPDK is enabled
+        tokio::spawn(async {
+            // TODO: DPDK initialization logic goes here");
+            error!("DPDK is not yet implemented");
+        })
+    } else {
+        tokio::spawn(async move {
+            // initialize the pcap
+            let (cap, _socket) = init_pcap(
+                &source_device,
+                use_wireless,
+                promiscuous,
+                read_time_out,
+                read_size,
+                immediate_mode,
+                buffer_size as i64,
+                &source_protocol,
+                source_port,
+                &source_ip,
+            )
+            .expect("Failed to initialize pcap");
 
-        // Create a PacketStream from the Capture
-        let mut stream = cap.stream(BoxCodec).unwrap();
-        let mut count = 0;
+            // Create a PacketStream from the Capture
+            let mut stream = cap.stream(BoxCodec).unwrap();
+            let mut count = 0;
 
-        let mut stats_last_sent_ts = Instant::now();
+            let mut stats_last_sent_ts = Instant::now();
 
-        while running_clone.load(Ordering::SeqCst) {
-            while let Some(packet) = stream.next().await {
-                match packet {
-                    Ok(data) => {
-                        count += 1;
-                        let packet_data = Arc::new(data.to_vec());
-                        ptx.send(packet_data).await.unwrap();
-                        let current_ts = Instant::now();
-                        if pcap_stats
-                            && ((current_ts.duration_since(stats_last_sent_ts).as_secs() >= 30)
-                                || count == 1)
-                        {
-                            stats_last_sent_ts = current_ts;
-                            let stats = stream.capture_mut().stats().unwrap();
-                            println!(
-                                "#{} Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
-                                count, stats.received, stats.dropped, stats.if_dropped
-                            );
+            while running_clone.load(Ordering::SeqCst) {
+                while let Some(packet) = stream.next().await {
+                    match packet {
+                        Ok(data) => {
+                            count += 1;
+                            let packet_data = Arc::new(data.to_vec());
+                            ptx.send(packet_data).await.unwrap();
+                            let current_ts = Instant::now();
+                            if pcap_stats
+                                && ((current_ts.duration_since(stats_last_sent_ts).as_secs() >= 30)
+                                    || count == 1)
+                            {
+                                stats_last_sent_ts = current_ts;
+                                let stats = stream.capture_mut().stats().unwrap();
+                                println!(
+                                    "#{} Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
+                                    count, stats.received, stats.dropped, stats.if_dropped
+                                );
+                            }
                         }
-                    }
-                    Err(e) => {
-                        // Print error and information about it
-                        error!("PCap Capture Error occurred: {}", e);
-                        if e == pcap::Error::TimeoutExpired {
-                            // Timeout expired, continue and try again
-                            continue;
-                        } else {
-                            // Exit the loop if an error occurs
-                            running_clone.store(false, Ordering::SeqCst);
-                            break;
+                        Err(e) => {
+                            // Print error and information about it
+                            error!("PCap Capture Error occurred: {}", e);
+                            if e == pcap::Error::TimeoutExpired {
+                                // Timeout expired, continue and try again
+                                continue;
+                            } else {
+                                // Exit the loop if an error occurs
+                                running_clone.store(false, Ordering::SeqCst);
+                                break;
+                            }
                         }
                     }
                 }
+                if debug_on {
+                    let stats = stream.capture_mut().stats().unwrap();
+                    println!(
+                        "Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
+                        stats.received, stats.dropped, stats.if_dropped
+                    );
+                }
             }
-            if debug_on {
-                let stats = stream.capture_mut().stats().unwrap();
-                println!(
-                    "Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
-                    stats.received, stats.dropped, stats.if_dropped
-                );
-            }
-        }
 
-        let stats = stream.capture_mut().stats().unwrap();
-        println!("Packet capture statistics:");
-        println!("Received: {}", stats.received);
-        println!("Dropped: {}", stats.dropped);
-        println!("Interface Dropped: {}", stats.if_dropped);
-    });
+            let stats = stream.capture_mut().stats().unwrap();
+            println!("Packet capture statistics:");
+            println!("Received: {}", stats.received);
+            println!("Dropped: {}", stats.dropped);
+            println!("Interface Dropped: {}", stats.if_dropped);
+        })
+    };
 
     // Setup channel for passing data between threads
     let (tx, mut rx) = mpsc::channel::<Vec<StreamData>>(zmq_channel_size);
