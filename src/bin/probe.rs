@@ -1046,7 +1046,6 @@ async fn main() {
     let source_port = args.source_port;
     let debug_on = args.debug_on;
     let silent = args.silent;
-    #[cfg(not(target_os = "linux"))]
     let use_wireless = args.use_wireless;
     let send_json_header = args.send_json_header;
     let send_raw_stream = args.send_raw_stream;
