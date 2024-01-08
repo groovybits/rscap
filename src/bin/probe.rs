@@ -8,6 +8,10 @@
  */
 
 use async_zmq;
+#[cfg(feature = "dpdk_enabled")]
+use capsule::config::{load_config, DPDKConfig};
+#[cfg(feature = "dpdk_enabled")]
+use capsule::dpdk;
 use clap::Parser;
 use futures::stream::StreamExt;
 use lazy_static::lazy_static;
@@ -835,10 +839,17 @@ impl std::fmt::Display for DeviceNotFoundError {
 impl StdError for DeviceNotFoundError {}
 
 // Placeholder function for DPDK initialization
+#[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
 fn init_dpdk() {
     // Placeholder for DPDK initialization logic
     println!("Initializing DPDK (functionality not yet implemented)");
     // TODO: Implement DPDK initialization here
+}
+
+#[cfg(not(all(feature = "dpdk_enabled", target_os = "linux")))]
+fn init_dpdk() {
+    // Placeholder for DPDK initialization logic
+    println!("DPDK not enabled");
 }
 
 fn init_pcap(
