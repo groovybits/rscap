@@ -23,7 +23,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     sync::Arc,
     sync::Mutex,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::mpsc::{self};
 use zmq::PUB;
@@ -1172,6 +1172,8 @@ async fn main() {
         let mut stream = cap.stream(BoxCodec).unwrap();
         let mut count = 0;
 
+        let stats_last_sent_ts = Instant::now();
+
         while running_clone.load(Ordering::SeqCst) {
             while let Some(packet) = stream.next().await {
                 match packet {
@@ -1179,11 +1181,14 @@ async fn main() {
                         count += 1;
                         let packet_data = Arc::new(data.to_vec());
                         ptx.send(packet_data).await.unwrap();
-                        if pcap_stats && count % 10_000 == 0 {
+                        let current_ts = Instant::now();
+                        if pcap_stats
+                            && current_ts.duration_since(stats_last_sent_ts).as_secs() >= 30
+                        {
                             let stats = stream.capture_mut().stats().unwrap();
                             println!(
-                                "Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
-                                stats.received, stats.dropped, stats.if_dropped
+                                "#{} Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
+                                count, stats.received, stats.dropped, stats.if_dropped
                             );
                         }
                     }
