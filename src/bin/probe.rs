@@ -860,6 +860,9 @@ fn init_pcap(
 
     let devices = Device::list().map_err(|e| Box::new(e) as Box<dyn StdError>)?;
 
+    debug!("init_pcap: devices: {:?}", devices);
+    info!("init_pcap: specified source_device: {}", source_device);
+
     // Different handling for Linux and non-Linux systems
     #[cfg(target_os = "linux")]
     let target_device = devices
@@ -883,6 +886,11 @@ fn init_pcap(
         .parse::<Ipv4Addr>()
         .expect("Invalid IP address format for source_ip");
 
+    info!(
+        "init_pcap: UDP Socket Binding to interface {} with Join IGMP Multicast for address:port udp://{}:{}.",
+        interface_addr, multicast_addr, source_port
+    );
+
     let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| Box::new(e) as Box<dyn StdError>)?;
     socket
         .join_multicast_v4(&multicast_addr, &interface_addr)
@@ -903,12 +911,27 @@ fn init_pcap(
         .open()
         .map_err(|e| Box::new(e) as Box<dyn StdError>)?;
 
+    info!(
+        "init_pcap: set non-blocking mode on capture device {}",
+        target_device.name
+    );
+
     let mut cap = cap
         .setnonblock()
         .map_err(|e| Box::new(e) as Box<dyn StdError>)?;
 
+    info!(
+        "init_pcap: set filter for {} on capture device {}",
+        source_host_and_port, target_device.name
+    );
+
     cap.filter(&source_host_and_port, true)
         .map_err(|e| Box::new(e) as Box<dyn StdError>)?;
+
+    info!(
+        "init_pcap: capture device {} successfully initialized",
+        target_device.name
+    );
 
     Ok(cap)
 }
