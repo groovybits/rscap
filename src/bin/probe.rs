@@ -1216,7 +1216,7 @@ async fn main() {
 
         while let Some(mut batch) = rx.recv().await {
             for stream_data in batch.iter() {
-                info!("Batch processing {} packets", batch.len());
+                //debug!("Batch processing {} packets", batch.len());
                 let packet_slice = &stream_data.packet
                     [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
 
