@@ -20,7 +20,7 @@ use std::{
     collections::HashMap,
     error::Error as StdError,
     fmt,
-    net::{Ipv4Addr, UdpSocket},
+    net::{IpAddr, Ipv4Addr, UdpSocket},
     sync::atomic::{AtomicBool, Ordering},
     sync::Arc,
     sync::Mutex,
@@ -854,10 +854,6 @@ fn init_pcap(
     source_port: i32,
     source_ip: &str,
 ) -> Result<Capture<Active>, Box<dyn StdError>> {
-    let interface_addr = source_device_ip
-        .parse::<Ipv4Addr>()
-        .expect("Invalid IP address format for source_device_ip");
-
     let devices = Device::list().map_err(|e| Box::new(e) as Box<dyn StdError>)?;
 
     debug!("init_pcap: devices: {:?}", devices);
@@ -881,6 +877,16 @@ fn init_pcap(
                 && (!d.flags.is_wireless() || use_wireless)
         })
         .ok_or_else(|| Box::new(DeviceNotFoundError) as Box<dyn StdError>)?;
+
+    // Get the IP address of the target device
+    let interface_addr = target_device
+        .addresses
+        .iter()
+        .find_map(|addr| match addr.addr {
+            IpAddr::V4(ipv4_addr) => Some(ipv4_addr),
+            _ => None,
+        })
+        .ok_or_else(|| "No valid IPv4 address found for target device")?;
 
     let multicast_addr = source_ip
         .parse::<Ipv4Addr>()
