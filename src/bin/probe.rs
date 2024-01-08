@@ -860,6 +860,14 @@ fn init_pcap(
 
     let devices = Device::list().map_err(|e| Box::new(e) as Box<dyn StdError>)?;
 
+    // Different handling for Linux and non-Linux systems
+    #[cfg(target_os = "linux")]
+    let target_device = devices
+        .into_iter()
+        .find(|d| d.name == source_device || source_device.is_empty())
+        .ok_or_else(|| Box::new(DeviceNotFoundError) as Box<dyn StdError>)?;
+
+    #[cfg(not(target_os = "linux"))]
     let target_device = devices
         .into_iter()
         .find(|d| {
