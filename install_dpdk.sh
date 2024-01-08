@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # Update System
 echo "Updating system..."
@@ -7,7 +8,12 @@ sudo yum update -y
 # Install Required Dependencies
 echo "Installing required dependencies..."
 sudo yum groupinstall -y "Development Tools"
-sudo yum install -y gcc make kernel-devel numactl-devel meson ninja-build
+sudo yum install -y gcc make kernel-devel numactl-devel
+
+# Upgrade pip and Install Meson and Ninja
+echo "Upgrading pip and installing Meson and Ninja..."
+sudo pip3 install --upgrade pip
+sudo pip3 install meson ninja
 
 # Define DPDK Version
 DPDK_VERSION="12.11"
@@ -29,16 +35,6 @@ meson build
 cd build
 ninja
 sudo ninja install
-
-# Load DPDK Modules
-echo "Loading DPDK modules..."
-sudo modprobe uio
-sudo insmod kmod/igb_uio.ko
-
-# Bind Network Devices to DPDK
-# Replace <device> with the name of your network device
-echo "Binding network devices to DPDK..."
-sudo usertools/dpdk-devbind.py --bind=igb_uio <device>
 
 # Set Environment Variables
 echo "Setting up environment variables..."

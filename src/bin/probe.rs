@@ -839,9 +839,8 @@ impl std::fmt::Display for DeviceNotFoundError {
 impl StdError for DeviceNotFoundError {}
 
 #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
-fn init_dpdk() -> Result<dpdk::eal::Port, Box<dyn std::error::Error>> {
+fn init_dpdk(port_id: u16) -> Result<dpdk::eal::Port, Box<dyn std::error::Error>> {
     // DPDK initialization logic here
-    let port_id = 0; // Example port ID
     let config = load_config()?;
     info!("DPDK config: {:?} setup on port {}", config, port_id);
     dpdk::eal::init(config)?;
@@ -863,7 +862,7 @@ fn init_dpdk() -> Result<dpdk::eal::Port, Box<dyn std::error::Error>> {
 
 // Placeholder for non-Linux or DPDK disabled builds
 #[cfg(not(all(feature = "dpdk_enabled", target_os = "linux")))]
-fn init_dpdk() -> Result<(), Box<dyn std::error::Error>> {
+fn init_dpdk(port_id: u16) -> Result<(), Box<dyn std::error::Error>> {
     Err("DPDK is not supported on this OS".into())
 }
 
