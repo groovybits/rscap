@@ -1,3 +1,8 @@
 #!/bin/bash
 #
-target/release/monitor --no-progress --recv-raw-stream --send-to-kafka
+target/release/monitor \
+    --no-progress \
+    --recv-json-header \
+    --recv-raw-stream \
+    --output-file capture.ts \
+    --send-to-kafka

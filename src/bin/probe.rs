@@ -23,7 +23,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     sync::Arc,
     sync::Mutex,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::mpsc::{self};
 use zmq::PUB;
@@ -505,6 +505,21 @@ fn process_packet(
 
             // print out each field of structure similar to json but not wrapping into json
             debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, uptime);
+
+            stream_data_packet.bitrate = stream_data.bitrate;
+            stream_data_packet.bitrate_avg = stream_data.bitrate_avg;
+            stream_data_packet.bitrate_max = stream_data.bitrate_max;
+            stream_data_packet.bitrate_min = stream_data.bitrate_min;
+            stream_data_packet.iat = stream_data.iat;
+            stream_data_packet.iat_avg = stream_data.iat_avg;
+            stream_data_packet.iat_max = stream_data.iat_max;
+            stream_data_packet.iat_min = stream_data.iat_min;
+            stream_data_packet.stream_type = stream_data.stream_type.clone();
+            stream_data_packet.start_time = stream_data.start_time;
+            stream_data_packet.error_count = stream_data.error_count;
+            stream_data_packet.last_arrival_time = stream_data.last_arrival_time;
+            stream_data_packet.total_bits = stream_data.total_bits;
+            stream_data_packet.count = stream_data.count;
 
             // write the stream_data back to the pid_map with modified values
             pid_map.insert(pid, stream_data);
@@ -1157,6 +1172,8 @@ async fn main() {
         let mut stream = cap.stream(BoxCodec).unwrap();
         let mut count = 0;
 
+        let mut stats_last_sent_ts = Instant::now();
+
         while running_clone.load(Ordering::SeqCst) {
             while let Some(packet) = stream.next().await {
                 match packet {
@@ -1164,11 +1181,16 @@ async fn main() {
                         count += 1;
                         let packet_data = Arc::new(data.to_vec());
                         ptx.send(packet_data).await.unwrap();
-                        if pcap_stats && count % 1000000 == 0 {
+                        let current_ts = Instant::now();
+                        if pcap_stats
+                            && ((current_ts.duration_since(stats_last_sent_ts).as_secs() >= 30)
+                                || count == 1)
+                        {
+                            stats_last_sent_ts = current_ts;
                             let stats = stream.capture_mut().stats().unwrap();
                             println!(
-                                "Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
-                                stats.received, stats.dropped, stats.if_dropped
+                                "#{} Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
+                                count, stats.received, stats.dropped, stats.if_dropped
                             );
                         }
                     }
@@ -1216,7 +1238,7 @@ async fn main() {
 
         while let Some(mut batch) = rx.recv().await {
             for stream_data in batch.iter() {
-                info!("Batch processing {} packets", batch.len());
+                //debug!("Batch processing {} packets", batch.len());
                 let packet_slice = &stream_data.packet
                     [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
 
@@ -1224,6 +1246,7 @@ async fn main() {
                 let metadata_msg = if send_json_header {
                     let cloned_stream_data = stream_data.clone(); // Clone avoids copying the Arc<Vec<u8>>
                     let metadata = serde_json::to_string(&cloned_stream_data).unwrap();
+
                     Some(zmq::Message::from(metadata.as_bytes()))
                 } else {
                     None
