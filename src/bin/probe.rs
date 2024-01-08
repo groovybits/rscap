@@ -12,12 +12,13 @@ use clap::Parser;
 use futures::stream::StreamExt;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
-use pcap::{Capture, Device, PacketCodec};
+use pcap::{Active, Capture, Device, PacketCodec};
 use rtp::RtpReader;
 use rtp_rs as rtp;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
+    error::Error as StdError,
     fmt,
     net::{Ipv4Addr, UdpSocket},
     sync::atomic::{AtomicBool, Ordering},
@@ -821,6 +822,89 @@ fn determine_stream_type(pid: u16) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+// Define a custom error for when the target device is not found
+#[derive(Debug)]
+struct DeviceNotFoundError;
+
+impl std::fmt::Display for DeviceNotFoundError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Target device not found")
+    }
+}
+
+impl StdError for DeviceNotFoundError {}
+
+// Placeholder function for DPDK initialization
+fn init_dpdk() {
+    // Placeholder for DPDK initialization logic
+    println!("Initializing DPDK (functionality not yet implemented)");
+    // TODO: Implement DPDK initialization here
+}
+
+fn init_pcap(
+    source_device: &str,
+    use_wireless: bool,
+    source_device_ip: &str,
+    promiscuous: bool,
+    read_time_out: i32,
+    read_size: i32,
+    immediate_mode: bool,
+    buffer_size: i64,
+    source_protocol: &str,
+    source_port: i32,
+    source_ip: &str,
+) -> Result<Capture<Active>, Box<dyn StdError>> {
+    let interface_addr = source_device_ip
+        .parse::<Ipv4Addr>()
+        .expect("Invalid IP address format for source_device_ip");
+
+    let devices = Device::list().map_err(|e| Box::new(e) as Box<dyn StdError>)?;
+
+    let target_device = devices
+        .into_iter()
+        .find(|d| {
+            (d.name == source_device || source_device.is_empty())
+                && d.flags.is_up()
+                && !d.flags.is_loopback()
+                && d.flags.is_running()
+                && (!d.flags.is_wireless() || use_wireless)
+        })
+        .ok_or_else(|| Box::new(DeviceNotFoundError) as Box<dyn StdError>)?;
+
+    let multicast_addr = source_ip
+        .parse::<Ipv4Addr>()
+        .expect("Invalid IP address format for source_ip");
+
+    let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| Box::new(e) as Box<dyn StdError>)?;
+    socket
+        .join_multicast_v4(&multicast_addr, &interface_addr)
+        .map_err(|e| Box::new(e) as Box<dyn StdError>)?;
+
+    let source_host_and_port = format!(
+        "{} dst port {} and ip dst host {}",
+        source_protocol, source_port, source_ip
+    );
+
+    let cap = Capture::from_device(target_device.clone())
+        .map_err(|e| Box::new(e) as Box<dyn StdError>)?
+        .promisc(promiscuous)
+        .timeout(read_time_out)
+        .snaplen(read_size)
+        .immediate_mode(immediate_mode)
+        .buffer_size(buffer_size as i32)
+        .open()
+        .map_err(|e| Box::new(e) as Box<dyn StdError>)?;
+
+    let mut cap = cap
+        .setnonblock()
+        .map_err(|e| Box::new(e) as Box<dyn StdError>)?;
+
+    cap.filter(&source_host_and_port, true)
+        .map_err(|e| Box::new(e) as Box<dyn StdError>)?;
+
+    Ok(cap)
+}
+
 /// RScap Probe Configuration
 #[derive(Parser, Debug)]
 #[clap(
@@ -932,6 +1016,10 @@ struct Args {
     /// MPSC Channel Size for PCAP
     #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 1_000)]
     zmq_channel_size: usize,
+
+    /// DPDK enable
+    #[clap(long, env = "DPDK", default_value_t = false)]
+    dpdk: bool,
 }
 
 // MAIN Function
@@ -972,6 +1060,7 @@ async fn main() {
     let pcap_stats = args.pcap_stats;
     let mut pcap_channel_size = args.pcap_channel_size;
     let mut zmq_channel_size = args.zmq_channel_size;
+    let use_dpdk = args.dpdk;
 
     if args.smpte2110 {
         // --batch-size 1 --buffer-size 10000000000 --pcap-channel-size 100000 --zmq-channel-size 10000 --packet-size 1208 --immediate-mode
@@ -995,159 +1084,6 @@ async fn main() {
     // Initialize logging
     let _ = env_logger::try_init();
 
-    // device ip address
-    let mut interface_addr = source_device_ip.parse::<Ipv4Addr>().expect(&format!(
-        "Invalid IP address format in source_device_ip {}",
-        source_device_ip
-    ));
-
-    // Get the selected device's details
-    let mut target_device_found = false;
-    let devices = Device::list().unwrap();
-    // List all devices and their flags
-    for device in &devices {
-        debug!("Device: {:?}, Flags: {:?}", device.name, device.flags);
-    }
-    #[cfg(target_os = "linux")]
-    let mut target_device = devices
-        .clone()
-        .into_iter()
-        .find(|d| d.name != "lo") // Exclude loopback device
-        .expect("No valid devices found");
-
-    #[cfg(not(target_os = "linux"))]
-    let mut target_device = devices
-        .clone()
-        .into_iter()
-        .find(|d| {
-            d.flags.is_up()
-                && !d.flags.is_loopback()
-                && d.flags.is_running()
-                && (!d.flags.is_wireless() || use_wireless)
-        })
-        .expect(&format!("No valid devices found {}", devices.len()));
-
-    info!("Default device: {:?}", target_device.name);
-
-    // If source_device is auto, find the first valid device
-    if source_device == "auto" || source_device == "" {
-        info!("Auto-selecting device...");
-
-        // Find the first valid device
-        for device in pcap::Device::list().unwrap() {
-            debug!("Device {:?}", device);
-
-            // check flags for device up
-            #[cfg(not(target_os = "linux"))]
-            if !device.flags.is_up() {
-                continue;
-            }
-            // check if device is loopback
-            #[cfg(not(target_os = "linux"))]
-            if device.flags.is_loopback() {
-                continue;
-            }
-            // check if device is ethernet
-            #[cfg(not(target_os = "linux"))]
-            if device.flags.is_wireless() {
-                if !use_wireless {
-                    continue;
-                }
-            }
-            // check if device is running
-            #[cfg(not(target_os = "linux"))]
-            if !device.flags.is_running() {
-                continue;
-            }
-
-            // check if device has an IPv4 address
-            for addr in device.addresses.iter() {
-                if let std::net::IpAddr::V4(ipv4_addr) = addr.addr {
-                    // check if loopback
-                    if ipv4_addr.is_loopback() {
-                        continue;
-                    }
-                    target_device_found = true;
-
-                    // Found through auto-detection, set interface_addr
-                    info!(
-                        "Found IPv4 target device {} with ip {}",
-                        source_device, ipv4_addr
-                    );
-                    interface_addr = ipv4_addr;
-                    target_device = device;
-                    break;
-                }
-            }
-            // break out of loop if target device is found
-            if target_device_found {
-                break;
-            }
-        }
-    } else {
-        // Use the specified device instead of auto-detection
-        info!("Using specified device {}", source_device);
-
-        // Find the specified device
-        #[cfg(not(target_os = "linux"))]
-        let target_device_discovered = devices
-            .into_iter()
-            .find(|d| {
-                d.name == source_device
-                    && d.flags.is_up()
-                    && d.flags.is_running()
-                    && (!d.flags.is_wireless() || use_wireless)
-            })
-            .expect(&format!("Target device not found {}", source_device));
-
-        #[cfg(target_os = "linux")]
-        let target_device_discovered = devices
-            .into_iter()
-            .find(|d| d.name == source_device)
-            .expect(&format!("Target device not found {}", source_device));
-
-        // Check if device has an IPv4 address
-        debug!("Target Device: {:?}", target_device_discovered);
-        for addr in target_device_discovered.addresses.iter() {
-            if let std::net::IpAddr::V4(ipv4_addr) = addr.addr {
-                info!(
-                    "Found ipv4_addr {:?} on device {}",
-                    ipv4_addr, source_device
-                );
-                interface_addr = ipv4_addr;
-                target_device_found = true;
-                target_device = target_device_discovered;
-                break;
-            }
-        }
-    }
-
-    // Device not found
-    if !target_device_found {
-        error!("Target device {} not found", source_device);
-        return;
-    }
-
-    // Join multicast group
-    let multicast_addr = source_ip.parse::<Ipv4Addr>().expect(&format!(
-        "Invalid IP address format in source_ip {}",
-        source_ip
-    ));
-
-    let socket = UdpSocket::bind("0.0.0.0:0").expect("Failed to bind socket");
-    socket
-        .join_multicast_v4(&multicast_addr, &interface_addr)
-        .expect(&format!(
-            "Failed to join multicast group on interface {}",
-            source_device
-        ));
-
-    // Filter pcap
-    let source_host_and_port = format!(
-        "{} dst port {} and ip dst host {}",
-        source_protocol, source_port, source_ip
-    );
-
     let (ptx, mut prx) = mpsc::channel::<Arc<Vec<u8>>>(pcap_channel_size);
 
     let running = Arc::new(AtomicBool::new(true));
@@ -1155,18 +1091,21 @@ async fn main() {
 
     // Spawn a new thread for packet capture
     let capture_task = tokio::spawn(async move {
-        let cap = Capture::from_device(target_device)
-            .unwrap()
-            .promisc(promiscuous)
-            .timeout(read_time_out)
-            .snaplen(read_size)
-            .immediate_mode(immediate_mode)
-            .buffer_size(buffer_size as i32) // Huge buffer for high speed capture
-            .open()
-            .unwrap();
-
-        let mut cap = cap.setnonblock().unwrap();
-        cap.filter(&source_host_and_port, true).unwrap();
+        // initialize the pcap
+        let cap = init_pcap(
+            &source_device,
+            use_wireless,
+            source_device_ip,
+            promiscuous,
+            read_time_out,
+            read_size,
+            immediate_mode,
+            buffer_size as i64,
+            &source_protocol,
+            source_port,
+            &source_ip,
+        )
+        .expect("Failed to initialize pcap");
 
         // Create a PacketStream from the Capture
         let mut stream = cap.stream(BoxCodec).unwrap();
