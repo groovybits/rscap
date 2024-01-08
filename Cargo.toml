@@ -17,7 +17,7 @@ rustflags = ["-C", "symbol-mangling-version=v0"]
 
 [features]
 default = []
-dpdk_enabled = []
+dpdk_enabled = ["capsule"]
 
 [profile.release-with-debug]
 inherits = "release"
