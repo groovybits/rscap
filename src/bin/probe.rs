@@ -862,7 +862,7 @@ fn init_dpdk(port_id: u16) -> Result<dpdk::eal::Port, Box<dyn std::error::Error>
 
 // Placeholder for non-Linux or DPDK disabled builds
 #[cfg(not(all(feature = "dpdk_enabled", target_os = "linux")))]
-fn init_dpdk(port_id: u16) -> Result<(), Box<dyn std::error::Error>> {
+fn init_dpdk(_port_id: u16) -> Result<(), Box<dyn std::error::Error>> {
     Err("DPDK is not supported on this OS".into())
 }
 
@@ -1081,6 +1081,10 @@ struct Args {
     /// DPDK enable
     #[clap(long, env = "DPDK", default_value_t = false)]
     dpdk: bool,
+
+    /// DPDK Port ID
+    #[clap(long, env = "DPDK_PORT_ID", default_value_t = 0)]
+    dpdk_port_id: u16,
 }
 
 // MAIN Function
@@ -1151,9 +1155,29 @@ async fn main() {
     // Spawn a new thread for packet capture
     let capture_task = if cfg!(feature = "dpdk_enabled") && args.dpdk {
         // DPDK is enabled
-        tokio::spawn(async {
+        tokio::spawn(async move {
             // TODO: DPDK initialization logic goes here");
             error!("DPDK is not yet implemented");
+            // Implement DPDK initialization logic here
+            match init_dpdk(args.dpdk_port_id) {
+                Ok(()) => {
+                    let mut count = 0;
+                    // DPDK packet processing loop
+                    while running_clone.load(Ordering::SeqCst) {
+                        // Fetch and process packets using DPDK
+                        // ...
+
+                        count += 1;
+                        if debug_on {
+                            // Print stats or debug information
+                            println!("DPDK packet count: {}", count);
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to initialize DPDK: {}", e);
+                }
+            }
         })
     } else {
         tokio::spawn(async move {
