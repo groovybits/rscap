@@ -35,7 +35,11 @@ use zmq::PUB;
 //use capnp;
 /*use capnp::message::{Builder, HeapAllocator};*/
 // Include the generated paths for the Cap'n Proto schema
-include!("../stream_data_capnp.rs");
+//include!("../stream_data_capnp.rs");
+//include!("../stream_data_proto.rs");
+
+mod stream_data_proto; // The generated module
+                       //use stream_data_proto::StreamDataProto;
 
 // Define your custom PacketCodec
 pub struct BoxCodec;

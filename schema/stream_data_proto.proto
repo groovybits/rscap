@@ -4,7 +4,7 @@ syntax = "proto3";
 package rscap;
 
 // The StreamData message corresponds to the StreamData struct in the Rust code.
-message StreamData {
+message StreamDataProto {
     uint32 pid = 1;
     uint32 pmt_pid = 2;
     uint32 program_number = 3;
