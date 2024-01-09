@@ -23,6 +23,8 @@ use std::time::Duration as StdDuration;
 use tokio;
 use tokio::time::{timeout, Duration};
 use zmq::SUB;
+// Include the generated paths for the Cap'n Proto schema
+include!("../stream_data_capnp.rs");
 
 async fn produce_message(
     data: Vec<u8>, // Changed to Vec<u8> to allow cloning

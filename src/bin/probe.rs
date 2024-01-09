@@ -1323,36 +1323,31 @@ async fn main() {
 
         while let Some(mut batch) = rx.recv().await {
             for stream_data in batch.iter() {
-                //debug!("Batch processing {} packets", batch.len());
-                let packet_slice = &stream_data.packet
-                    [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
+                // Serialize StreamData to Cap'n Proto message
+                let capnp_message = stream_data_to_capnp(stream_data)
+                    .expect("Failed to convert to Cap'n Proto message");
+                let mut serialized_data = Vec::new();
+                capnp::serialize::write_message(&mut serialized_data, &capnp_message)
+                    .expect("Failed to serialize Cap'n Proto message");
 
-                // Serialize metadata only if necessary
-                let metadata_msg = if send_json_header {
-                    let cloned_stream_data = stream_data.clone(); // Clone avoids copying the Arc<Vec<u8>>
-                    let metadata = serde_json::to_string(&cloned_stream_data).unwrap();
+                // Create ZeroMQ message from serialized Cap'n Proto data
+                let capnp_msg = zmq::Message::from(serialized_data);
 
-                    Some(zmq::Message::from(metadata.as_bytes()))
-                } else {
-                    None
-                };
-
+                // Send the Cap'n Proto message
                 if send_json_header && send_raw_stream {
-                    if let Some(meta_msg) = metadata_msg {
-                        // Send metadata as the first message
-                        publisher.send(meta_msg, zmq::SNDMORE).unwrap();
-
-                        // Send packet data as the second message
-                        let packet_msg = zmq::Message::from(packet_slice);
-                        publisher.send(packet_msg, 0).unwrap();
-                    }
+                    // Send packet data as the second message
+                    let packet_slice = &stream_data.packet[stream_data.packet_start
+                        ..stream_data.packet_start + stream_data.packet_len];
+                    let packet_msg = zmq::Message::from(packet_slice);
+                    publisher.send(capnp_msg, zmq::SNDMORE).unwrap();
+                    publisher.send(packet_msg, 0).unwrap();
                 } else if send_json_header {
-                    // Send metadata only if send_json_header is false
-                    if let Some(meta_msg) = metadata_msg {
-                        publisher.send(meta_msg, 0).unwrap();
-                    }
+                    // Send Cap'n Proto message only
+                    publisher.send(capnp_msg, 0).unwrap();
                 } else if send_raw_stream {
-                    // Send packet data only if send_raw_stream is ftrue
+                    // Send packet data only
+                    let packet_slice = &stream_data.packet[stream_data.packet_start
+                        ..stream_data.packet_start + stream_data.packet_len];
                     let packet_msg = zmq::Message::from(packet_slice);
                     publisher.send(packet_msg, 0).unwrap();
                 }
