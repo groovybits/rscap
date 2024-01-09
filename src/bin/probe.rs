@@ -8,6 +8,8 @@
  */
 
 use async_zmq;
+use capnp;
+use capnp::message::{Builder, HeapAllocator};
 #[cfg(feature = "dpdk_enabled")]
 use capsule::config::{load_config, DPDKConfig};
 #[cfg(feature = "dpdk_enabled")]
@@ -32,8 +34,6 @@ use std::{
 };
 use tokio::sync::mpsc::{self};
 use zmq::PUB;
-//use capnp;
-/*use capnp::message::{Builder, HeapAllocator};*/
 // Include the generated paths for the Cap'n Proto schema
 include!("../stream_data_capnp.rs");
 
@@ -413,40 +413,93 @@ fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
     // TODO: ... other checks, updating the respective counters ...
 }
 
-/*
-// Function to convert StreamData to a Cap'n Proto message
 fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapAllocator>> {
     let mut message = Builder::new_default();
     {
-        let mut stream_data_msg = message.init_root::<stream_data_capnp::stream_data::Builder>();
+        let mut stream_data_msg = message.init_root::<stream_data::Builder>();
 
         stream_data_msg.set_pid(stream_data.pid);
         stream_data_msg.set_pmt_pid(stream_data.pmt_pid);
         stream_data_msg.set_program_number(stream_data.program_number);
-        stream_data_msg.set_stream_type(&stream_data.stream_type);
-        // ... Continue setting other fields
+
+        // Correct way to convert a String to ::capnp::text::Reader<'_>
+        stream_data_msg.set_stream_type(stream_data.stream_type.as_str().into());
+
+        stream_data_msg.set_continuity_counter(stream_data.continuity_counter);
+        stream_data_msg.set_timestamp(stream_data.timestamp);
+        stream_data_msg.set_bitrate(stream_data.bitrate);
+        stream_data_msg.set_bitrate_max(stream_data.bitrate_max);
+        stream_data_msg.set_bitrate_min(stream_data.bitrate_min);
+        stream_data_msg.set_bitrate_avg(stream_data.bitrate_avg);
+        stream_data_msg.set_iat(stream_data.iat);
+        stream_data_msg.set_iat_max(stream_data.iat_max);
+        stream_data_msg.set_iat_min(stream_data.iat_min);
+        stream_data_msg.set_iat_avg(stream_data.iat_avg);
+        stream_data_msg.set_error_count(stream_data.error_count);
+        stream_data_msg.set_last_arrival_time(stream_data.last_arrival_time);
+        stream_data_msg.set_start_time(stream_data.start_time);
+        stream_data_msg.set_total_bits(stream_data.total_bits);
+        stream_data_msg.set_count(stream_data.count);
+        stream_data_msg.set_rtp_timestamp(stream_data.rtp_timestamp);
+        stream_data_msg.set_rtp_payload_type(stream_data.rtp_payload_type);
+
+        stream_data_msg
+            .set_rtp_payload_type_name(stream_data.rtp_payload_type_name.as_str().into());
+
+        stream_data_msg.set_rtp_line_number(stream_data.rtp_line_number);
+        stream_data_msg.set_rtp_line_offset(stream_data.rtp_line_offset);
+        stream_data_msg.set_rtp_line_length(stream_data.rtp_line_length);
+        stream_data_msg.set_rtp_field_id(stream_data.rtp_field_id);
+        stream_data_msg.set_rtp_line_continuation(stream_data.rtp_line_continuation);
+        stream_data_msg.set_rtp_extended_sequence_number(stream_data.rtp_extended_sequence_number);
     }
 
     Ok(message)
 }
 
-// Function to convert a Cap'n Proto message back to StreamData
-fn capnp_to_stream_data(reader: stream_data_capnp::stream_data::Reader) -> capnp::Result<StreamData> {
+fn capnp_to_stream_data(reader: stream_data::Reader) -> capnp::Result<StreamData> {
     let stream_data = StreamData {
-        pid: reader.get_pid()?,
-        pmt_pid: reader.get_pmt_pid()?,
-        program_number: reader.get_program_number()?,
-        stream_type: reader.get_stream_type()?.to_string(),
-        // ... Continue setting other fields
-        packet: Arc::new(Vec::new()), // Initialize packet as empty
+        pid: reader.get_pid(),
+        pmt_pid: reader.get_pmt_pid(),
+        program_number: reader.get_program_number(),
+        stream_type: match reader.get_stream_type() {
+            Ok(text_reader) => text_reader.to_string().unwrap(),
+            Err(_) => String::new(), // or handle the error as needed
+        },
+        continuity_counter: reader.get_continuity_counter(),
+        timestamp: reader.get_timestamp(),
+        bitrate: reader.get_bitrate(),
+        bitrate_max: reader.get_bitrate_max(),
+        bitrate_min: reader.get_bitrate_min(),
+        bitrate_avg: reader.get_bitrate_avg(),
+        iat: reader.get_iat(),
+        iat_max: reader.get_iat_max(),
+        iat_min: reader.get_iat_min(),
+        iat_avg: reader.get_iat_avg(),
+        error_count: reader.get_error_count(),
+        last_arrival_time: reader.get_last_arrival_time(),
+        start_time: reader.get_start_time(),
+        total_bits: reader.get_total_bits(),
+        count: reader.get_count(),
+        rtp_timestamp: reader.get_rtp_timestamp(),
+        rtp_payload_type: reader.get_rtp_payload_type(),
+        rtp_payload_type_name: match reader.get_rtp_payload_type_name() {
+            Ok(text_reader) => text_reader.to_string().unwrap(),
+            Err(_) => String::new(), // or handle the error as needed
+        },
+        rtp_line_number: reader.get_rtp_line_number(),
+        rtp_line_offset: reader.get_rtp_line_offset(),
+        rtp_line_length: reader.get_rtp_line_length(),
+        rtp_field_id: reader.get_rtp_field_id(),
+        rtp_line_continuation: reader.get_rtp_line_continuation(),
+        rtp_extended_sequence_number: reader.get_rtp_extended_sequence_number().into(),
+        packet: Arc::new(Vec::new()),
         packet_start: 0,
         packet_len: 0,
-        // ... Initialize other fields as required
     };
 
     Ok(stream_data)
 }
-*/
 
 /*
 

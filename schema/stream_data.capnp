@@ -28,5 +28,5 @@ struct StreamData {
     rtpLineLength @24 :UInt16;
     rtpFieldId @25 :UInt8;
     rtpLineContinuation @26 :UInt8;
+    rtpExtendedSequenceNumber @27 :UInt16;
 }
-
