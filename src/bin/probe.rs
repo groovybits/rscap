@@ -413,6 +413,8 @@ fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
     // TODO: ... other checks, updating the respective counters ...
 }
 
+// unused code
+#[allow(dead_code)]
 fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapAllocator>> {
     let mut message = Builder::new_default();
     {
@@ -457,6 +459,8 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
     Ok(message)
 }
 
+// unused code
+#[allow(dead_code)]
 fn capnp_to_stream_data(reader: stream_data::Reader) -> capnp::Result<StreamData> {
     let stream_data = StreamData {
         pid: reader.get_pid(),
