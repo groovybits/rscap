@@ -11,10 +11,6 @@ authors = ["Chris Kennedy"]
 version = "0.2.1"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-[build]
-rustflags = ["-C", "symbol-mangling-version=v0"]
-
 [features]
 default = []
 dpdk_enabled = ["capsule"]
