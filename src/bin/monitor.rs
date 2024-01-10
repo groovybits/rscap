@@ -2,7 +2,7 @@
  * monitor.rs
  *
  * This is a part of a simple ZeroMQ-based MPEG-TS capture and playback system.
- * This file contains the client-side code that receives json metadata, or binary
+ * This file contains the client-side code that receives serialized metadata, or binary
  * structured packets with potentially raw MPEG-TS chunks from the rscap
  * probe and writes them to a file.
  *
@@ -24,7 +24,56 @@ use tokio;
 use tokio::time::{timeout, Duration};
 use zmq::SUB;
 // Include the generated paths for the Cap'n Proto schema
+use capnp;
+use rscap::stream_data::StreamData;
 include!("../stream_data_capnp.rs");
+use std::sync::Arc;
+
+// unused code
+#[allow(dead_code)]
+fn capnp_to_stream_data(reader: stream_data_capnp::Reader) -> capnp::Result<StreamData> {
+    let stream_data = StreamData {
+        pid: reader.get_pid(),
+        pmt_pid: reader.get_pmt_pid(),
+        program_number: reader.get_program_number(),
+        stream_type: match reader.get_stream_type() {
+            Ok(text_reader) => text_reader.to_string().unwrap(),
+            Err(_) => String::new(), // or handle the error as needed
+        },
+        continuity_counter: reader.get_continuity_counter(),
+        timestamp: reader.get_timestamp(),
+        bitrate: reader.get_bitrate(),
+        bitrate_max: reader.get_bitrate_max(),
+        bitrate_min: reader.get_bitrate_min(),
+        bitrate_avg: reader.get_bitrate_avg(),
+        iat: reader.get_iat(),
+        iat_max: reader.get_iat_max(),
+        iat_min: reader.get_iat_min(),
+        iat_avg: reader.get_iat_avg(),
+        error_count: reader.get_error_count(),
+        last_arrival_time: reader.get_last_arrival_time(),
+        start_time: reader.get_start_time(),
+        total_bits: reader.get_total_bits(),
+        count: reader.get_count(),
+        rtp_timestamp: reader.get_rtp_timestamp(),
+        rtp_payload_type: reader.get_rtp_payload_type(),
+        rtp_payload_type_name: match reader.get_rtp_payload_type_name() {
+            Ok(text_reader) => text_reader.to_string().unwrap(),
+            Err(_) => String::new(), // or handle the error as needed
+        },
+        rtp_line_number: reader.get_rtp_line_number(),
+        rtp_line_offset: reader.get_rtp_line_offset(),
+        rtp_line_length: reader.get_rtp_line_length(),
+        rtp_field_id: reader.get_rtp_field_id(),
+        rtp_line_continuation: reader.get_rtp_line_continuation(),
+        rtp_extended_sequence_number: reader.get_rtp_extended_sequence_number().into(),
+        packet: Arc::new(Vec::new()),
+        packet_start: 0,
+        packet_len: 0,
+    };
+
+    Ok(stream_data)
+}
 
 async fn produce_message(
     data: Vec<u8>, // Changed to Vec<u8> to allow cloning
@@ -90,9 +139,9 @@ struct Args {
     #[clap(long, env = "SILENT", default_value_t = false)]
     silent: bool,
 
-    /// Sets if JSON header should be sent
-    #[clap(long, env = "RECV_JSON_HEADER", default_value_t = false)]
-    recv_json_header: bool,
+    /// Sets if header should be recieved
+    #[clap(long, env = "RECV_HEADER", default_value_t = false)]
+    recv_header: bool,
 
     /// Sets if Raw Stream should be sent
     #[clap(long, env = "RECV_RAW_STREAM", default_value_t = false)]
@@ -141,7 +190,7 @@ async fn main() {
     /*let debug_on = args.debug_on;*/
     // TODO: implement frame hex dumps, move from probe and test capture with them.
     let silent = args.silent;
-    let recv_json_header = args.recv_json_header;
+    let recv_header = args.recv_header;
     let recv_raw_stream = args.recv_raw_stream;
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
@@ -171,8 +220,8 @@ async fn main() {
 
     let mut total_bytes = 0;
     let mut mpeg_packets = 0;
-    let mut expecting_metadata = recv_json_header; // Expect metadata only if recv_json_header is true
-                                                   // Initialize an Option<File> to None
+    let mut expecting_metadata = recv_header; // Expect metadata only if recv_header is true
+                                              // Initialize an Option<File> to None
     let mut file = if !output_file.is_empty() {
         Some(File::create(&output_file).unwrap())
     } else {
@@ -183,13 +232,13 @@ async fn main() {
         let more = zmq_sub.get_rcvmore().unwrap();
 
         if expecting_metadata {
-            // Process JSON header if expecting metadata
-            if recv_json_header {
-                let json_header = String::from_utf8(msg.clone()).unwrap();
+            // Process serialized header if expecting metadata
+            if recv_header {
+                let header = String::from_utf8(msg.clone()).unwrap();
                 debug!(
                     "Monitor: #{} Received JSON header: {}",
                     mpeg_packets + 1,
-                    json_header
+                    header
                 );
 
                 if send_to_kafka {
@@ -212,7 +261,7 @@ async fn main() {
 
             // If not expecting more parts or not receiving raw data, continue to next message
             if !more || !recv_raw_stream {
-                expecting_metadata = recv_json_header; // Reset for next message if applicable
+                expecting_metadata = recv_header; // Reset for next message if applicable
                 continue;
             }
 
@@ -244,7 +293,7 @@ async fn main() {
                 file.write_all(&msg).unwrap();
             }
 
-            expecting_metadata = recv_json_header; // Reset for next message if applicable
+            expecting_metadata = recv_header; // Reset for next message if applicable
         }
     }
 

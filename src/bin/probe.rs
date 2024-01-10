@@ -1,5 +1,5 @@
 /*
- * rscap: probe.rs - Rust Stream Capture with pcap, output json stats to ZeroMQ
+ * rscap: probe.rs - Rust Stream Capture with pcap, output serialized stats to ZeroMQ
  *
  * Written in 2024 by Chris Kennedy (C) LTN Global
  *
@@ -156,52 +156,6 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
     Ok(message)
 }
 
-// unused code
-#[allow(dead_code)]
-fn capnp_to_stream_data(reader: stream_data_capnp::Reader) -> capnp::Result<StreamData> {
-    let stream_data = StreamData {
-        pid: reader.get_pid(),
-        pmt_pid: reader.get_pmt_pid(),
-        program_number: reader.get_program_number(),
-        stream_type: match reader.get_stream_type() {
-            Ok(text_reader) => text_reader.to_string().unwrap(),
-            Err(_) => String::new(), // or handle the error as needed
-        },
-        continuity_counter: reader.get_continuity_counter(),
-        timestamp: reader.get_timestamp(),
-        bitrate: reader.get_bitrate(),
-        bitrate_max: reader.get_bitrate_max(),
-        bitrate_min: reader.get_bitrate_min(),
-        bitrate_avg: reader.get_bitrate_avg(),
-        iat: reader.get_iat(),
-        iat_max: reader.get_iat_max(),
-        iat_min: reader.get_iat_min(),
-        iat_avg: reader.get_iat_avg(),
-        error_count: reader.get_error_count(),
-        last_arrival_time: reader.get_last_arrival_time(),
-        start_time: reader.get_start_time(),
-        total_bits: reader.get_total_bits(),
-        count: reader.get_count(),
-        rtp_timestamp: reader.get_rtp_timestamp(),
-        rtp_payload_type: reader.get_rtp_payload_type(),
-        rtp_payload_type_name: match reader.get_rtp_payload_type_name() {
-            Ok(text_reader) => text_reader.to_string().unwrap(),
-            Err(_) => String::new(), // or handle the error as needed
-        },
-        rtp_line_number: reader.get_rtp_line_number(),
-        rtp_line_offset: reader.get_rtp_line_offset(),
-        rtp_line_length: reader.get_rtp_line_length(),
-        rtp_field_id: reader.get_rtp_field_id(),
-        rtp_line_continuation: reader.get_rtp_line_continuation(),
-        rtp_extended_sequence_number: reader.get_rtp_extended_sequence_number().into(),
-        packet: Arc::new(Vec::new()),
-        packet_start: 0,
-        packet_len: 0,
-    };
-
-    Ok(stream_data)
-}
-
 // Invoke this function for each MPEG-TS packet
 fn process_packet(
     stream_data_packet: &mut StreamData,
@@ -235,7 +189,7 @@ fn process_packet(
             }
             let uptime = arrival_time - stream_data.start_time;
 
-            // print out each field of structure similar to json but not wrapping into json
+            // print out each field of structure
             debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, uptime);
 
             stream_data_packet.bitrate = stream_data.bitrate;
@@ -274,7 +228,7 @@ fn process_packet(
                 ));
                 Arc::make_mut(&mut stream_data).update_stats(packet.len(), arrival_time);
 
-                // print out each field of structure similar to json but not wrapping into json
+                // print out each field of structure
                 info!("STATUS::PACKET:ADD[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
 
                 pid_map.insert(pid, stream_data);
@@ -506,7 +460,7 @@ fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8]) {
                     // update stream_data stats
                     Arc::make_mut(&mut stream_data).update_stats(pmt_packet.len(), timestamp);
 
-                    // print out each field of structure similar to json but not wrapping into json
+                    // print out each field of structure
                     info!("STATUS::STREAM:CREATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
 
                     pid_map.insert(stream_pid, stream_data);
@@ -518,7 +472,7 @@ fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8]) {
                     // update the stream type
                     Arc::make_mut(&mut stream_data).update_stream_type(stream_type.to_string());
 
-                    // print out each field of structure similar to json but not wrapping into json
+                    // print out each field of structure
                     debug!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
 
                     // write the stream_data back to the pid_map with modified values
@@ -744,9 +698,9 @@ struct Args {
     #[clap(long, env = "USE_WIRELESS", default_value_t = false)]
     use_wireless: bool,
 
-    /// Sets if JSON header should be sent
-    #[clap(long, env = "SEND_JSON_HEADER", default_value_t = false)]
-    send_json_header: bool,
+    /// Sets if header should be serialized and sent
+    #[clap(long, env = "SEND_HEADER", default_value_t = false)]
+    send_header: bool,
 
     /// Sets if Raw Stream should be sent
     #[clap(long, env = "SEND_RAW_STREAM", default_value_t = false)]
@@ -828,7 +782,7 @@ async fn main() {
     let debug_on = args.debug_on;
     let silent = args.silent;
     let use_wireless = args.use_wireless;
-    let send_json_header = args.send_json_header;
+    let send_header = args.send_header;
     let send_raw_stream = args.send_raw_stream;
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
@@ -996,14 +950,14 @@ async fn main() {
                 let capnp_msg = zmq::Message::from(serialized_data);
 
                 // Send the Cap'n Proto message
-                if send_json_header && send_raw_stream {
+                if send_header && send_raw_stream {
                     // Send packet data as the second message
                     let packet_slice = &stream_data.packet[stream_data.packet_start
                         ..stream_data.packet_start + stream_data.packet_len];
                     let packet_msg = zmq::Message::from(packet_slice);
                     publisher.send(capnp_msg, zmq::SNDMORE).unwrap();
                     publisher.send(packet_msg, 0).unwrap();
-                } else if send_json_header {
+                } else if send_header {
                     // Send Cap'n Proto message only
                     publisher.send(capnp_msg, 0).unwrap();
                 } else if send_raw_stream {
