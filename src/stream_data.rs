@@ -6,6 +6,7 @@
 
 use crate::current_unix_timestamp_ms;
 use log::error;
+use serde::{Deserialize, Serialize};
 use std::{fmt, sync::Arc};
 
 // constant for PAT PID
@@ -46,7 +47,7 @@ impl fmt::Display for Codec {
 }
 
 // StreamData struct
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct StreamData {
     pub pid: u16,
     pub pmt_pid: u16,
@@ -64,12 +65,13 @@ pub struct StreamData {
     pub iat_avg: u64,
     pub error_count: u32,
     pub last_arrival_time: u64,
-    pub start_time: u64,      // field for start time
-    pub total_bits: u64,      // field for total bits
-    pub count: u32,           // field for count
+    pub start_time: u64, // field for start time
+    pub total_bits: u64, // field for total bits
+    pub count: u32,      // field for count
+    #[serde(skip)]
     pub packet: Arc<Vec<u8>>, // The actual MPEG-TS packet data
-    pub packet_start: usize,  // Offset into the data
-    pub packet_len: usize,    // Offset into the data
+    pub packet_start: usize, // Offset into the data
+    pub packet_len: usize, // Offset into the data
     // SMPTE 2110 fields
     pub rtp_timestamp: u32,
     pub rtp_payload_type: u8,

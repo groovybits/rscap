@@ -209,6 +209,7 @@ async fn main() {
     let kafka_broker: String = args.kafka_broker;
     let kafka_topic: String = args.kafka_topic;
     let send_to_kafka = args.send_to_kafka;
+    let kafka_timeout = args.kafka_timeout;
     let ipc_path = args.ipc_path;
     let mut is_ipc = false;
 
@@ -273,13 +274,17 @@ async fn main() {
         match capnp_to_stream_data(&msg) {
             Ok(stream_data) => {
                 // Process the StreamData as needed
+                // Serialize the StreamData object to JSON
+                let serialized_data = serde_json::to_vec(&stream_data)
+                    .expect("Failed to serialize StreamData to JSON");
+
+                // Process the StreamData as needed
                 if send_to_kafka {
                     let brokers = vec![kafka_broker.clone()];
                     let topic = kafka_topic.clone();
-                    let data = msg.clone(); // Clone the data
-                    let kafka_timeout = args.kafka_timeout;
 
-                    match produce_message(data, topic, brokers, kafka_timeout).await {
+                    // Send serialized data to Kafka
+                    match produce_message(serialized_data, topic, brokers, kafka_timeout).await {
                         Ok(_) => info!("Sent message to Kafka"),
                         Err(e) => error!("Error sending message to Kafka: {:?}", e),
                     }
