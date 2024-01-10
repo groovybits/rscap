@@ -82,7 +82,6 @@ sudo RUST_LOG=info target/release/probe \
          --source-port 10000 \
          --target-ip 127.0.0.1 \
          --target-port 5556 \
-         --send-json-header \
          --source-device eth0 \
          --debug
 
@@ -97,7 +96,7 @@ Build and run the zmq capture monitor client...
 RUST_LOG=info target/release/monitor \
          --source-ip 127.0.0.1 \
          --source-port 5556 \
-         --recv-json-header \
+         --output_file capture.ts \
          --debug
 
 ```
@@ -117,8 +116,7 @@ ffmpeg -i capture.ts
 target/release/monitor \
         --kafka-broker sun:9092 \
         --kafka-topic test \
-        --send-to-kafka \
-        --recv-json-header # Must add to both probe and monitor for Kafka metrics
+        --send-to-kafka
 ```
 
 ## Probe Command Line Options (as of 01/04/2024)
@@ -136,25 +134,23 @@ Options:
       --read-time-out <READ_TIME_OUT>
           Sets the read timeout [env: READ_TIME_OUT=] [default: 60000]
       --target-port <TARGET_PORT>
-          Sets the target port [env: TARGET_PORT=5556] [default: 5556]
+          Sets the target port [env: TARGET_PORT=] [default: 5556]
       --target-ip <TARGET_IP>
-          Sets the target IP [env: TARGET_IP=127.0.0.1] [default: 127.0.0.1]
+          Sets the target IP [env: TARGET_IP=] [default: 127.0.0.1]
       --source-device <SOURCE_DEVICE>
-          Sets the source device [env: SOURCE_DEVICE=en7] [default: ]
+          Sets the source device [env: SOURCE_DEVICE=] [default: ]
       --source-ip <SOURCE_IP>
-          Sets the source IP [env: SOURCE_IP=224.0.0.200] [default: 224.0.0.200]
+          Sets the source IP [env: SOURCE_IP=] [default: 224.0.0.200]
       --source-protocol <SOURCE_PROTOCOL>
           Sets the source protocol [env: SOURCE_PROTOCOL=] [default: udp]
       --source-port <SOURCE_PORT>
-          Sets the source port [env: SOURCE_PORT=10000] [default: 10000]
+          Sets the source port [env: SOURCE_PORT=] [default: 10000]
       --debug-on
           Sets the debug mode [env: DEBUG=]
       --silent
           Sets the silent mode [env: SILENT=]
       --use-wireless
           Sets if wireless is used [env: USE_WIRELESS=]
-      --send-json-header
-          Sets if JSON header should be sent [env: SEND_JSON_HEADER=false]
       --send-raw-stream
           Sets if Raw Stream should be sent [env: SEND_RAW_STREAM=]
       --packet-count <PACKET_COUNT>
@@ -170,7 +166,21 @@ Options:
       --show-tr101290
           Show the TR101290 p1, p2 and p3 errors if any [env: SHOW_TR101290=]
       --buffer-size <BUFFER_SIZE>
-          Sets the pcap buffer size [env: BUFFER_SIZE=] [default: 2847932416]
+          Sets the pcap buffer size [env: BUFFER_SIZE=] [default: 1358000]
+      --immediate-mode
+          PCAP immediate mode [env: IMMEDIATE_MODE=]
+      --pcap-stats
+          PCAP output capture stats mode [env: PCAP_STATS=]
+      --pcap-channel-size <PCAP_CHANNEL_SIZE>
+          MPSC Channel Size for ZeroMQ [env: PCAP_CHANNEL_SIZE=] [default: 1000]
+      --zmq-channel-size <ZMQ_CHANNEL_SIZE>
+          MPSC Channel Size for PCAP [env: ZMQ_CHANNEL_SIZE=] [default: 1000]
+      --dpdk
+          DPDK enable [env: DPDK=]
+      --dpdk-port-id <DPDK_PORT_ID>
+          DPDK Port ID [env: DPDK_PORT_ID=] [default: 0]
+      --ipc-path <IPC_PATH>
+          IPC Path for ZeroMQ [env: IPC_PATH=]
   -h, --help
           Print help
   -V, --version
@@ -183,42 +193,25 @@ Options:
 Usage: monitor [OPTIONS]
 
 Options:
-      --source-port <SOURCE_PORT>    Sets the target port [env: TARGET_PORT=5556] [default: 5556]
-      --source-ip <SOURCE_IP>        Sets the target IP [env: TARGET_IP=127.0.0.1] [default: 127.0.0.1]
-      --debug-on                     Sets the debug mode [env: DEBUG=]
-      --silent                       Sets the silent mode [env: SILENT=]
-      --recv-json-header             Sets if JSON header should be sent [env: RECV_JSON_HEADER=]
-      --recv-raw-stream              Sets if Raw Stream should be sent [env: RECV_RAW_STREAM=]
-      --packet-count <PACKET_COUNT>  number of packets to capture [env: PACKET_COUNT=] [default: 0]
-      --no-progress                  Turn off progress output dots [env: NO_PROGRESS=]
-      --output-file <OUTPUT_FILE>    Output Filename [env: OUTPUT_FILE=capture.ts] [default: output.ts]
-      --kafka-broker <KAFKA_BROKER>  Kafka Broker [env: KAFKA_BROKER=] [default: localhost:9092]
-      --kafka-topic <KAFKA_TOPIC>    Kafka Topic [env: KAFKA_TOPIC=] [default: rscap]
-      --send-to-kafka                Send to Kafka if true [env: SEND_TO_KAFKA=]
-  -h, --help                         Print help
-  -V, --version                      Print version
-```
+      --source-port <SOURCE_PORT>      Sets the target port [env: TARGET_PORT=] [default: 5556]
+      --source-ip <SOURCE_IP>          Sets the target IP [env: TARGET_IP=] [default: 127.0.0.1]
+      --debug-on                       Sets the debug mode [env: DEBUG=]
+      --silent                         Sets the silent mode [env: SILENT=]
+      --recv-raw-stream                Sets if Raw Stream should be sent [env: RECV_RAW_STREAM=]
+      --packet-count <PACKET_COUNT>    number of packets to capture [env: PACKET_COUNT=] [default: 0]
+      --no-progress                    Turn off progress output dots [env: NO_PROGRESS=]
+      --output-file <OUTPUT_FILE>      Output Filename [env: OUTPUT_FILE=] [default: ]
+      --kafka-broker <KAFKA_BROKER>    Kafka Broker [env: KAFKA_BROKER=] [default: localhost:9092]
+      --kafka-topic <KAFKA_TOPIC>      Kafka Topic [env: KAFKA_TOPIC=] [default: rscap]
+      --send-to-kafka                  Send to Kafka if true [env: SEND_TO_KAFKA=]
+      --kafka-timeout <KAFKA_TIMEOUT>  Kafka timeout to drop packets [env: KAFKA_TIMEOUT=] [default: 0]
+      --ipc-path <IPC_PATH>            IPC Path for ZeroMQ [env: IPC_PATH=]
+  -h, --help                           Print help
+  -V, --version                        Print version```
 
 ## Profiling with Intel Vtune (Linux/Windows)
 
-```text
-## Setup YUM Repo
-
-# YUM add oneapi repo
-tee > /tmp/oneAPI.repo << EOF
-[oneAPI]
-name=Intel® oneAPI repository
-baseurl=https://yum.repos.intel.com/oneapi
-enabled=1
-gpgcheck=1
-repo_gpgcheck=1
-gpgkey=https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
-EOF
-
-# Copy YUM config for repo into place and install VTune
-sudo mv /tmp/oneAPI.repo /etc/yum.repos.d
-sudo yum install intel-oneapi-vtune
-```
+Get VTune: [Intel oneAPI Base Toolkit](https://software.intel.com/content/www/us/en/develop/tools/oneapi/base-toolkit/download.html)
 
 Running VTune [vtune.sh](vtune.sh)
 
@@ -226,19 +219,6 @@ Running VTune [vtune.sh](vtune.sh)
 ## Runtime for VTune
 # Web UI (Best) Read [Intel VTune Documentation](https://www.intel.com/content/www/us/en/docs/vtune-profiler/user-guide/2024-0/web-server-ui.html)
 ./vtune.sh
-
-# Command line (Optional, not preferred, doesn't work near as well with Rust at least)
-source /opt/intel/oneapi/vtune/latest/vtune-vars.sh
-/opt/intel/oneapi/vtune/latest/bin64/vtune \
-        -collect performance-snapshot \
-            target/debug/probe
-
-/opt/intel/oneapi/vtune/latest/bin64/vtune \
-        -collect hotspots \
-        -result-dir results \
-            target/release/probe
-
-vtune -report summary -result-dir results -format html -report-output results/report.html
 ```
 
 ## TODO - roadmap plans
@@ -247,7 +227,6 @@ vtune -report summary -result-dir results -format html -report-output results/re
 - (WIP) SMPTE 2110 handling reassembling frames and analogous to the MpegTS support.
 - (WIP) PES parsing and analysis of streams.
 - (WIP) FFmpeg libzmq protocol compatibility to allow branching off into libav easily.
-- (WIP) Cap'n Proto for metadata sent through ZMQ to monitor modules. Replace all the JSON usage / remove overhead.
 - (WIP) General network analyzer view of network around the streams we know/care about.
 - Have multiple client modes to distribute processing of the stream on the zmq endpoints.
 - Wrap [ltntstools](https://github.com/LTNGlobal-opensource/libltntstools) lib functionality into Rust through C bindings (If possible).
@@ -267,4 +246,3 @@ vtune -report summary -result-dir results -format html -report-output results/re
 - Meme like overlay of current frame and stream metrics on the thumbnail images with precise timing and frame information like a scope. (phone/pad usage)
 
 ### Chris Kennedy (C) 2024 LGPL
-
