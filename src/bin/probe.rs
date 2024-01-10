@@ -30,6 +30,7 @@ use rtp_rs as rtp;
 use std::{
     collections::HashMap,
     error::Error as StdError,
+    fmt,
     net::{IpAddr, Ipv4Addr, UdpSocket},
     sync::atomic::{AtomicBool, Ordering},
     sync::Arc,
