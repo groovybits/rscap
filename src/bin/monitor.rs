@@ -241,7 +241,7 @@ async fn main() {
         return;
     }
 
-    if is_ipc {
+    if !is_ipc {
         zmq_sub.set_subscribe(b"").unwrap();
     }
     info!("ZeroMQ subscriber startup {}", endpoint);
@@ -263,13 +263,6 @@ async fn main() {
         }
 
         let more = zmq_sub.get_rcvmore().unwrap();
-        let header = String::from_utf8(msg.clone()).unwrap();
-        debug!(
-            "Monitor: #{} Received JSON header: {}",
-            mpeg_packets + 1,
-            header
-        );
-
         // Deserialize the received message into StreamData
         match capnp_to_stream_data(&msg) {
             Ok(stream_data) => {
@@ -289,6 +282,12 @@ async fn main() {
                         Err(e) => error!("Error sending message to Kafka: {:?}", e),
                     }
                 }
+
+                debug!(
+                    "Monitor: #{} Received serialized message: {}",
+                    mpeg_packets + 1,
+                    stream_data.bitrate,
+                );
             }
             Err(e) => {
                 error!("Error deserializing message: {:?}", e);
