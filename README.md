@@ -3,10 +3,10 @@
 [![Rust](https://github.com/groovybits/rscap/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/groovybits/rscap/actions/workflows/rust.yml)
 
 An experiment researching Rust and efficiency at handling high rates of streaming MpegTS and SMPTE2110 for Broadcast Monitoring usage.
-Distribute an PCap sourced MpegTS/SMPTE2110 multcasted network stream and distribute to ZeroMQ Monitor modules.
+Distribute an PCap sourced MpegTS/SMPTE2110 multcast network stream and distribute to ZeroMQ Monitor module for sending to Kafka.
 Capture the TS/SMPTE2110 using pcap with filter rules for specifying which stream ip and port. Validate the stream for conformance
-keeping the ZeroMQ output clean without any non-legal TS/SMPTE2110 packets. Store metadata extracted in zeromq json headers (Cap'n Proto soon).
-Share out multicast to many clients for distributed stream processing. Zero pcap buffer copies are the target goal.
+keeping the ZeroMQ output clean without any non-legal TS/SMPTE2110 packets. Send metadata from probe to monitor via ZMQP serialized as Cap'n Proto buffers.
+Send metrics to Kafka from the monitor process if requested for long-term storage.
 
 Optionally the monitor process can output final json metrics to kafka for distributed probes sending to some kafka based centralized processing system for the data collected.
 
