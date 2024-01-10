@@ -25,6 +25,7 @@ use tokio::time::{timeout, Duration};
 use zmq::SUB;
 // Include the generated paths for the Cap'n Proto schema
 use capnp;
+use rscap::hexdump;
 use rscap::stream_data::StreamData;
 include!("../stream_data_capnp.rs");
 use std::sync::Arc;
@@ -200,7 +201,7 @@ async fn main() {
     // Use the parsed arguments directly
     let source_port = args.source_port;
     let source_ip = args.source_ip;
-    /*let debug_on = args.debug_on;*/
+    let debug_on = args.debug_on;
     // TODO: implement frame hex dumps, move from probe and test capture with them.
     let silent = args.silent;
     let packet_count = args.packet_count;
@@ -271,6 +272,14 @@ async fn main() {
                 let serialized_data = serde_json::to_vec(&stream_data)
                     .expect("Failed to serialize StreamData to JSON");
 
+                if debug_on {
+                    hexdump(
+                        &stream_data.packet,
+                        stream_data.packet_start,
+                        stream_data.packet_len,
+                    );
+                }
+
                 // Process the StreamData as needed
                 if send_to_kafka {
                     let brokers = vec![kafka_broker.clone()];
@@ -283,10 +292,22 @@ async fn main() {
                     }
                 }
 
-                debug!(
-                    "Monitor: #{} Received serialized message: {}",
+                // print the structure of the packet
+                debug!("MONITOR::PACKET:RECEIVE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {}",
                     mpeg_packets + 1,
+                    stream_data.pid,
+                    stream_data.stream_type,
                     stream_data.bitrate,
+                    stream_data.bitrate_max,
+                    stream_data.bitrate_min,
+                    stream_data.bitrate_avg,
+                    stream_data.iat,
+                    stream_data.iat_max,
+                    stream_data.iat_min,
+                    stream_data.iat_avg,
+                    stream_data.error_count,
+                    stream_data.continuity_counter,
+                    stream_data.timestamp,
                 );
             }
             Err(e) => {
