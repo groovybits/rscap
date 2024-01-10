@@ -10,5 +10,4 @@ sudo RUST_LOG=$ERROR_LEVEL numactl --cpubind=$CPU_BIND --membind=$MEM_BIND \
         --no-progress \
         --pcap-stats \
         --smpte2110 \
-        --send-raw-stream \
-        --send-json-header
+        --send-raw-stream
