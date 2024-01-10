@@ -1,6 +1,6 @@
 @0x8a218fdfd03af08e;
 
-struct StreamData {
+struct StreamDataCapnp {
     pid @0 :UInt16;
     pmtPid @1 :UInt16;
     programNumber @2 :UInt16;
