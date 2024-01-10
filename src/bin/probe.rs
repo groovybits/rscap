@@ -590,7 +590,7 @@ async fn main() {
     let debug_on = args.debug_on;
     let silent = args.silent;
     let use_wireless = args.use_wireless;
-    let send_raw_stream = args.send_raw_stream;
+    let _send_raw_stream = args.send_raw_stream;
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
     let no_zmq = args.no_zmq;
@@ -763,14 +763,14 @@ async fn main() {
                 let capnp_msg = zmq::Message::from(serialized_data);
 
                 // Send the Cap'n Proto message
-                let packet_slice = &stream_data.packet
-                    [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
-                let mut packet_msg = zmq::Message::from(Vec::new());
+                /*let packet_slice = &stream_data.packet
+                [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];*/
+                /*let mut packet_msg = zmq::Message::from(Vec::new());
                 if send_raw_stream {
                     packet_msg = zmq::Message::from(packet_slice);
-                }
-                publisher.send(capnp_msg, zmq::SNDMORE).unwrap();
-                publisher.send(packet_msg, 0).unwrap();
+                    }*/
+                publisher.send(capnp_msg, 0 /*zmq::SNDMORE*/).unwrap();
+                //publisher.send(packet_msg, 0).unwrap();
             }
             batch.clear();
         }

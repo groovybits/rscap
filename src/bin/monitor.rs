@@ -262,7 +262,7 @@ async fn main() {
             break;
         }
 
-        let more = zmq_sub.get_rcvmore().unwrap();
+        //let more = zmq_sub.get_rcvmore().unwrap();
         // Deserialize the received message into StreamData
         match capnp_to_stream_data(&msg) {
             Ok(stream_data) => {
@@ -299,9 +299,9 @@ async fn main() {
         }
 
         // If not expecting more parts or not receiving raw data, continue to next message
-        if !more {
-            continue;
-        }
+        /*if !more {
+        continue;
+        }*/
 
         // Process raw data packet
         total_bytes += msg.len();
@@ -314,9 +314,9 @@ async fn main() {
             total_bytes
         );
 
-        if !no_progress {
-            print!("#");
-        }
+        /*if !no_progress {
+        print!("#");
+        }*/
 
         // Write to file if output_file is provided
         if let Some(file) = file.as_mut() {
