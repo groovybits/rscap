@@ -29,17 +29,33 @@ use rscap::stream_data::StreamData;
 include!("../stream_data_capnp.rs");
 use std::sync::Arc;
 
-// unused code
-#[allow(dead_code)]
-fn capnp_to_stream_data(reader: stream_data_capnp::Reader) -> capnp::Result<StreamData> {
+// convert the stream data structure to the capnp format
+fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
+    let mut slice = bytes;
+    let message_reader = capnp::serialize::read_message_from_flat_slice(
+        &mut slice,
+        capnp::message::ReaderOptions::new(),
+    )?;
+
+    let reader = message_reader.get_root::<stream_data_capnp::Reader>()?;
+
+    // Convert Text to String, use an empty string in case of an error
+    let stream_type = reader.get_stream_type().map_or_else(
+        |_| String::new(),
+        |text_reader| text_reader.to_string().unwrap_or_default(),
+    );
+
+    // Same conversion for rtp_payload_type_name
+    let rtp_payload_type_name = reader.get_rtp_payload_type_name().map_or_else(
+        |_| String::new(),
+        |text_reader| text_reader.to_string().unwrap_or_default(),
+    );
+
     let stream_data = StreamData {
         pid: reader.get_pid(),
         pmt_pid: reader.get_pmt_pid(),
         program_number: reader.get_program_number(),
-        stream_type: match reader.get_stream_type() {
-            Ok(text_reader) => text_reader.to_string().unwrap(),
-            Err(_) => String::new(), // or handle the error as needed
-        },
+        stream_type,
         continuity_counter: reader.get_continuity_counter(),
         timestamp: reader.get_timestamp(),
         bitrate: reader.get_bitrate(),
@@ -57,16 +73,13 @@ fn capnp_to_stream_data(reader: stream_data_capnp::Reader) -> capnp::Result<Stre
         count: reader.get_count(),
         rtp_timestamp: reader.get_rtp_timestamp(),
         rtp_payload_type: reader.get_rtp_payload_type(),
-        rtp_payload_type_name: match reader.get_rtp_payload_type_name() {
-            Ok(text_reader) => text_reader.to_string().unwrap(),
-            Err(_) => String::new(), // or handle the error as needed
-        },
+        rtp_payload_type_name,
         rtp_line_number: reader.get_rtp_line_number(),
         rtp_line_offset: reader.get_rtp_line_offset(),
         rtp_line_length: reader.get_rtp_line_length(),
         rtp_field_id: reader.get_rtp_field_id(),
         rtp_line_continuation: reader.get_rtp_line_continuation(),
-        rtp_extended_sequence_number: reader.get_rtp_extended_sequence_number().into(),
+        rtp_extended_sequence_number: reader.get_rtp_extended_sequence_number(),
         packet: Arc::new(Vec::new()),
         packet_start: 0,
         packet_len: 0,
@@ -256,18 +269,24 @@ async fn main() {
             header
         );
 
-        // convert capnp to StreamData struct using capnp conversion function
-        //let stream_data = capnp_to_stream_data(&msg).unwrap();
+        // Deserialize the received message into StreamData
+        match capnp_to_stream_data(&msg) {
+            Ok(stream_data) => {
+                // Process the StreamData as needed
+                if send_to_kafka {
+                    let brokers = vec![kafka_broker.clone()];
+                    let topic = kafka_topic.clone();
+                    let data = msg.clone(); // Clone the data
+                    let kafka_timeout = args.kafka_timeout;
 
-        if send_to_kafka {
-            let brokers = vec![kafka_broker.clone()];
-            let topic = kafka_topic.clone();
-            let data = msg.clone(); // Clone the data
-            let kafka_timeout = args.kafka_timeout;
-
-            match produce_message(data, topic, brokers, kafka_timeout).await {
-                Ok(_) => info!("Sent message to Kafka"),
-                Err(e) => error!("Error sending message to Kafka: {:?}", e),
+                    match produce_message(data, topic, brokers, kafka_timeout).await {
+                        Ok(_) => info!("Sent message to Kafka"),
+                        Err(e) => error!("Error sending message to Kafka: {:?}", e),
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Error deserializing message: {:?}", e);
             }
         }
 

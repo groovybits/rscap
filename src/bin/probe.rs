@@ -75,8 +75,7 @@ fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
     // TODO: ... other checks, updating the respective counters ...
 }
 
-// unused code
-#[allow(dead_code)]
+// convert stream data sructure to capnp message
 fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapAllocator>> {
     let mut message = Builder::new_default();
     {
