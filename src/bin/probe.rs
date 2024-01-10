@@ -1,5 +1,5 @@
 /*
- * rscap: probe.rs - Rust Stream Capture with pcap, output json stats to ZeroMQ
+ * rscap: probe.rs - Rust Stream Capture with pcap, output serialized stats to ZeroMQ
  *
  * Written in 2024 by Chris Kennedy (C) LTN Global
  *
@@ -8,6 +8,8 @@
  */
 
 use async_zmq;
+use capnp;
+use capnp::message::{Builder, HeapAllocator};
 #[cfg(feature = "dpdk_enabled")]
 use capsule::config::{load_config, DPDKConfig};
 #[cfg(feature = "dpdk_enabled")]
@@ -19,23 +21,23 @@ use futures::stream::StreamExt;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use pcap::{Active, Capture, Device, PacketCodec};
+use rscap::current_unix_timestamp_ms;
+use rscap::stream_data::{
+    Codec, PatEntry, Pmt, PmtEntry, StreamData, Tr101290Errors, PAT_PID, TS_PACKET_SIZE,
+};
 use rtp::RtpReader;
 use rtp_rs as rtp;
-use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     error::Error as StdError,
-    fmt,
     net::{IpAddr, Ipv4Addr, UdpSocket},
     sync::atomic::{AtomicBool, Ordering},
     sync::Arc,
     sync::Mutex,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::Instant,
 };
 use tokio::sync::mpsc::{self};
 use zmq::PUB;
-//use capnp;
-/*use capnp::message::{Builder, HeapAllocator};*/
 // Include the generated paths for the Cap'n Proto schema
 include!("../stream_data_capnp.rs");
 
@@ -50,349 +52,9 @@ impl PacketCodec for BoxCodec {
     }
 }
 
-// constant for PAT PID
-const PAT_PID: u16 = 0;
-const TS_PACKET_SIZE: usize = 188;
-
 // global variable to store the MpegTS PID Map (initially empty)
 lazy_static! {
     static ref PID_MAP: Mutex<HashMap<u16, Arc<StreamData>>> = Mutex::new(HashMap::new());
-}
-
-struct PatEntry {
-    program_number: u16,
-    pmt_pid: u16,
-}
-
-struct PmtEntry {
-    stream_pid: u16,
-    stream_type: u8, // Stream type (e.g., 0x02 for MPEG video)
-}
-
-struct Pmt {
-    entries: Vec<PmtEntry>,
-}
-
-#[derive(Clone, PartialEq)]
-enum Codec {
-    NONE,
-    MPEG2,
-    H264,
-    H265,
-}
-impl fmt::Display for Codec {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Codec::NONE => write!(f, "NONE"),
-            Codec::MPEG2 => write!(f, "MPEG2"),
-            Codec::H264 => write!(f, "H264"),
-            Codec::H265 => write!(f, "H265"),
-        }
-    }
-}
-
-// StreamData struct
-#[derive(Serialize, Deserialize, Debug)]
-struct StreamData {
-    pid: u16,
-    pmt_pid: u16,
-    program_number: u16,
-    stream_type: String, // "video", "audio", "text"
-    continuity_counter: u8,
-    timestamp: u64,
-    bitrate: u32,
-    bitrate_max: u32,
-    bitrate_min: u32,
-    bitrate_avg: u32,
-    iat: u64,
-    iat_max: u64,
-    iat_min: u64,
-    iat_avg: u64,
-    error_count: u32,
-    last_arrival_time: u64,
-    start_time: u64, // field for start time
-    total_bits: u64, // field for total bits
-    count: u32,      // field for count
-    #[serde(skip)]
-    packet: Arc<Vec<u8>>, // The actual MPEG-TS packet data
-    packet_start: usize, // Offset into the data
-    packet_len: usize, // Offset into the data
-    // SMPTE 2110 fields
-    rtp_timestamp: u32,
-    rtp_payload_type: u8,
-    rtp_payload_type_name: String,
-    rtp_line_number: u16,
-    rtp_line_offset: u16,
-    rtp_line_length: u16,
-    rtp_field_id: u8,
-    rtp_line_continuation: u8,
-    rtp_extended_sequence_number: u16,
-}
-
-impl Clone for StreamData {
-    fn clone(&self) -> Self {
-        StreamData {
-            pid: self.pid,
-            pmt_pid: self.pmt_pid,
-            program_number: self.program_number,
-            stream_type: self.stream_type.clone(),
-            continuity_counter: self.continuity_counter,
-            timestamp: self.timestamp,
-            bitrate: self.bitrate,
-            bitrate_max: self.bitrate_max,
-            bitrate_min: self.bitrate_min,
-            bitrate_avg: self.bitrate_avg,
-            iat: self.iat,
-            iat_max: self.iat_max,
-            iat_min: self.iat_min,
-            iat_avg: self.iat_avg,
-            error_count: self.error_count,
-            last_arrival_time: self.last_arrival_time,
-            start_time: self.start_time,
-            total_bits: self.total_bits,
-            count: self.count,
-            packet: Arc::new(Vec::new()), // Initialize as empty with Arc
-            packet_start: 0,
-            packet_len: 0,
-            rtp_timestamp: self.rtp_timestamp,
-            rtp_payload_type: self.rtp_payload_type,
-            rtp_payload_type_name: self.rtp_payload_type_name.clone(),
-            rtp_line_number: self.rtp_line_number,
-            rtp_line_offset: self.rtp_line_offset,
-            rtp_line_length: self.rtp_line_length,
-            rtp_field_id: self.rtp_field_id,
-            rtp_line_continuation: self.rtp_line_continuation,
-            rtp_extended_sequence_number: self.rtp_extended_sequence_number,
-        }
-    }
-}
-
-// StreamData implementation
-impl StreamData {
-    fn new(
-        packet: Arc<Vec<u8>>,
-        packet_start: usize,
-        packet_len: usize,
-        pid: u16,
-        stream_type: String,
-        start_time: u64,
-        timestamp: u64,
-        continuity_counter: u8,
-    ) -> Self {
-        let last_arrival_time = current_unix_timestamp_ms().unwrap_or(0);
-        StreamData {
-            pid,
-            pmt_pid: 0xFFFF,
-            program_number: 0,
-            stream_type,
-            continuity_counter,
-            timestamp,
-            bitrate: 0,
-            bitrate_max: 0,
-            bitrate_min: 0,
-            bitrate_avg: 0,
-            iat: 0,
-            iat_max: 0,
-            iat_min: 0,
-            iat_avg: 0,
-            error_count: 0,
-            last_arrival_time,
-            start_time,    // Initialize start time
-            total_bits: 0, // Initialize total bits
-            count: 0,      // Initialize count
-            packet: packet,
-            packet_start: packet_start,
-            packet_len: packet_len,
-            // SMPTE 2110 fields
-            rtp_timestamp: 0,
-            rtp_payload_type: 0,
-            rtp_payload_type_name: "".to_string(),
-            rtp_line_number: 0,
-            rtp_line_offset: 0,
-            rtp_line_length: 0,
-            rtp_field_id: 0,
-            rtp_line_continuation: 0,
-            rtp_extended_sequence_number: 0,
-        }
-    }
-    // set RTP fields
-    fn set_rtp_fields(
-        &mut self,
-        rtp_timestamp: u32,
-        rtp_payload_type: u8,
-        rtp_payload_type_name: String,
-        rtp_line_number: u16,
-        rtp_line_offset: u16,
-        rtp_line_length: u16,
-        rtp_field_id: u8,
-        rtp_line_continuation: u8,
-        rtp_extended_sequence_number: u16,
-    ) {
-        self.rtp_timestamp = rtp_timestamp;
-        self.rtp_payload_type = rtp_payload_type;
-        self.rtp_payload_type_name = rtp_payload_type_name;
-        self.rtp_line_number = rtp_line_number;
-        self.rtp_line_offset = rtp_line_offset;
-        self.rtp_line_length = rtp_line_length;
-        self.rtp_field_id = rtp_field_id;
-        self.rtp_line_continuation = rtp_line_continuation;
-        self.rtp_extended_sequence_number = rtp_extended_sequence_number;
-    }
-    fn update_stream_type(&mut self, stream_type: String) {
-        self.stream_type = stream_type;
-    }
-    fn increment_error_count(&mut self, error_count: u32) {
-        self.error_count += error_count;
-    }
-    fn increment_count(&mut self, count: u32) {
-        self.count += count;
-    }
-    fn set_continuity_counter(&mut self, continuity_counter: u8) {
-        // check for continuity continuous increment and wrap around from 0 to 15
-        let previous_continuity_counter = self.continuity_counter;
-        self.continuity_counter = continuity_counter & 0x0F;
-        // check if we incremented without loss
-        if self.continuity_counter != previous_continuity_counter + 1
-            && self.continuity_counter != previous_continuity_counter
-        {
-            // check if we wrapped around from 15 to 0
-            if self.continuity_counter == 0 {
-                // check if previous value was 15
-                if previous_continuity_counter == 15 {
-                    // no loss
-                    return;
-                }
-            }
-            // loss
-            self.increment_error_count(1);
-            error!(
-                "Continuity Counter Error: PID: {} Previous: {} Current: {}",
-                self.pid, previous_continuity_counter, self.continuity_counter
-            );
-        }
-        self.continuity_counter = continuity_counter;
-    }
-    fn update_stats(&mut self, packet_size: usize, arrival_time: u64) {
-        let bits = packet_size as u64 * 8; // Convert bytes to bits
-
-        // Elapsed time in milliseconds
-        let elapsed_time_ms = arrival_time - self.start_time;
-
-        if elapsed_time_ms > 0 {
-            let elapsed_time_sec = elapsed_time_ms as f64 / 1000.0;
-            self.bitrate = (self.total_bits as f64 / elapsed_time_sec) as u32;
-
-            // Bitrate max
-            if self.bitrate > self.bitrate_max {
-                self.bitrate_max = self.bitrate;
-            }
-
-            // Bitrate min
-            if self.bitrate < self.bitrate_min {
-                self.bitrate_min = self.bitrate;
-            }
-
-            // Bitrate avg
-            self.bitrate_avg = (self.bitrate_avg + self.bitrate) / 2;
-        }
-
-        self.total_bits += bits; // Accumulate total bits
-
-        // IAT calculation remains the same
-        let iat = arrival_time - self.last_arrival_time;
-        self.iat = iat;
-
-        // IAT max
-        if iat > self.iat_max {
-            self.iat_max = iat;
-        }
-
-        // IAT min
-        if iat < self.iat_min {
-            self.iat_min = iat;
-        }
-
-        // IAT avg
-        self.iat_avg = (self.iat_avg + iat) / 2;
-
-        self.last_arrival_time = arrival_time;
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-struct Tr101290Errors {
-    // p1 errors
-    ts_sync_byte_errors: u32,
-    sync_byte_errors: u32,
-    continuity_counter_errors: u32,
-    pat_errors: u32,
-    pmt_errors: u32,
-    pid_map_errors: u32,
-    // p2 errors
-    transport_error_indicator_errors: u32,
-    crc_errors: u32,
-    pcr_repetition_errors: u32,
-    pcr_discontinuity_indicator_errors: u32,
-    pcr_accuracy_errors: u32,
-    pts_errors: u32,
-    cat_errors: u32,
-}
-
-impl fmt::Display for Tr101290Errors {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "\
-            TS Sync Byte Errors: {}, \
-            Sync Byte Errors: {}, \
-            Continuity Counter Errors: {}, \
-            PAT Errors: {}, \
-            PMT Errors: {}, \
-            PID Map Errors: {}, \
-            Transport Error Indicator Errors: {}, \
-            CRC Errors: {}, \
-            PCR Repetition Errors: {}, \
-            PCR Discontinuity Indicator Errors: {}, \
-            PCR Accuracy Errors: {}, \
-            PTS Errors: {}, \
-            CAT Errors: {}",
-            self.ts_sync_byte_errors,
-            self.sync_byte_errors,
-            self.continuity_counter_errors,
-            self.pat_errors,
-            self.pmt_errors,
-            self.pid_map_errors,
-            // p2 errors
-            self.transport_error_indicator_errors,
-            self.crc_errors,
-            self.pcr_repetition_errors,
-            self.pcr_discontinuity_indicator_errors,
-            self.pcr_accuracy_errors,
-            self.pts_errors,
-            self.cat_errors
-        )
-    }
-}
-
-impl Tr101290Errors {
-    fn new() -> Self {
-        Tr101290Errors {
-            ts_sync_byte_errors: 0,
-            sync_byte_errors: 0,
-            continuity_counter_errors: 0,
-            pat_errors: 0,
-            pmt_errors: 0,
-            pid_map_errors: 0,
-            // p2
-            transport_error_indicator_errors: 0,
-            crc_errors: 0,
-            pcr_repetition_errors: 0,
-            pcr_discontinuity_indicator_errors: 0,
-            pcr_accuracy_errors: 0,
-            pts_errors: 0,
-            cat_errors: 0,
-        }
-    }
 }
 
 // TR 101 290 Priority 1 Check
@@ -415,67 +77,50 @@ fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
     // TODO: ... other checks, updating the respective counters ...
 }
 
-/*
-// Function to convert StreamData to a Cap'n Proto message
+// convert stream data sructure to capnp message
 fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapAllocator>> {
     let mut message = Builder::new_default();
     {
-        let mut stream_data_msg = message.init_root::<stream_data_capnp::stream_data::Builder>();
+        let mut stream_data_msg = message.init_root::<stream_data_capnp::Builder>();
 
         stream_data_msg.set_pid(stream_data.pid);
         stream_data_msg.set_pmt_pid(stream_data.pmt_pid);
         stream_data_msg.set_program_number(stream_data.program_number);
-        stream_data_msg.set_stream_type(&stream_data.stream_type);
-        // ... Continue setting other fields
+
+        // Correct way to convert a String to ::capnp::text::Reader<'_>
+        stream_data_msg.set_stream_type(stream_data.stream_type.as_str().into());
+
+        stream_data_msg.set_continuity_counter(stream_data.continuity_counter);
+        stream_data_msg.set_timestamp(stream_data.timestamp);
+        stream_data_msg.set_bitrate(stream_data.bitrate);
+        stream_data_msg.set_bitrate_max(stream_data.bitrate_max);
+        stream_data_msg.set_bitrate_min(stream_data.bitrate_min);
+        stream_data_msg.set_bitrate_avg(stream_data.bitrate_avg);
+        stream_data_msg.set_iat(stream_data.iat);
+        stream_data_msg.set_iat_max(stream_data.iat_max);
+        stream_data_msg.set_iat_min(stream_data.iat_min);
+        stream_data_msg.set_iat_avg(stream_data.iat_avg);
+        stream_data_msg.set_error_count(stream_data.error_count);
+        stream_data_msg.set_last_arrival_time(stream_data.last_arrival_time);
+        stream_data_msg.set_start_time(stream_data.start_time);
+        stream_data_msg.set_total_bits(stream_data.total_bits);
+        stream_data_msg.set_count(stream_data.count);
+        stream_data_msg.set_rtp_timestamp(stream_data.rtp_timestamp);
+        stream_data_msg.set_rtp_payload_type(stream_data.rtp_payload_type);
+
+        stream_data_msg
+            .set_rtp_payload_type_name(stream_data.rtp_payload_type_name.as_str().into());
+
+        stream_data_msg.set_rtp_line_number(stream_data.rtp_line_number);
+        stream_data_msg.set_rtp_line_offset(stream_data.rtp_line_offset);
+        stream_data_msg.set_rtp_line_length(stream_data.rtp_line_length);
+        stream_data_msg.set_rtp_field_id(stream_data.rtp_field_id);
+        stream_data_msg.set_rtp_line_continuation(stream_data.rtp_line_continuation);
+        stream_data_msg.set_rtp_extended_sequence_number(stream_data.rtp_extended_sequence_number);
     }
 
     Ok(message)
 }
-
-// Function to convert a Cap'n Proto message back to StreamData
-fn capnp_to_stream_data(reader: stream_data_capnp::stream_data::Reader) -> capnp::Result<StreamData> {
-    let stream_data = StreamData {
-        pid: reader.get_pid()?,
-        pmt_pid: reader.get_pmt_pid()?,
-        program_number: reader.get_program_number()?,
-        stream_type: reader.get_stream_type()?.to_string(),
-        // ... Continue setting other fields
-        packet: Arc::new(Vec::new()), // Initialize packet as empty
-        packet_start: 0,
-        packet_len: 0,
-        // ... Initialize other fields as required
-    };
-
-    Ok(stream_data)
-}
-*/
-
-/*
-
-// Define a struct to hold information about the current video frame
-struct VideoFrame {
-    packets: Vec<StreamData>,
-    is_complete: bool,
-}
-
-impl VideoFrame {
-    fn new() -> Self {
-        VideoFrame {
-            packets: Vec::new(),
-            is_complete: false,
-        }
-    }
-
-    fn add_packet(&mut self, stream_data: StreamData) {
-        self.packets.push(stream_data);
-    }
-
-    fn clear(&mut self) {
-        self.packets.clear();
-        self.is_complete = false;
-    }
-}
-*/
 
 // Invoke this function for each MPEG-TS packet
 fn process_packet(
@@ -510,7 +155,7 @@ fn process_packet(
             }
             let uptime = arrival_time - stream_data.start_time;
 
-            // print out each field of structure similar to json but not wrapping into json
+            // print out each field of structure
             debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, uptime);
 
             stream_data_packet.bitrate = stream_data.bitrate;
@@ -549,21 +194,13 @@ fn process_packet(
                 ));
                 Arc::make_mut(&mut stream_data).update_stats(packet.len(), arrival_time);
 
-                // print out each field of structure similar to json but not wrapping into json
+                // print out each field of structure
                 info!("STATUS::PACKET:ADD[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
 
                 pid_map.insert(pid, stream_data);
             }
         }
     }
-}
-
-// Function to get the current Unix timestamp in milliseconds
-fn current_unix_timestamp_ms() -> Result<u64, &'static str> {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .map_err(|_| "System time is before the UNIX epoch")
 }
 
 // Implement a function to extract PID from a packet
@@ -789,7 +426,7 @@ fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8]) {
                     // update stream_data stats
                     Arc::make_mut(&mut stream_data).update_stats(pmt_packet.len(), timestamp);
 
-                    // print out each field of structure similar to json but not wrapping into json
+                    // print out each field of structure
                     info!("STATUS::STREAM:CREATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
 
                     pid_map.insert(stream_pid, stream_data);
@@ -801,7 +438,7 @@ fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8]) {
                     // update the stream type
                     Arc::make_mut(&mut stream_data).update_stream_type(stream_type.to_string());
 
-                    // print out each field of structure similar to json but not wrapping into json
+                    // print out each field of structure
                     debug!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
 
                     // write the stream_data back to the pid_map with modified values
@@ -1118,10 +755,6 @@ struct Args {
     #[clap(long, env = "USE_WIRELESS", default_value_t = false)]
     use_wireless: bool,
 
-    /// Sets if JSON header should be sent
-    #[clap(long, env = "SEND_JSON_HEADER", default_value_t = false)]
-    send_json_header: bool,
-
     /// Sets if Raw Stream should be sent
     #[clap(long, env = "SEND_RAW_STREAM", default_value_t = false)]
     send_raw_stream: bool,
@@ -1177,6 +810,10 @@ struct Args {
     /// DPDK Port ID
     #[clap(long, env = "DPDK_PORT_ID", default_value_t = 0)]
     dpdk_port_id: u16,
+
+    /// IPC Path for ZeroMQ
+    #[clap(long, env = "IPC_PATH")]
+    ipc_path: Option<String>,
 }
 
 // MAIN Function
@@ -1202,7 +839,6 @@ async fn main() {
     let debug_on = args.debug_on;
     let silent = args.silent;
     let use_wireless = args.use_wireless;
-    let send_json_header = args.send_json_header;
     let send_raw_stream = args.send_raw_stream;
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
@@ -1216,6 +852,7 @@ async fn main() {
     let mut zmq_channel_size = args.zmq_channel_size;
     #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
     let use_dpdk = args.dpdk;
+    let ipc_path = args.ipc_path;
 
     if args.smpte2110 {
         // --batch-size 1 --buffer-size 10000000000 --pcap-channel-size 100000 --zmq-channel-size 10000 --packet-size 1208 --immediate-mode
@@ -1372,46 +1009,38 @@ async fn main() {
     let zmq_thread = tokio::spawn(async move {
         let context = async_zmq::Context::new();
         let publisher = context.socket(PUB).unwrap();
-        let source_port_ip = format!("tcp://{}:{}", target_ip, target_port);
-        publisher.bind(&source_port_ip).unwrap();
+        // Determine the connection endpoint (IPC if provided, otherwise TCP)
+        let endpoint = if let Some(ipc_path_copy) = ipc_path {
+            format!("ipc://{}", ipc_path_copy)
+        } else {
+            format!("tcp://{}:{}", target_ip, target_port)
+        };
 
-        info!("ZeroMQ publisher startup {}", source_port_ip);
+        info!("ZeroMQ publisher startup {}", endpoint);
+
+        publisher.bind(&endpoint).unwrap();
 
         while let Some(mut batch) = rx.recv().await {
             for stream_data in batch.iter() {
-                //debug!("Batch processing {} packets", batch.len());
+                // Serialize StreamData to Cap'n Proto message
+                let capnp_message = stream_data_to_capnp(stream_data)
+                    .expect("Failed to convert to Cap'n Proto message");
+                let mut serialized_data = Vec::new();
+                capnp::serialize::write_message(&mut serialized_data, &capnp_message)
+                    .expect("Failed to serialize Cap'n Proto message");
+
+                // Create ZeroMQ message from serialized Cap'n Proto data
+                let capnp_msg = zmq::Message::from(serialized_data);
+
+                // Send the Cap'n Proto message
                 let packet_slice = &stream_data.packet
                     [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
-
-                // Serialize metadata only if necessary
-                let metadata_msg = if send_json_header {
-                    let cloned_stream_data = stream_data.clone(); // Clone avoids copying the Arc<Vec<u8>>
-                    let metadata = serde_json::to_string(&cloned_stream_data).unwrap();
-
-                    Some(zmq::Message::from(metadata.as_bytes()))
-                } else {
-                    None
-                };
-
-                if send_json_header && send_raw_stream {
-                    if let Some(meta_msg) = metadata_msg {
-                        // Send metadata as the first message
-                        publisher.send(meta_msg, zmq::SNDMORE).unwrap();
-
-                        // Send packet data as the second message
-                        let packet_msg = zmq::Message::from(packet_slice);
-                        publisher.send(packet_msg, 0).unwrap();
-                    }
-                } else if send_json_header {
-                    // Send metadata only if send_json_header is false
-                    if let Some(meta_msg) = metadata_msg {
-                        publisher.send(meta_msg, 0).unwrap();
-                    }
-                } else if send_raw_stream {
-                    // Send packet data only if send_raw_stream is ftrue
-                    let packet_msg = zmq::Message::from(packet_slice);
-                    publisher.send(packet_msg, 0).unwrap();
+                let mut packet_msg = zmq::Message::from(Vec::new());
+                if send_raw_stream {
+                    packet_msg = zmq::Message::from(packet_slice);
                 }
+                publisher.send(capnp_msg, zmq::SNDMORE).unwrap();
+                publisher.send(packet_msg, 0).unwrap();
             }
             batch.clear();
         }

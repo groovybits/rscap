@@ -11,5 +11,4 @@ RUST_LOG=$ERROR_LEVEL numactl --cpubind=$CPU_BIND --membind=$MEM_BIND \
         --pcap-stats \
         --immediate-mode \
         --show-tr101290 \
-        --send-raw-stream \
-        --send-json-header
+        --send-raw-stream

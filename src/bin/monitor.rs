@@ -2,7 +2,7 @@
  * monitor.rs
  *
  * This is a part of a simple ZeroMQ-based MPEG-TS capture and playback system.
- * This file contains the client-side code that receives json metadata, or binary
+ * This file contains the client-side code that receives serialized metadata, or binary
  * structured packets with potentially raw MPEG-TS chunks from the rscap
  * probe and writes them to a file.
  *
@@ -23,6 +23,70 @@ use std::time::Duration as StdDuration;
 use tokio;
 use tokio::time::{timeout, Duration};
 use zmq::SUB;
+// Include the generated paths for the Cap'n Proto schema
+use capnp;
+use rscap::stream_data::StreamData;
+include!("../stream_data_capnp.rs");
+use std::sync::Arc;
+
+// convert the stream data structure to the capnp format
+fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
+    let mut slice = bytes;
+    let message_reader = capnp::serialize::read_message_from_flat_slice(
+        &mut slice,
+        capnp::message::ReaderOptions::new(),
+    )?;
+
+    let reader = message_reader.get_root::<stream_data_capnp::Reader>()?;
+
+    // Convert Text to String, use an empty string in case of an error
+    let stream_type = reader.get_stream_type().map_or_else(
+        |_| String::new(),
+        |text_reader| text_reader.to_string().unwrap_or_default(),
+    );
+
+    // Same conversion for rtp_payload_type_name
+    let rtp_payload_type_name = reader.get_rtp_payload_type_name().map_or_else(
+        |_| String::new(),
+        |text_reader| text_reader.to_string().unwrap_or_default(),
+    );
+
+    let stream_data = StreamData {
+        pid: reader.get_pid(),
+        pmt_pid: reader.get_pmt_pid(),
+        program_number: reader.get_program_number(),
+        stream_type,
+        continuity_counter: reader.get_continuity_counter(),
+        timestamp: reader.get_timestamp(),
+        bitrate: reader.get_bitrate(),
+        bitrate_max: reader.get_bitrate_max(),
+        bitrate_min: reader.get_bitrate_min(),
+        bitrate_avg: reader.get_bitrate_avg(),
+        iat: reader.get_iat(),
+        iat_max: reader.get_iat_max(),
+        iat_min: reader.get_iat_min(),
+        iat_avg: reader.get_iat_avg(),
+        error_count: reader.get_error_count(),
+        last_arrival_time: reader.get_last_arrival_time(),
+        start_time: reader.get_start_time(),
+        total_bits: reader.get_total_bits(),
+        count: reader.get_count(),
+        rtp_timestamp: reader.get_rtp_timestamp(),
+        rtp_payload_type: reader.get_rtp_payload_type(),
+        rtp_payload_type_name,
+        rtp_line_number: reader.get_rtp_line_number(),
+        rtp_line_offset: reader.get_rtp_line_offset(),
+        rtp_line_length: reader.get_rtp_line_length(),
+        rtp_field_id: reader.get_rtp_field_id(),
+        rtp_line_continuation: reader.get_rtp_line_continuation(),
+        rtp_extended_sequence_number: reader.get_rtp_extended_sequence_number(),
+        packet: Arc::new(Vec::new()),
+        packet_start: 0,
+        packet_len: 0,
+    };
+
+    Ok(stream_data)
+}
 
 async fn produce_message(
     data: Vec<u8>, // Changed to Vec<u8> to allow cloning
@@ -88,10 +152,6 @@ struct Args {
     #[clap(long, env = "SILENT", default_value_t = false)]
     silent: bool,
 
-    /// Sets if JSON header should be sent
-    #[clap(long, env = "RECV_JSON_HEADER", default_value_t = false)]
-    recv_json_header: bool,
-
     /// Sets if Raw Stream should be sent
     #[clap(long, env = "RECV_RAW_STREAM", default_value_t = false)]
     recv_raw_stream: bool,
@@ -123,6 +183,10 @@ struct Args {
     /// Kafka timeout to drop packets
     #[clap(long, env = "KAFKA_TIMEOUT", default_value_t = 0)]
     kafka_timeout: u64,
+
+    /// IPC Path for ZeroMQ
+    #[clap(long, env = "IPC_PATH")]
+    ipc_path: Option<String>,
 }
 
 #[tokio::main]
@@ -139,14 +203,27 @@ async fn main() {
     /*let debug_on = args.debug_on;*/
     // TODO: implement frame hex dumps, move from probe and test capture with them.
     let silent = args.silent;
-    let recv_json_header = args.recv_json_header;
-    let recv_raw_stream = args.recv_raw_stream;
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
     let output_file: String = args.output_file;
     let kafka_broker: String = args.kafka_broker;
     let kafka_topic: String = args.kafka_topic;
     let send_to_kafka = args.send_to_kafka;
+    let kafka_timeout = args.kafka_timeout;
+    let ipc_path = args.ipc_path;
+    let mut is_ipc = false;
+
+    // Determine the connection endpoint (IPC if provided, otherwise TCP)
+    let endpoint = if let Some(ipc_path_copy) = ipc_path {
+        format!("ipc://{}", ipc_path_copy)
+    } else {
+        format!("tcp://{}:{}", source_ip, source_port)
+    };
+
+    // check if endpoint starts with ipc
+    if endpoint.starts_with("ipc://") {
+        is_ipc = true;
+    }
 
     if silent {
         // set log level to error
@@ -159,18 +236,20 @@ async fn main() {
     // Setup ZeroMQ subscriber
     let context = async_zmq::Context::new();
     let zmq_sub = context.socket(SUB).unwrap();
-    let source_port_ip = format!("tcp://{}:{}", source_ip, source_port);
-    if let Err(e) = zmq_sub.connect(&source_port_ip) {
+    if let Err(e) = zmq_sub.connect(&endpoint) {
         error!("Failed to connect ZeroMQ subscriber: {:?}", e);
         return;
     }
 
-    zmq_sub.set_subscribe(b"").unwrap();
+    if is_ipc {
+        zmq_sub.set_subscribe(b"").unwrap();
+    }
+    info!("ZeroMQ subscriber startup {}", endpoint);
 
     let mut total_bytes = 0;
     let mut mpeg_packets = 0;
-    let mut expecting_metadata = recv_json_header; // Expect metadata only if recv_json_header is true
-                                                   // Initialize an Option<File> to None
+
+    // Initialize an Option<File> to None
     let mut file = if !output_file.is_empty() {
         Some(File::create(&output_file).unwrap())
     } else {
@@ -178,71 +257,71 @@ async fn main() {
     };
 
     while let Ok(msg) = zmq_sub.recv_bytes(0) {
+        // check for packet count
+        if packet_count > 0 && mpeg_packets >= packet_count {
+            break;
+        }
+
         let more = zmq_sub.get_rcvmore().unwrap();
+        let header = String::from_utf8(msg.clone()).unwrap();
+        debug!(
+            "Monitor: #{} Received JSON header: {}",
+            mpeg_packets + 1,
+            header
+        );
 
-        if expecting_metadata {
-            // Process JSON header if expecting metadata
-            if recv_json_header {
-                let json_header = String::from_utf8(msg.clone()).unwrap();
-                debug!(
-                    "Monitor: #{} Received JSON header: {}",
-                    mpeg_packets + 1,
-                    json_header
-                );
+        // Deserialize the received message into StreamData
+        match capnp_to_stream_data(&msg) {
+            Ok(stream_data) => {
+                // Process the StreamData as needed
+                // Serialize the StreamData object to JSON
+                let serialized_data = serde_json::to_vec(&stream_data)
+                    .expect("Failed to serialize StreamData to JSON");
 
+                // Process the StreamData as needed
                 if send_to_kafka {
                     let brokers = vec![kafka_broker.clone()];
                     let topic = kafka_topic.clone();
-                    let data = msg.clone(); // Clone the data
-                    let kafka_timeout = args.kafka_timeout;
 
-                    match produce_message(data, topic, brokers, kafka_timeout).await {
+                    // Send serialized data to Kafka
+                    match produce_message(serialized_data, topic, brokers, kafka_timeout).await {
                         Ok(_) => info!("Sent message to Kafka"),
                         Err(e) => error!("Error sending message to Kafka: {:?}", e),
                     }
                 }
-
-                if !no_progress {
-                    print!("*");
-                    //std::io::stdout().flush().unwrap();
-                }
             }
-
-            // If not expecting more parts or not receiving raw data, continue to next message
-            if !more || !recv_raw_stream {
-                expecting_metadata = recv_json_header; // Reset for next message if applicable
-                continue;
+            Err(e) => {
+                error!("Error deserializing message: {:?}", e);
             }
+        }
 
-            expecting_metadata = false; // Next message will be raw data
-        } else {
-            // Process raw data packet
-            total_bytes += msg.len();
-            mpeg_packets += 1;
+        if !no_progress {
+            print!(".");
+        }
 
-            debug!(
-                "Monitor: #{} Received {}/{} bytes",
-                mpeg_packets,
-                msg.len(),
-                total_bytes
-            );
+        // If not expecting more parts or not receiving raw data, continue to next message
+        if !more {
+            continue;
+        }
 
-            if !no_progress {
-                print!(".");
-                //std::io::stdout().flush().unwrap();
-            }
+        // Process raw data packet
+        total_bytes += msg.len();
+        mpeg_packets += 1;
 
-            // check for packet count
-            if packet_count > 0 && mpeg_packets >= packet_count {
-                break;
-            }
+        debug!(
+            "Monitor: #{} Received {}/{} bytes",
+            mpeg_packets,
+            msg.len(),
+            total_bytes
+        );
 
-            // Write to file if output_file is provided
-            if let Some(file) = file.as_mut() {
-                file.write_all(&msg).unwrap();
-            }
+        if !no_progress {
+            print!("#");
+        }
 
-            expecting_metadata = recv_json_header; // Reset for next message if applicable
+        // Write to file if output_file is provided
+        if let Some(file) = file.as_mut() {
+            file.write_all(&msg).unwrap();
         }
     }
 
