@@ -1,6 +1,6 @@
 @0x8a218fdfd03af08e;
 
-struct StreamData {
+struct StreamDataCapnp {
     pid @0 :UInt16;
     pmtPid @1 :UInt16;
     programNumber @2 :UInt16;
@@ -28,5 +28,5 @@ struct StreamData {
     rtpLineLength @24 :UInt16;
     rtpFieldId @25 :UInt8;
     rtpLineContinuation @26 :UInt8;
+    rtpExtendedSequenceNumber @27 :UInt16;
 }
-
