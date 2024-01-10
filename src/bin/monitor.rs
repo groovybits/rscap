@@ -139,10 +139,6 @@ struct Args {
     #[clap(long, env = "SILENT", default_value_t = false)]
     silent: bool,
 
-    /// Sets if header should be recieved
-    #[clap(long, env = "RECV_HEADER", default_value_t = false)]
-    recv_header: bool,
-
     /// Sets if Raw Stream should be sent
     #[clap(long, env = "RECV_RAW_STREAM", default_value_t = false)]
     recv_raw_stream: bool,
@@ -174,6 +170,10 @@ struct Args {
     /// Kafka timeout to drop packets
     #[clap(long, env = "KAFKA_TIMEOUT", default_value_t = 0)]
     kafka_timeout: u64,
+
+    /// IPC Path for ZeroMQ
+    #[clap(long, env = "IPC_PATH")]
+    ipc_path: Option<String>,
 }
 
 #[tokio::main]
@@ -190,14 +190,26 @@ async fn main() {
     /*let debug_on = args.debug_on;*/
     // TODO: implement frame hex dumps, move from probe and test capture with them.
     let silent = args.silent;
-    let recv_header = args.recv_header;
-    let recv_raw_stream = args.recv_raw_stream;
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
     let output_file: String = args.output_file;
     let kafka_broker: String = args.kafka_broker;
     let kafka_topic: String = args.kafka_topic;
     let send_to_kafka = args.send_to_kafka;
+    let ipc_path = args.ipc_path;
+    let mut is_ipc = false;
+
+    // Determine the connection endpoint (IPC if provided, otherwise TCP)
+    let endpoint = if let Some(ipc_path_copy) = ipc_path {
+        format!("ipc://{}", ipc_path_copy)
+    } else {
+        format!("tcp://{}:{}", source_ip, source_port)
+    };
+
+    // check if endpoint starts with ipc
+    if endpoint.starts_with("ipc://") {
+        is_ipc = true;
+    }
 
     if silent {
         // set log level to error
@@ -210,18 +222,20 @@ async fn main() {
     // Setup ZeroMQ subscriber
     let context = async_zmq::Context::new();
     let zmq_sub = context.socket(SUB).unwrap();
-    let source_port_ip = format!("tcp://{}:{}", source_ip, source_port);
-    if let Err(e) = zmq_sub.connect(&source_port_ip) {
+    if let Err(e) = zmq_sub.connect(&endpoint) {
         error!("Failed to connect ZeroMQ subscriber: {:?}", e);
         return;
     }
 
-    zmq_sub.set_subscribe(b"").unwrap();
+    if is_ipc {
+        zmq_sub.set_subscribe(b"").unwrap();
+    }
+    info!("ZeroMQ subscriber startup {}", endpoint);
 
     let mut total_bytes = 0;
     let mut mpeg_packets = 0;
-    let mut expecting_metadata = recv_header; // Expect metadata only if recv_header is true
-                                              // Initialize an Option<File> to None
+
+    // Initialize an Option<File> to None
     let mut file = if !output_file.is_empty() {
         Some(File::create(&output_file).unwrap())
     } else {
@@ -229,71 +243,61 @@ async fn main() {
     };
 
     while let Ok(msg) = zmq_sub.recv_bytes(0) {
+        // check for packet count
+        if packet_count > 0 && mpeg_packets >= packet_count {
+            break;
+        }
+
         let more = zmq_sub.get_rcvmore().unwrap();
+        let header = String::from_utf8(msg.clone()).unwrap();
+        debug!(
+            "Monitor: #{} Received JSON header: {}",
+            mpeg_packets + 1,
+            header
+        );
 
-        if expecting_metadata {
-            // Process serialized header if expecting metadata
-            if recv_header {
-                let header = String::from_utf8(msg.clone()).unwrap();
-                debug!(
-                    "Monitor: #{} Received JSON header: {}",
-                    mpeg_packets + 1,
-                    header
-                );
+        // convert capnp to StreamData struct using capnp conversion function
+        //let stream_data = capnp_to_stream_data(&msg).unwrap();
 
-                if send_to_kafka {
-                    let brokers = vec![kafka_broker.clone()];
-                    let topic = kafka_topic.clone();
-                    let data = msg.clone(); // Clone the data
-                    let kafka_timeout = args.kafka_timeout;
+        if send_to_kafka {
+            let brokers = vec![kafka_broker.clone()];
+            let topic = kafka_topic.clone();
+            let data = msg.clone(); // Clone the data
+            let kafka_timeout = args.kafka_timeout;
 
-                    match produce_message(data, topic, brokers, kafka_timeout).await {
-                        Ok(_) => info!("Sent message to Kafka"),
-                        Err(e) => error!("Error sending message to Kafka: {:?}", e),
-                    }
-                }
-
-                if !no_progress {
-                    print!("*");
-                    //std::io::stdout().flush().unwrap();
-                }
+            match produce_message(data, topic, brokers, kafka_timeout).await {
+                Ok(_) => info!("Sent message to Kafka"),
+                Err(e) => error!("Error sending message to Kafka: {:?}", e),
             }
+        }
 
-            // If not expecting more parts or not receiving raw data, continue to next message
-            if !more || !recv_raw_stream {
-                expecting_metadata = recv_header; // Reset for next message if applicable
-                continue;
-            }
+        if !no_progress {
+            print!(".");
+        }
 
-            expecting_metadata = false; // Next message will be raw data
-        } else {
-            // Process raw data packet
-            total_bytes += msg.len();
-            mpeg_packets += 1;
+        // If not expecting more parts or not receiving raw data, continue to next message
+        if !more {
+            continue;
+        }
 
-            debug!(
-                "Monitor: #{} Received {}/{} bytes",
-                mpeg_packets,
-                msg.len(),
-                total_bytes
-            );
+        // Process raw data packet
+        total_bytes += msg.len();
+        mpeg_packets += 1;
 
-            if !no_progress {
-                print!(".");
-                //std::io::stdout().flush().unwrap();
-            }
+        debug!(
+            "Monitor: #{} Received {}/{} bytes",
+            mpeg_packets,
+            msg.len(),
+            total_bytes
+        );
 
-            // check for packet count
-            if packet_count > 0 && mpeg_packets >= packet_count {
-                break;
-            }
+        if !no_progress {
+            print!("#");
+        }
 
-            // Write to file if output_file is provided
-            if let Some(file) = file.as_mut() {
-                file.write_all(&msg).unwrap();
-            }
-
-            expecting_metadata = recv_header; // Reset for next message if applicable
+        // Write to file if output_file is provided
+        if let Some(file) = file.as_mut() {
+            file.write_all(&msg).unwrap();
         }
     }
 

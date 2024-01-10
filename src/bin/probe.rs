@@ -663,10 +663,6 @@ struct Args {
     #[clap(long, env = "USE_WIRELESS", default_value_t = false)]
     use_wireless: bool,
 
-    /// Sets if header should be serialized and sent
-    #[clap(long, env = "SEND_HEADER", default_value_t = false)]
-    send_header: bool,
-
     /// Sets if Raw Stream should be sent
     #[clap(long, env = "SEND_RAW_STREAM", default_value_t = false)]
     send_raw_stream: bool,
@@ -722,6 +718,10 @@ struct Args {
     /// DPDK Port ID
     #[clap(long, env = "DPDK_PORT_ID", default_value_t = 0)]
     dpdk_port_id: u16,
+
+    /// IPC Path for ZeroMQ
+    #[clap(long, env = "IPC_PATH")]
+    ipc_path: Option<String>,
 }
 
 // MAIN Function
@@ -747,7 +747,6 @@ async fn main() {
     let debug_on = args.debug_on;
     let silent = args.silent;
     let use_wireless = args.use_wireless;
-    let send_header = args.send_header;
     let send_raw_stream = args.send_raw_stream;
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
@@ -761,6 +760,7 @@ async fn main() {
     let mut zmq_channel_size = args.zmq_channel_size;
     #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
     let use_dpdk = args.dpdk;
+    let ipc_path = args.ipc_path;
 
     if args.smpte2110 {
         // --batch-size 1 --buffer-size 10000000000 --pcap-channel-size 100000 --zmq-channel-size 10000 --packet-size 1208 --immediate-mode
@@ -897,10 +897,16 @@ async fn main() {
     let zmq_thread = tokio::spawn(async move {
         let context = async_zmq::Context::new();
         let publisher = context.socket(PUB).unwrap();
-        let source_port_ip = format!("tcp://{}:{}", target_ip, target_port);
-        publisher.bind(&source_port_ip).unwrap();
+        // Determine the connection endpoint (IPC if provided, otherwise TCP)
+        let endpoint = if let Some(ipc_path_copy) = ipc_path {
+            format!("ipc://{}", ipc_path_copy)
+        } else {
+            format!("tcp://{}:{}", target_ip, target_port)
+        };
 
-        info!("ZeroMQ publisher startup {}", source_port_ip);
+        info!("ZeroMQ publisher startup {}", endpoint);
+
+        publisher.bind(&endpoint).unwrap();
 
         while let Some(mut batch) = rx.recv().await {
             for stream_data in batch.iter() {
@@ -915,23 +921,14 @@ async fn main() {
                 let capnp_msg = zmq::Message::from(serialized_data);
 
                 // Send the Cap'n Proto message
-                if send_header && send_raw_stream {
-                    // Send packet data as the second message
-                    let packet_slice = &stream_data.packet[stream_data.packet_start
-                        ..stream_data.packet_start + stream_data.packet_len];
-                    let packet_msg = zmq::Message::from(packet_slice);
-                    publisher.send(capnp_msg, zmq::SNDMORE).unwrap();
-                    publisher.send(packet_msg, 0).unwrap();
-                } else if send_header {
-                    // Send Cap'n Proto message only
-                    publisher.send(capnp_msg, 0).unwrap();
-                } else if send_raw_stream {
-                    // Send packet data only
-                    let packet_slice = &stream_data.packet[stream_data.packet_start
-                        ..stream_data.packet_start + stream_data.packet_len];
-                    let packet_msg = zmq::Message::from(packet_slice);
-                    publisher.send(packet_msg, 0).unwrap();
+                let packet_slice = &stream_data.packet
+                    [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
+                let mut packet_msg = zmq::Message::from(Vec::new());
+                if send_raw_stream {
+                    packet_msg = zmq::Message::from(packet_slice);
                 }
+                publisher.send(capnp_msg, zmq::SNDMORE).unwrap();
+                publisher.send(packet_msg, 0).unwrap();
             }
             batch.clear();
         }
