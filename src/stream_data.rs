@@ -8,6 +8,43 @@ use crate::current_unix_timestamp_ms;
 use log::error;
 use std::{fmt, sync::Arc};
 
+// constant for PAT PID
+pub const PAT_PID: u16 = 0;
+pub const TS_PACKET_SIZE: usize = 188;
+
+pub struct PatEntry {
+    pub program_number: u16,
+    pub pmt_pid: u16,
+}
+
+pub struct PmtEntry {
+    pub stream_pid: u16,
+    pub stream_type: u8, // Stream type (e.g., 0x02 for MPEG video)
+}
+
+pub struct Pmt {
+    pub entries: Vec<PmtEntry>,
+}
+
+#[derive(Clone, PartialEq)]
+pub enum Codec {
+    NONE,
+    MPEG2,
+    H264,
+    H265,
+}
+
+impl fmt::Display for Codec {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Codec::NONE => write!(f, "NONE"),
+            Codec::MPEG2 => write!(f, "MPEG2"),
+            Codec::H264 => write!(f, "H264"),
+            Codec::H265 => write!(f, "H265"),
+        }
+    }
+}
+
 // StreamData struct
 #[derive(Debug)]
 pub struct StreamData {

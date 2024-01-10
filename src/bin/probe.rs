@@ -20,13 +20,14 @@ use lazy_static::lazy_static;
 use log::{debug, error, info};
 use pcap::{Active, Capture, Device, PacketCodec};
 use rscap::current_unix_timestamp_ms;
-use rscap::stream_data::{StreamData, Tr101290Errors};
+use rscap::stream_data::{
+    Codec, PatEntry, Pmt, PmtEntry, StreamData, Tr101290Errors, PAT_PID, TS_PACKET_SIZE,
+};
 use rtp::RtpReader;
 use rtp_rs as rtp;
 use std::{
     collections::HashMap,
     error::Error as StdError,
-    fmt,
     net::{IpAddr, Ipv4Addr, UdpSocket},
     sync::atomic::{AtomicBool, Ordering},
     sync::Arc,
@@ -49,45 +50,9 @@ impl PacketCodec for BoxCodec {
     }
 }
 
-// constant for PAT PID
-const PAT_PID: u16 = 0;
-const TS_PACKET_SIZE: usize = 188;
-
 // global variable to store the MpegTS PID Map (initially empty)
 lazy_static! {
     static ref PID_MAP: Mutex<HashMap<u16, Arc<StreamData>>> = Mutex::new(HashMap::new());
-}
-
-struct PatEntry {
-    program_number: u16,
-    pmt_pid: u16,
-}
-
-struct PmtEntry {
-    stream_pid: u16,
-    stream_type: u8, // Stream type (e.g., 0x02 for MPEG video)
-}
-
-struct Pmt {
-    entries: Vec<PmtEntry>,
-}
-
-#[derive(Clone, PartialEq)]
-enum Codec {
-    NONE,
-    MPEG2,
-    H264,
-    H265,
-}
-impl fmt::Display for Codec {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Codec::NONE => write!(f, "NONE"),
-            Codec::MPEG2 => write!(f, "MPEG2"),
-            Codec::H264 => write!(f, "H264"),
-            Codec::H265 => write!(f, "H265"),
-        }
-    }
 }
 
 // TR 101 290 Priority 1 Check
