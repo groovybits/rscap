@@ -231,7 +231,7 @@ impl StreamData {
         let bits = packet_size as u64 * 8; // Convert bytes to bits
 
         // Elapsed time in milliseconds
-        let elapsed_time_ms = arrival_time - self.start_time;
+        let elapsed_time_ms = arrival_time.checked_sub(self.start_time).unwrap_or(0);
 
         if elapsed_time_ms > 0 {
             let elapsed_time_sec = elapsed_time_ms as f64 / 1000.0;
@@ -254,7 +254,9 @@ impl StreamData {
         self.total_bits += bits; // Accumulate total bits
 
         // IAT calculation remains the same
-        let iat = arrival_time - self.last_arrival_time;
+        let iat = arrival_time
+            .checked_sub(self.last_arrival_time)
+            .unwrap_or(0);
         self.iat = iat;
 
         // IAT max
