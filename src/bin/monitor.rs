@@ -317,6 +317,8 @@ async fn main() {
         if !no_progress && dot_last_sent_ts.elapsed().as_secs() > 1 {
             dot_last_sent_ts = Instant::now();
             print!(".");
+            // flush stdout
+            std::io::stdout().flush().unwrap();
         }
 
         // get first message
@@ -336,6 +338,8 @@ async fn main() {
             if !no_progress && dot_last_sent_ts.elapsed().as_secs() > 1 {
                 dot_last_sent_ts = Instant::now();
                 print!("*");
+                // flush stdout
+                std::io::stdout().flush().unwrap();
             }
             file.write_all(&data_msg).unwrap();
         }

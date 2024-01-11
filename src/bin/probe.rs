@@ -30,6 +30,7 @@ use std::{
     collections::HashMap,
     error::Error as StdError,
     fs::File,
+    io,
     io::Write,
     net::{IpAddr, Ipv4Addr, UdpSocket},
     sync::atomic::{AtomicBool, Ordering},
@@ -804,6 +805,8 @@ async fn main() {
                         if !no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
                             dot_last_sent_ts = Instant::now();
                             print!("*");
+                            // Flush stdout to ensure the progress dots are printed
+                            io::stdout().flush().unwrap();
                         }
                         file.write_all(&packet_slice).unwrap();
                     }
@@ -850,6 +853,8 @@ async fn main() {
         if !no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
             dot_last_sent_ts = Instant::now();
             print!(".");
+            // Flush stdout to ensure the progress dots are printed
+            io::stdout().flush().unwrap();
         }
 
         // Check if chunk is MPEG-TS or SMPTE 2110
