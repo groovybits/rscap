@@ -583,7 +583,7 @@ async fn main() {
     let args = Args::parse();
 
     // Use the parsed arguments directly
-    let batch_size = args.batch_size;
+    let mut batch_size = args.batch_size;
     let payload_offset = args.payload_offset;
     let mut packet_size = args.packet_size;
     let read_time_out = args.read_time_out;
@@ -611,12 +611,13 @@ async fn main() {
     let use_dpdk = args.dpdk;
     let output_file = args.output_file;
 
+    // SMPTE2110 specific settings
     if args.smpte2110 {
-        // --batch-size 1 --buffer-size 10000000000 --pcap-channel-size 100000 --zmq-channel-size 10000 --packet-size 1208 --immediate-mode
-        buffer_size = 10000000000; // set buffer size to 10GB for smpte2110
-        pcap_channel_size = 100_000; // set pcap channel size to 100000 for smpte2110
-        zmq_channel_size = 10_000; // set zmq channel size to 10000 for smpte2110
-        packet_size = 1208; // set packet size to 1208 for smpte2110
+        batch_size = 1;
+        buffer_size = 10_000_000_000; // set buffer size to 10GB for smpte2110
+        pcap_channel_size = 10_000_000; // set pcap channel size for smpte2110
+        zmq_channel_size = 10_000_000; // set zmq channel size for smpte2110
+        packet_size = 1_208; // set packet size to 1208 for smpte2110
         immediate_mode = true; // set immediate mode to true for smpte2110
     }
 
@@ -922,6 +923,9 @@ async fn main() {
                 stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
                 stream_data.packet_len = 0;
                 stream_data.packet_start = 0;
+                if pid == 0x1FFF && is_mpegts {
+                    continue;
+                }
             } else if send_raw_stream {
                 // Skip null packets
                 if pid == 0x1FFF && is_mpegts {
