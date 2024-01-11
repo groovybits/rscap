@@ -22,7 +22,7 @@ use std::io::Write;
 use std::time::Duration as StdDuration;
 use tokio;
 use tokio::time::{timeout, Duration};
-use zmq::SUB;
+use zmq::PULL;
 // Include the generated paths for the Cap'n Proto schema
 use capnp;
 use rscap::hexdump;
@@ -212,7 +212,6 @@ async fn main() {
     let send_to_kafka = args.send_to_kafka;
     let kafka_timeout = args.kafka_timeout;
     let ipc_path = args.ipc_path;
-    let mut is_ipc = false;
 
     // Determine the connection endpoint (IPC if provided, otherwise TCP)
     let endpoint = if let Some(ipc_path_copy) = ipc_path {
@@ -220,11 +219,6 @@ async fn main() {
     } else {
         format!("tcp://{}:{}", source_ip, source_port)
     };
-
-    // check if endpoint starts with ipc
-    if endpoint.starts_with("ipc://") {
-        is_ipc = true;
-    }
 
     if silent {
         // set log level to error
@@ -236,19 +230,15 @@ async fn main() {
 
     // Setup ZeroMQ subscriber
     let context = async_zmq::Context::new();
-    let zmq_sub = context.socket(SUB).unwrap();
+    let zmq_sub = context.socket(PULL).unwrap();
     if let Err(e) = zmq_sub.connect(&endpoint) {
         error!("Failed to connect ZeroMQ subscriber: {:?}", e);
         return;
     }
-
-    if !is_ipc {
-        zmq_sub.set_subscribe(b"").unwrap();
-    }
     info!("ZeroMQ subscriber startup {}", endpoint);
 
     let mut total_bytes = 0;
-    let mut mpeg_packets = 0;
+    let mut counter = 0;
 
     // Initialize an Option<File> to None
     let mut file = if !output_file.is_empty() {
@@ -257,15 +247,22 @@ async fn main() {
         None
     };
 
-    while let Ok(msg) = zmq_sub.recv_bytes(0) {
+    loop {
         // check for packet count
-        if packet_count > 0 && mpeg_packets >= packet_count {
+        if packet_count > 0 && counter >= packet_count {
             break;
         }
 
-        //let more = zmq_sub.get_rcvmore().unwrap();
+        // Now, receive the data message
+        let packet_msg = zmq_sub
+            .recv_multipart(0)
+            .expect("Failed to receive header message");
+
+        // get first message
+        let header_msg = packet_msg[0].clone();
+
         // Deserialize the received message into StreamData
-        match capnp_to_stream_data(&msg) {
+        match capnp_to_stream_data(&header_msg) {
             Ok(stream_data) => {
                 // Process the StreamData as needed
                 // Serialize the StreamData object to JSON
@@ -294,7 +291,7 @@ async fn main() {
 
                 // print the structure of the packet
                 debug!("MONITOR::PACKET:RECEIVE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {}",
-                    mpeg_packets + 1,
+                    counter + 1,
                     stream_data.pid,
                     stream_data.stream_type,
                     stream_data.bitrate,
@@ -319,30 +316,26 @@ async fn main() {
             print!(".");
         }
 
-        // If not expecting more parts or not receiving raw data, continue to next message
-        /*if !more {
-        continue;
-        }*/
+        // get first message
+        let data_msg = packet_msg[1].clone();
 
         // Process raw data packet
-        total_bytes += msg.len();
-        mpeg_packets += 1;
-
+        total_bytes += data_msg.len();
         debug!(
             "Monitor: #{} Received {}/{} bytes",
-            mpeg_packets,
-            msg.len(),
+            counter,
+            data_msg.len(),
             total_bytes
         );
 
-        /*if !no_progress {
-        print!("#");
-        }*/
-
         // Write to file if output_file is provided
         if let Some(file) = file.as_mut() {
-            file.write_all(&msg).unwrap();
+            if !no_progress {
+                print!("*");
+            }
+            file.write_all(&data_msg).unwrap();
         }
+        counter += 1;
     }
 
     info!("Finished rscap monitor");
