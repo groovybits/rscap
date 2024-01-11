@@ -571,6 +571,10 @@ struct Args {
     /// Output file for ZeroMQ
     #[clap(long, env = "OUTPUT_FILE", default_value = "")]
     output_file: String,
+
+    /// Turn off the ZMQ thread
+    #[clap(long, env = "NO_ZMQ_THREAD", default_value_t = false)]
+    no_zmq_thread: bool,
 }
 
 // MAIN Function
@@ -610,6 +614,7 @@ async fn main() {
     #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
     let use_dpdk = args.dpdk;
     let output_file = args.output_file;
+    let no_zmq_thread = args.no_zmq_thread;
 
     // SMPTE2110 specific settings
     if args.smpte2110 {
@@ -777,7 +782,9 @@ async fn main() {
                 let capnp_msg = zmq::Message::from(serialized_data);
 
                 // Send the Cap'n Proto message
-                publisher.send(capnp_msg, zmq::SNDMORE).unwrap();
+                if !no_zmq {
+                    publisher.send(capnp_msg, zmq::SNDMORE).unwrap();
+                }
 
                 let packet_slice = &stream_data.packet
                     [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
@@ -795,7 +802,9 @@ async fn main() {
                 };
 
                 // Send the raw packet
-                publisher.send(packet_msg, 0).unwrap();
+                if !no_zmq {
+                    publisher.send(packet_msg, 0).unwrap();
+                }
             }
             batch.clear();
         }
@@ -938,7 +947,7 @@ async fn main() {
 
             //info!("STATUS::PACKETS:CAPTURED: {}", packets_captured);
             // Check if batch is full
-            if !no_zmq {
+            if !no_zmq_thread {
                 if batch.len() >= batch_size {
                     //info!("STATUS::BATCH:SEND: {}", batch.len());
                     // Send the batch to the channel
@@ -1064,7 +1073,7 @@ fn process_smpte2110_packet(
 
                 // Create new StreamData instance
                 let mut stream_data = StreamData::new(
-                    packet.clone(),
+                    Arc::clone(packet),
                     rtp_payload_offset,
                     rtp_payload_length,
                     pid,
