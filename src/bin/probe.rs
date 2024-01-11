@@ -1057,12 +1057,14 @@ fn process_smpte2110_packet(
     start_time: u64,
 ) -> Vec<StreamData> {
     let mut streams = Vec::new();
+    let mut offset = payload_offset;
+    let mut count = 0;
 
     // Check if the packet is large enough to contain an RTP header
-    if packet_size > payload_offset + 12 {
+    while offset + 12 <= packet_size {
         // Check for RTP header marker
-        if packet[payload_offset] == 0x80 || packet[payload_offset] == 0x81 {
-            let rtp_packet = &packet[payload_offset..];
+        if packet[offset] == 0x80 || packet[offset] == 0x81 {
+            let rtp_packet = &packet[offset..];
 
             // Create an RtpReader
             if let Ok(rtp) = RtpReader::new(rtp_packet) {
@@ -1070,20 +1072,20 @@ fn process_smpte2110_packet(
                 let timestamp = rtp.timestamp();
                 let payload_type = rtp.payload_type();
 
-                // Calculate the actual start of the RTP payload
-                let rtp_payload_offset = payload_offset + rtp.payload_offset();
-
-                // Calculate the length of the RTP payload
-                let rtp_payload_length = packet_size - rtp_payload_offset;
-
                 // Extract SMPTE 2110 specific fields
                 let line_length = get_line_length(rtp_packet);
+                let rtp_packet_size = line_length as usize;
                 let line_number = get_line_number(rtp_packet);
                 let extended_sequence_number = get_extended_sequence_number(rtp_packet);
                 let line_offset = get_line_offset(rtp_packet);
                 let field_id = get_line_field_id(rtp_packet);
-
                 let line_continuation = get_line_continuation(rtp_packet);
+
+                // Calculate the actual start of the RTP payload
+                let rtp_payload_offset = payload_offset + line_offset as usize;
+
+                // Calculate the length of the RTP payload
+                let rtp_payload_length = rtp_packet_size - rtp_payload_offset;
 
                 // Use payload type as PID (for the purpose of this example)
                 let pid = payload_type as u16;
@@ -1100,6 +1102,7 @@ fn process_smpte2110_packet(
                     timestamp as u64,
                     0,
                 );
+                count += 1;
 
                 // Update StreamData stats and RTP fields
                 stream_data
@@ -1116,8 +1119,24 @@ fn process_smpte2110_packet(
                     extended_sequence_number,
                 );
 
+                info!("SMPTE2110 RTP packet #{} line_number={} line_offset={} line_length={} field_id={} line_continuation={} extended_sequence_number={} timestamp={} payload_type={} rtp_payload_offset={} rtp_payload_size={}",
+                    count,
+                    line_number,
+                    line_offset,
+                    line_length,
+                    field_id,
+                    line_continuation,
+                    extended_sequence_number,
+                    timestamp,
+                    payload_type,
+                    rtp_payload_offset,
+                    rtp_payload_length);
+
                 // Add the StreamData to the stream list
                 streams.push(stream_data);
+
+                // Move to the next RTP packet
+                offset += rtp_packet_size;
             } else {
                 hexdump(&packet, 0, packet_size);
                 error!("Error parsing RTP header, not SMPTE ST 2110");
@@ -1126,9 +1145,6 @@ fn process_smpte2110_packet(
             hexdump(&packet, 0, packet_size);
             error!("No RTP header detected, not SMPTE ST 2110");
         }
-    } else {
-        hexdump(&packet, 0, packet_size);
-        error!("Packet too small, not SMPTE ST 2110");
     }
 
     streams
