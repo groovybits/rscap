@@ -827,8 +827,6 @@ async fn main() {
 
         if !no_progress {
             print!(".");
-            // flush stdout (wastes resources) TODO: output in ncurses or something w/less output
-            //std::io::stdout().flush().unwrap();
         }
 
         // Check if chunk is MPEG-TS or SMPTE 2110
@@ -919,11 +917,18 @@ async fn main() {
                 pmt_info.pid,
             );
 
-            if pid == 0x1FFF && is_mpegts {
-                // clear the Arc so it can be reused
+            // release the packet Arc so it can be reused
+            if !send_raw_stream && stream_data.packet_len > 0 {
                 stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
-                                                           // Skip null packets
-                continue;
+                stream_data.packet_len = 0;
+                stream_data.packet_start = 0;
+            } else if send_raw_stream {
+                // Skip null packets
+                if pid == 0x1FFF && is_mpegts {
+                    // clear the Arc so it can be reused
+                    stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
+                    continue;
+                }
             }
             batch.push(stream_data);
 
