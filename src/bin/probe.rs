@@ -629,13 +629,13 @@ async fn main() {
 
     // SMPTE2110 specific settings
     if args.smpte2110 {
-        batch_size = 3;
-        zmq_batch_size = 1080;
-        buffer_size = 10_000_000_000; // set buffer size to 10GB for smpte2110
+        immediate_mode = true; // set immediate mode to true for smpte2110
+        buffer_size = 10_000_000_000; // set pcap buffer size to 10GB for smpte2110
         pcap_channel_size = 1_000_000; // set pcap channel size for smpte2110
         zmq_channel_size = 1_000_000; // set zmq channel size for smpte2110
-        packet_size = 1_220; // set packet size to 1208 for smpte2110
-        immediate_mode = true; // set immediate mode to true for smpte2110
+        packet_size = 1_220; // set packet size to 1208 (body) + 12 (header) for RTP
+        batch_size = 3; // N x 1220 size packets for pcap read size
+        zmq_batch_size = 1080; // N x packets for how many packets to send to ZMQ per batch
     }
 
     if silent {
