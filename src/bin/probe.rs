@@ -624,7 +624,7 @@ async fn main() {
 
     // SMPTE2110 specific settings
     if args.smpte2110 {
-        batch_size = 1;
+        batch_size = 3;
         zmq_batch_size = 1080;
         buffer_size = 10_000_000_000; // set buffer size to 10GB for smpte2110
         pcap_channel_size = 1_000_000; // set pcap channel size for smpte2110
