@@ -1115,6 +1115,10 @@ fn process_smpte2110_packet(
                     line_continuation,
                     extended_sequence_number,
                 );
+                info!(
+                    "SMPTE ST 2110 packet: offset: {} size: {} timestamp: {}, payload_type: {}, line_number: {}, line_offset: {}, line_length: {}, field_id: {}, line_continuation: {}, extended_sequence_number: {}",
+                    rtp_payload_offset, rtp_payload_length, timestamp, payload_type, line_number, line_offset, line_length, field_id, line_continuation, extended_sequence_number
+                );
 
                 // Add the StreamData to the stream list
                 streams.push(stream_data);
