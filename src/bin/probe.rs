@@ -1058,7 +1058,6 @@ fn process_smpte2110_packet(
 ) -> Vec<StreamData> {
     let mut streams = Vec::new();
     let mut offset = payload_offset;
-    let mut count = 0;
 
     // Check if the packet is large enough to contain an RTP header
     while offset + 12 <= packet_size {
@@ -1100,7 +1099,6 @@ fn process_smpte2110_packet(
                     timestamp as u64,
                     0,
                 );
-                count += 1;
 
                 // Update StreamData stats and RTP fields
                 stream_data
@@ -1116,19 +1114,6 @@ fn process_smpte2110_packet(
                     line_continuation,
                     extended_sequence_number,
                 );
-
-                info!("SMPTE2110 RTP packet #{} line_number={} line_offset={} line_length={} field_id={} line_continuation={} extended_sequence_number={} timestamp={} payload_type={} rtp_payload_offset={} rtp_payload_size={}",
-                    count,
-                    line_number,
-                    line_offset,
-                    line_length,
-                    field_id,
-                    line_continuation,
-                    extended_sequence_number,
-                    timestamp,
-                    payload_type,
-                    rtp_payload_offset,
-                    rtp_payload_length);
 
                 // Add the StreamData to the stream list
                 streams.push(stream_data);
