@@ -1064,7 +1064,7 @@ fn process_smpte2110_packet(
 
                 // Create new StreamData instance
                 let mut stream_data = StreamData::new(
-                    Arc::clone(packet),
+                    packet.clone(),
                     rtp_payload_offset,
                     rtp_payload_length,
                     pid,
