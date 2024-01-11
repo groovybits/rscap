@@ -580,6 +580,10 @@ struct Args {
     /// ZMQ Batch size
     #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 7)]
     zmq_batch_size: usize,
+
+    /// Debug SMPTE2110
+    #[clap(long, env = "DEBUG_SMPTE2110", default_value_t = false)]
+    debug_smpte2110: bool,
 }
 
 // MAIN Function
@@ -621,16 +625,17 @@ async fn main() {
     let output_file = args.output_file;
     let no_zmq_thread = args.no_zmq_thread;
     let mut zmq_batch_size = args.zmq_batch_size;
+    let debug_smpte2110 = args.debug_smpte2110;
 
     // SMPTE2110 specific settings
     if args.smpte2110 {
-        batch_size = 3;
-        zmq_batch_size = 1080;
-        buffer_size = 10_000_000_000; // set buffer size to 10GB for smpte2110
+        immediate_mode = true; // set immediate mode to true for smpte2110
+        buffer_size = 10_000_000_000; // set pcap buffer size to 10GB for smpte2110
         pcap_channel_size = 1_000_000; // set pcap channel size for smpte2110
         zmq_channel_size = 1_000_000; // set zmq channel size for smpte2110
-        packet_size = 1_220; // set packet size to 1208 for smpte2110
-        immediate_mode = true; // set immediate mode to true for smpte2110
+        packet_size = 1_220; // set packet size to 1208 (body) + 12 (header) for RTP
+        batch_size = 3; // N x 1220 size packets for pcap read size
+        zmq_batch_size = 1080; // N x packets for how many packets to send to ZMQ per batch
     }
 
     if silent {
@@ -870,7 +875,13 @@ async fn main() {
         let chunks = if is_mpegts {
             process_mpegts_packet(payload_offset, &packet, packet_size, start_time)
         } else {
-            process_smpte2110_packet(payload_offset, &packet, packet.len(), start_time)
+            process_smpte2110_packet(
+                payload_offset,
+                &packet,
+                packet.len(),
+                start_time,
+                debug_smpte2110,
+            )
         };
 
         // Process each chunk
@@ -1055,6 +1066,7 @@ fn process_smpte2110_packet(
     packet: &Arc<Vec<u8>>,
     packet_size: usize,
     start_time: u64,
+    debug: bool,
 ) -> Vec<StreamData> {
     let mut streams = Vec::new();
     let mut offset = payload_offset;
@@ -1070,6 +1082,7 @@ fn process_smpte2110_packet(
                 // Extract the timestamp and payload type
                 let timestamp = rtp.timestamp();
                 let payload_type = rtp.payload_type();
+                let rtp_payload = rtp.payload();
                 let rtp_payload_offset = rtp.payload_offset();
 
                 // Extract SMPTE 2110 specific fields
@@ -1082,7 +1095,7 @@ fn process_smpte2110_packet(
                 let line_continuation = get_line_continuation(rtp_packet);
 
                 // Calculate the length of the RTP payload
-                let rtp_payload_length = packet_size - rtp_payload_offset;
+                let rtp_payload_length = rtp_payload.len();
 
                 // Use payload type as PID (for the purpose of this example)
                 let pid = payload_type as u16;
@@ -1114,6 +1127,12 @@ fn process_smpte2110_packet(
                     line_continuation,
                     extended_sequence_number,
                 );
+                if debug {
+                    info!(
+                        "SMPTE ST 2110 packet: offset: {} size: {} timestamp: {}, payload_type: {}, line_number: {}, line_offset: {}, line_length: {}, field_id: {}, line_continuation: {}, extended_sequence_number: {}",
+                        rtp_payload_offset, rtp_payload_length, timestamp, payload_type, line_number, line_offset, line_length, field_id, line_continuation, extended_sequence_number
+                    );
+                }
 
                 // Add the StreamData to the stream list
                 streams.push(stream_data);
