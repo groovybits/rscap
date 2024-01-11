@@ -20,6 +20,7 @@ use log::{debug, error, info};
 use std::fs::File;
 use std::io::Write;
 use std::time::Duration as StdDuration;
+use std::time::Instant;
 use tokio;
 use tokio::time::{timeout, Duration};
 use zmq::PULL;
@@ -247,6 +248,7 @@ async fn main() {
         None
     };
 
+    let mut dot_last_sent_ts = Instant::now();
     loop {
         // check for packet count
         if packet_count > 0 && counter >= packet_count {
@@ -312,7 +314,8 @@ async fn main() {
             }
         }
 
-        if !no_progress {
+        if !no_progress && dot_last_sent_ts.elapsed().as_secs() > 1 {
+            dot_last_sent_ts = Instant::now();
             print!(".");
         }
 
@@ -330,7 +333,8 @@ async fn main() {
 
         // Write to file if output_file is provided
         if let Some(file) = file.as_mut() {
-            if !no_progress {
+            if !no_progress && dot_last_sent_ts.elapsed().as_secs() > 1 {
+                dot_last_sent_ts = Instant::now();
                 print!("*");
             }
             file.write_all(&data_msg).unwrap();

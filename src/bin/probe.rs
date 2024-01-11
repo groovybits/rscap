@@ -777,6 +777,8 @@ async fn main() {
             None
         };
 
+        let mut dot_last_sent_ts = Instant::now();
+
         while let Some(mut batch) = rx.recv().await {
             for stream_data in batch.iter() {
                 // Serialize StreamData to Cap'n Proto message
@@ -799,7 +801,8 @@ async fn main() {
                 let packet_msg = if send_raw_stream {
                     // Write to file if output_file is provided
                     if let Some(file) = file.as_mut() {
-                        if !no_progress {
+                        if !no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
+                            dot_last_sent_ts = Instant::now();
                             print!("*");
                         }
                         file.write_all(&packet_slice).unwrap();
@@ -836,6 +839,7 @@ async fn main() {
         packet: Vec::new(),
     };
 
+    let mut dot_last_sent_ts = Instant::now();
     while let Some(packet) = prx.recv().await {
         if packet_count > 0 && packets_captured > packet_count {
             running.store(false, Ordering::SeqCst);
@@ -843,7 +847,8 @@ async fn main() {
         }
         packets_captured += 1;
 
-        if !no_progress {
+        if !no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
+            dot_last_sent_ts = Instant::now();
             print!(".");
         }
 
