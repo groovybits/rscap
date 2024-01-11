@@ -575,6 +575,10 @@ struct Args {
     /// Turn off the ZMQ thread
     #[clap(long, env = "NO_ZMQ_THREAD", default_value_t = false)]
     no_zmq_thread: bool,
+
+    /// ZMQ Batch size
+    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 7)]
+    zmq_batch_size: usize,
 }
 
 // MAIN Function
@@ -615,10 +619,12 @@ async fn main() {
     let use_dpdk = args.dpdk;
     let output_file = args.output_file;
     let no_zmq_thread = args.no_zmq_thread;
+    let mut zmq_batch_size = args.zmq_batch_size;
 
     // SMPTE2110 specific settings
     if args.smpte2110 {
         batch_size = 1;
+        zmq_batch_size = 100;
         buffer_size = 10_000_000_000; // set buffer size to 10GB for smpte2110
         pcap_channel_size = 10_000_000; // set pcap channel size for smpte2110
         zmq_channel_size = 10_000_000; // set zmq channel size for smpte2110
@@ -948,7 +954,7 @@ async fn main() {
             //info!("STATUS::PACKETS:CAPTURED: {}", packets_captured);
             // Check if batch is full
             if !no_zmq_thread {
-                if batch.len() >= batch_size {
+                if batch.len() >= zmq_batch_size {
                     //info!("STATUS::BATCH:SEND: {}", batch.len());
                     // Send the batch to the channel
                     tx.send(batch).await.unwrap();
