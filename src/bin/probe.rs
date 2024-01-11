@@ -580,6 +580,10 @@ struct Args {
     /// ZMQ Batch size
     #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 7)]
     zmq_batch_size: usize,
+
+    /// Debug SMPTE2110
+    #[clap(long, env = "DEBUG_SMPTE2110", default_value_t = false)]
+    debug_smpte2110: bool,
 }
 
 // MAIN Function
@@ -621,6 +625,7 @@ async fn main() {
     let output_file = args.output_file;
     let no_zmq_thread = args.no_zmq_thread;
     let mut zmq_batch_size = args.zmq_batch_size;
+    let debug_smpte2110 = args.debug_smpte2110;
 
     // SMPTE2110 specific settings
     if args.smpte2110 {
@@ -870,7 +875,13 @@ async fn main() {
         let chunks = if is_mpegts {
             process_mpegts_packet(payload_offset, &packet, packet_size, start_time)
         } else {
-            process_smpte2110_packet(payload_offset, &packet, packet.len(), start_time)
+            process_smpte2110_packet(
+                payload_offset,
+                &packet,
+                packet.len(),
+                start_time,
+                debug_smpte2110,
+            )
         };
 
         // Process each chunk
@@ -1055,6 +1066,7 @@ fn process_smpte2110_packet(
     packet: &Arc<Vec<u8>>,
     packet_size: usize,
     start_time: u64,
+    debug: bool,
 ) -> Vec<StreamData> {
     let mut streams = Vec::new();
     let mut offset = payload_offset;
@@ -1115,10 +1127,12 @@ fn process_smpte2110_packet(
                     line_continuation,
                     extended_sequence_number,
                 );
-                info!(
-                    "SMPTE ST 2110 packet: offset: {} size: {} timestamp: {}, payload_type: {}, line_number: {}, line_offset: {}, line_length: {}, field_id: {}, line_continuation: {}, extended_sequence_number: {}",
-                    rtp_payload_offset, rtp_payload_length, timestamp, payload_type, line_number, line_offset, line_length, field_id, line_continuation, extended_sequence_number
-                );
+                if debug {
+                    info!(
+                        "SMPTE ST 2110 packet: offset: {} size: {} timestamp: {}, payload_type: {}, line_number: {}, line_offset: {}, line_length: {}, field_id: {}, line_continuation: {}, extended_sequence_number: {}",
+                        rtp_payload_offset, rtp_payload_length, timestamp, payload_type, line_number, line_offset, line_length, field_id, line_continuation, extended_sequence_number
+                    );
+                }
 
                 // Add the StreamData to the stream list
                 streams.push(stream_data);
