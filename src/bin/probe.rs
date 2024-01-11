@@ -699,6 +699,7 @@ async fn main() {
             let mut count = 0;
 
             let mut stats_last_sent_ts = Instant::now();
+            let mut packets_dropped = 0;
 
             while running_clone.load(Ordering::SeqCst) {
                 while let Some(packet) = stream.next().await {
@@ -715,9 +716,10 @@ async fn main() {
                                 stats_last_sent_ts = current_ts;
                                 let stats = stream.capture_mut().stats().unwrap();
                                 println!(
-                                    "#{} Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
-                                    count, stats.received, stats.dropped, stats.if_dropped
+                                    "#{} Current stats: Received: {}, Dropped: {}/{}, Interface Dropped: {}",
+                                    count, stats.received, stats.dropped - packets_dropped, stats.dropped, stats.if_dropped
                                 );
+                                packets_dropped = stats.dropped;
                             }
                         }
                         Err(e) => {
