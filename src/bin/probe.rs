@@ -1071,6 +1071,7 @@ fn process_smpte2110_packet(
                 // Extract the timestamp and payload type
                 let timestamp = rtp.timestamp();
                 let payload_type = rtp.payload_type();
+                let rtp_payload_offset = rtp.payload_offset();
 
                 // Extract SMPTE 2110 specific fields
                 let line_length = get_line_length(rtp_packet);
@@ -1081,11 +1082,8 @@ fn process_smpte2110_packet(
                 let field_id = get_line_field_id(rtp_packet);
                 let line_continuation = get_line_continuation(rtp_packet);
 
-                // Calculate the actual start of the RTP payload
-                let rtp_payload_offset = payload_offset + line_offset as usize;
-
                 // Calculate the length of the RTP payload
-                let rtp_payload_length = rtp_packet_size - rtp_payload_offset;
+                let rtp_payload_length = packet_size - rtp_payload_offset;
 
                 // Use payload type as PID (for the purpose of this example)
                 let pid = payload_type as u16;
