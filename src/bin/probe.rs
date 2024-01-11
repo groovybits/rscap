@@ -717,8 +717,8 @@ async fn main() {
                                 stats_last_sent_ts = current_ts;
                                 let stats = stream.capture_mut().stats().unwrap();
                                 println!(
-                                    "#{} Current stats: Received: {}, Dropped: {}/{}, Interface Dropped: {}",
-                                    count, stats.received, stats.dropped - packets_dropped, stats.dropped, stats.if_dropped
+                                    "#{} Current stats: Received: {}, Dropped: {}/{}, Interface Dropped: {} packet_size: {} bytes.",
+                                    count, stats.received, stats.dropped - packets_dropped, stats.dropped, stats.if_dropped, data.len(),
                                 );
                                 packets_dropped = stats.dropped;
                             }
