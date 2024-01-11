@@ -19,10 +19,11 @@ use futures::stream::StreamExt;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use pcap::{Active, Capture, Device, PacketCodec};
-use rscap::current_unix_timestamp_ms;
 use rscap::stream_data::{
-    Codec, PatEntry, Pmt, PmtEntry, StreamData, Tr101290Errors, PAT_PID, TS_PACKET_SIZE,
+    extract_pid, identify_video_pid, parse_and_store_pat, parse_pat, parse_pmt, tr101290_p1_check,
+    tr101290_p2_check, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID, TS_PACKET_SIZE,
 };
+use rscap::{current_unix_timestamp_ms, hexdump};
 use rtp::RtpReader;
 use rtp_rs as rtp;
 use std::{
@@ -57,26 +58,6 @@ impl PacketCodec for BoxCodec {
 // global variable to store the MpegTS PID Map (initially empty)
 lazy_static! {
     static ref PID_MAP: Mutex<HashMap<u16, Arc<StreamData>>> = Mutex::new(HashMap::new());
-}
-
-// TR 101 290 Priority 1 Check
-fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors) {
-    // p1
-    if packet[0] != 0x47 {
-        errors.sync_byte_errors += 1;
-    }
-
-    // TODO: ... other checks, updating the respective counters ...
-}
-
-// TR 101 290 Priority 2 Check
-fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
-    // p2
-
-    if (packet[1] & 0x80) != 0 {
-        errors.transport_error_indicator_errors += 1;
-    }
-    // TODO: ... other checks, updating the respective counters ...
 }
 
 // convert stream data sructure to capnp message
@@ -203,143 +184,6 @@ fn process_packet(
             }
         }
     }
-}
-
-// Implement a function to extract PID from a packet
-fn extract_pid(packet: &[u8]) -> u16 {
-    if packet.len() < TS_PACKET_SIZE {
-        return 0; // Packet size is incorrect
-    }
-
-    let transport_error = (packet[1] & 0x80) != 0;
-    if transport_error {
-        return 0xFFFF; // Packet has a transport error
-    }
-
-    // Extract PID from packet
-    ((packet[1] as u16 & 0x1F) << 8) | packet[2] as u16
-}
-
-// Story the PAT packet and PMT PID
-struct PmtInfo {
-    pid: u16,
-    packet: Vec<u8>,
-}
-
-// Helper function to parse PAT and update global PAT packet storage
-fn parse_and_store_pat(packet: &[u8]) -> PmtInfo {
-    let pat_entries = parse_pat(packet);
-    let mut pmt_info = PmtInfo {
-        pid: 0xFFFF,
-        packet: Vec::new(),
-    };
-    pmt_info.packet = packet.to_vec();
-
-    // Assuming there's only one program for simplicity, update PMT PID
-    if let Some(first_entry) = pat_entries.first() {
-        pmt_info.pid = first_entry.pmt_pid;
-    }
-    pmt_info
-}
-
-fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
-    let mut entries = Vec::new();
-
-    // Check for minimum packet size
-    if packet.len() < TS_PACKET_SIZE {
-        return entries;
-    }
-
-    // Check if Payload Unit Start Indicator (PUSI) is set
-    let pusi = (packet[1] & 0x40) != 0;
-    if !pusi {
-        // If Payload Unit Start Indicator is not set, this packet does not start a new PAT
-        return entries;
-    }
-
-    let adaptation_field_control = (packet[3] & 0x30) >> 4;
-    let mut offset = 4; // start after TS header
-
-    // Check for adaptation field and skip it
-    if adaptation_field_control == 0x02 || adaptation_field_control == 0x03 {
-        let adaptation_field_length = packet[4] as usize;
-        offset += 1 + adaptation_field_length; // +1 for the length byte itself
-    }
-
-    // Pointer field indicates the start of the PAT section
-    let pointer_field = packet[offset] as usize;
-    offset += 1 + pointer_field; // Skip pointer field
-
-    // Now, 'offset' points to the start of the PAT section
-    while offset + 4 <= packet.len() {
-        let program_number = ((packet[offset] as u16) << 8) | (packet[offset + 1] as u16);
-        let pmt_pid = (((packet[offset + 2] as u16) & 0x1F) << 8) | (packet[offset + 3] as u16);
-
-        // Only add valid entries (non-zero program_number and pmt_pid)
-        if program_number != 0 && pmt_pid != 0 && pmt_pid < 0x1FFF && program_number < 100 {
-            entries.push(PatEntry {
-                program_number,
-                pmt_pid,
-            });
-        }
-
-        debug!(
-            "ParsePAT: Program Number: {} PMT PID: {}",
-            program_number, pmt_pid
-        );
-
-        offset += 4; // Move to the next PAT entry
-    }
-
-    entries
-}
-
-fn parse_pmt(packet: &[u8]) -> Pmt {
-    let mut entries = Vec::new();
-    let program_number = ((packet[8] as u16) << 8) | (packet[9] as u16);
-
-    // Calculate the starting position for stream entries
-    let section_length = (((packet[6] as usize) & 0x0F) << 8) | packet[7] as usize;
-    let program_info_length = (((packet[15] as usize) & 0x0F) << 8) | packet[16] as usize;
-    let mut i = 17 + program_info_length; // Starting index of the first stream in the PMT
-
-    debug!(
-        "ParsePMT: Program Number: {} PMT PID: {} starting at position {}",
-        program_number,
-        extract_pid(packet),
-        i
-    );
-    while i + 5 <= packet.len() && i < 17 + section_length - 4 {
-        let stream_type = packet[i];
-        let stream_pid = (((packet[i + 1] as u16) & 0x1F) << 8) | (packet[i + 2] as u16);
-        let es_info_length = (((packet[i + 3] as usize) & 0x0F) << 8) | packet[i + 4] as usize;
-        i += 5 + es_info_length; // Update index to point to next stream's info
-
-        entries.push(PmtEntry {
-            stream_pid,
-            stream_type,
-        });
-        debug!(
-            "ParsePMT: Stream PID: {}, Stream Type: {}",
-            stream_pid, stream_type
-        );
-    }
-
-    Pmt { entries }
-}
-
-// Helper function to identify the video PID from the stored PAT packet and return the PID and codec
-fn identify_video_pid(pmt_packet: &[u8]) -> Option<(u16, Codec)> {
-    let pmt = parse_pmt(pmt_packet);
-    pmt.entries.iter().find_map(|entry| {
-        let codec = match entry.stream_type {
-            0x01..=0x02 => Some(Codec::MPEG2), // MPEG-2 Video
-            0x1B => Some(Codec::H264),         // H.264 Video
-            0x24 => Some(Codec::H265),         // H.265 Video
-            _ => None,
-        };
-        codec.map(|c| (entry.stream_pid, c))
-    })
 }
 
 // Use the stored PAT packet
@@ -750,7 +594,7 @@ async fn main() {
     let debug_on = args.debug_on;
     let silent = args.silent;
     let use_wireless = args.use_wireless;
-    let send_raw_stream = args.send_raw_stream;
+    let _send_raw_stream = args.send_raw_stream;
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
     let no_zmq = args.no_zmq;
@@ -763,7 +607,6 @@ async fn main() {
     let mut zmq_channel_size = args.zmq_channel_size;
     #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
     let use_dpdk = args.dpdk;
-    let ipc_path = args.ipc_path;
 
     if args.smpte2110 {
         // --batch-size 1 --buffer-size 10000000000 --pcap-channel-size 100000 --zmq-channel-size 10000 --packet-size 1208 --immediate-mode
@@ -901,7 +744,7 @@ async fn main() {
         let context = async_zmq::Context::new();
         let publisher = context.socket(PUB).unwrap();
         // Determine the connection endpoint (IPC if provided, otherwise TCP)
-        let endpoint = if let Some(ipc_path_copy) = ipc_path {
+        let endpoint = if let Some(ipc_path_copy) = args.ipc_path {
             format!("ipc://{}", ipc_path_copy)
         } else {
             format!("tcp://{}:{}", target_ip, target_port)
@@ -924,14 +767,14 @@ async fn main() {
                 let capnp_msg = zmq::Message::from(serialized_data);
 
                 // Send the Cap'n Proto message
-                let packet_slice = &stream_data.packet
-                    [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
-                let mut packet_msg = zmq::Message::from(Vec::new());
+                /*let packet_slice = &stream_data.packet
+                [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];*/
+                /*let mut packet_msg = zmq::Message::from(Vec::new());
                 if send_raw_stream {
                     packet_msg = zmq::Message::from(packet_slice);
-                }
-                publisher.send(capnp_msg, zmq::SNDMORE).unwrap();
-                publisher.send(packet_msg, 0).unwrap();
+                    }*/
+                publisher.send(capnp_msg, 0 /*zmq::SNDMORE*/).unwrap();
+                //publisher.send(packet_msg, 0).unwrap();
             }
             batch.clear();
         }
@@ -1285,23 +1128,4 @@ fn process_mpegts_packet(
     }
 
     streams
-}
-
-// Print a hexdump of the packet
-fn hexdump(packet_arc: &Arc<Vec<u8>>, packet_offset: usize, packet_len: usize) {
-    let packet = &packet_arc[packet_offset..packet_offset + packet_len];
-    let pid = extract_pid(packet);
-    println!("--------------------------------------------------");
-    // print in rows of 16 bytes
-    println!("PacketDump: PID {} Packet length: {}", pid, packet_len);
-    let mut packet_dump = String::new();
-    for (i, chunk) in packet.iter().take(packet_len).enumerate() {
-        if i % 16 == 0 {
-            packet_dump.push_str(&format!("\n{:04x}: ", i));
-        }
-        packet_dump.push_str(&format!("{:02x} ", chunk));
-    }
-    println!("{}", packet_dump);
-    println!("");
-    println!("--------------------------------------------------");
 }

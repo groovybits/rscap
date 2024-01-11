@@ -25,6 +25,7 @@ use tokio::time::{timeout, Duration};
 use zmq::SUB;
 // Include the generated paths for the Cap'n Proto schema
 use capnp;
+use rscap::hexdump;
 use rscap::stream_data::StreamData;
 include!("../stream_data_capnp.rs");
 use std::sync::Arc;
@@ -200,7 +201,7 @@ async fn main() {
     // Use the parsed arguments directly
     let source_port = args.source_port;
     let source_ip = args.source_ip;
-    /*let debug_on = args.debug_on;*/
+    let debug_on = args.debug_on;
     // TODO: implement frame hex dumps, move from probe and test capture with them.
     let silent = args.silent;
     let packet_count = args.packet_count;
@@ -241,7 +242,7 @@ async fn main() {
         return;
     }
 
-    if is_ipc {
+    if !is_ipc {
         zmq_sub.set_subscribe(b"").unwrap();
     }
     info!("ZeroMQ subscriber startup {}", endpoint);
@@ -262,14 +263,7 @@ async fn main() {
             break;
         }
 
-        let more = zmq_sub.get_rcvmore().unwrap();
-        let header = String::from_utf8(msg.clone()).unwrap();
-        debug!(
-            "Monitor: #{} Received JSON header: {}",
-            mpeg_packets + 1,
-            header
-        );
-
+        //let more = zmq_sub.get_rcvmore().unwrap();
         // Deserialize the received message into StreamData
         match capnp_to_stream_data(&msg) {
             Ok(stream_data) => {
@@ -277,6 +271,14 @@ async fn main() {
                 // Serialize the StreamData object to JSON
                 let serialized_data = serde_json::to_vec(&stream_data)
                     .expect("Failed to serialize StreamData to JSON");
+
+                if debug_on {
+                    hexdump(
+                        &stream_data.packet,
+                        stream_data.packet_start,
+                        stream_data.packet_len,
+                    );
+                }
 
                 // Process the StreamData as needed
                 if send_to_kafka {
@@ -289,6 +291,24 @@ async fn main() {
                         Err(e) => error!("Error sending message to Kafka: {:?}", e),
                     }
                 }
+
+                // print the structure of the packet
+                debug!("MONITOR::PACKET:RECEIVE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {}",
+                    mpeg_packets + 1,
+                    stream_data.pid,
+                    stream_data.stream_type,
+                    stream_data.bitrate,
+                    stream_data.bitrate_max,
+                    stream_data.bitrate_min,
+                    stream_data.bitrate_avg,
+                    stream_data.iat,
+                    stream_data.iat_max,
+                    stream_data.iat_min,
+                    stream_data.iat_avg,
+                    stream_data.error_count,
+                    stream_data.continuity_counter,
+                    stream_data.timestamp,
+                );
             }
             Err(e) => {
                 error!("Error deserializing message: {:?}", e);
@@ -300,9 +320,9 @@ async fn main() {
         }
 
         // If not expecting more parts or not receiving raw data, continue to next message
-        if !more {
-            continue;
-        }
+        /*if !more {
+        continue;
+        }*/
 
         // Process raw data packet
         total_bytes += msg.len();
@@ -315,9 +335,9 @@ async fn main() {
             total_bytes
         );
 
-        if !no_progress {
-            print!("#");
-        }
+        /*if !no_progress {
+        print!("#");
+        }*/
 
         // Write to file if output_file is provided
         if let Some(file) = file.as_mut() {
