@@ -1072,8 +1072,10 @@ fn process_smpte2110_packet(
     let mut streams = Vec::new();
     let mut offset = payload_offset;
 
+    let len = packet.len();
+
     // Check if the packet is large enough to contain an RTP header
-    while offset + 12 <= packet_size {
+    while offset + 12 <= len {
         // Check for RTP header marker
         let packet_arc = Arc::clone(&packet);
         if packet_arc[offset] == 0x80 || packet_arc[offset] == 0x81 {
