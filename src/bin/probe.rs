@@ -872,13 +872,14 @@ async fn main() {
             is_mpegts = false;
         }
 
+        let packet_size = packet.len();
         let chunks = if is_mpegts {
-            process_mpegts_packet(payload_offset, &packet, packet_size, start_time)
+            process_mpegts_packet(payload_offset, packet, packet_size, start_time)
         } else {
             process_smpte2110_packet(
                 payload_offset,
-                &packet,
-                packet.len(),
+                packet,
+                packet_size,
                 start_time,
                 debug_smpte2110,
             )
@@ -1063,7 +1064,7 @@ fn get_line_offset(buf: &[u8]) -> u16 {
 // Process the packet and return a vector of SMPTE ST 2110 packets
 fn process_smpte2110_packet(
     payload_offset: usize,
-    packet: &Arc<Vec<u8>>,
+    packet: Arc<Vec<u8>>,
     packet_size: usize,
     start_time: u64,
     debug: bool,
@@ -1074,7 +1075,8 @@ fn process_smpte2110_packet(
     // Check if the packet is large enough to contain an RTP header
     while offset + 12 <= packet_size {
         // Check for RTP header marker
-        if packet[offset] == 0x80 || packet[offset] == 0x81 {
+        let packet_arc = Arc::clone(&packet);
+        if packet_arc[offset] == 0x80 || packet_arc[offset] == 0x81 {
             let rtp_packet = &packet[offset..];
 
             // Create an RtpReader
@@ -1103,7 +1105,7 @@ fn process_smpte2110_packet(
 
                 // Create new StreamData instance
                 let mut stream_data = StreamData::new(
-                    Arc::clone(packet),
+                    packet_arc,
                     rtp_payload_offset,
                     rtp_payload_length,
                     pid,
@@ -1155,7 +1157,7 @@ fn process_smpte2110_packet(
 // Process the packet and return a vector of MPEG-TS packets
 fn process_mpegts_packet(
     payload_offset: usize,
-    packet: &Arc<Vec<u8>>,
+    packet: Arc<Vec<u8>>,
     packet_size: usize,
     start_time: u64,
 ) -> Vec<StreamData> {
@@ -1182,7 +1184,7 @@ fn process_mpegts_packet(
             let continuity_counter = chunk[3] & 0x0F;
 
             let mut stream_data = StreamData::new(
-                Arc::clone(packet),
+                Arc::clone(&packet),
                 start,
                 packet_size,
                 pid,
