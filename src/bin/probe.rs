@@ -872,14 +872,14 @@ async fn main() {
             is_mpegts = false;
         }
 
-        let packet_size = packet.len();
         let chunks = if is_mpegts {
             process_mpegts_packet(payload_offset, packet, packet_size, start_time)
         } else {
+            let packet_len = packet.len();
             process_smpte2110_packet(
                 payload_offset,
                 packet,
-                packet_size,
+                packet_len,
                 start_time,
                 debug_smpte2110,
             )
