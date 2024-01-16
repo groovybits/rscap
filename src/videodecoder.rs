@@ -1,37 +1,106 @@
-extern crate ffmpeg_next as ffmpeg;
-use ffmpeg::{codec, decoder, encoder, format, frame, sys as ffmpeg_sys, Packet};
+use gst::prelude::*;
+use gstreamer as gst;
+use gstreamer_app as gst_app;
+use std::fs::File;
+use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 pub struct VideoDecoder {
-    decoder: decoder::Video,
+    pipeline: gst::Pipeline,
+    appsrc: gst_app::AppSrc,
+    appsink: gst_app::AppSink,
 }
 
 impl VideoDecoder {
-    // Initialize with codec parameters
-    pub fn new(codec_params: codec::Parameters) -> Result<Self, ffmpeg::Error> {
-        ffmpeg::init()?;
+    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        gst::init()?;
 
-        // Create a context from the codec parameters
-        let mut codec_context = codec::context::Context::from_parameters(codec_params)?;
-        let decoder = codec_context.decoder().video()?;
-        decoder.open()?;
+        let pipeline = gst::Pipeline::new();
 
-        Ok(VideoDecoder { decoder })
+        let appsrc = gst::ElementFactory::make("appsrc")
+            .build()?
+            .downcast::<gst_app::AppSrc>()
+            .map_err(|_| Box::<dyn std::error::Error>::from("Failed to create appsrc element"))?;
+
+        let decodebin = gst::ElementFactory::make("decodebin")
+            .build()?
+            .downcast::<gst_app::AppSrc>()
+            .map_err(|_| {
+                Box::<dyn std::error::Error>::from("Failed to create decodebin element")
+            })?;
+
+        let jpegenc = gst::ElementFactory::make("jpegenc")
+            .build()?
+            .downcast::<gst_app::AppSrc>()
+            .map_err(|_| Box::<dyn std::error::Error>::from("Failed to create jpegenc element"))?;
+
+        let appsink = gst::ElementFactory::make("appsink")
+            .build()?
+            .downcast::<gst_app::AppSink>()
+            .map_err(|_| Box::<dyn std::error::Error>::from("Failed to create appsink element"))?;
+
+        pipeline.add_many(&[&appsrc, &decodebin, &jpegenc, &appsrc])?;
+        gst::Element::link_many(&[&appsrc, &decodebin])?;
+        decodebin.connect_pad_added(move |_, src_pad| {
+            let sink_pad = jpegenc.static_pad("sink").unwrap();
+            if sink_pad.is_linked() {
+                return;
+            }
+            src_pad.link(&sink_pad).expect("Failed to link pads");
+        });
+        jpegenc.link(&appsink)?;
+
+        let mpegts_caps = gst::Caps::builder("video/mpegts").build();
+        let jpeg_caps = gst::Caps::builder("image/jpeg").build();
+
+        appsrc.set_caps(Some(&mpegts_caps));
+        appsrc.set_format(gst::Format::Time);
+
+        appsink.set_caps(Some(&jpeg_caps));
+        appsink.set_drop(true); // Drop old frames, only keep the latest
+
+        let bus = pipeline.get_bus().expect("Failed to get pipeline bus");
+
+        // Iterate over messages on the bus
+        while let Ok(message) = bus.iterate() {
+            match message.view() {
+                gst::MessageView::Element(ref element_message) => {
+                    if let Some(sample) = element_message.get_new_sample() {
+                        let sample = sample?;
+                        let buffer = sample.get_buffer().ok_or(gst::FlowError::Eos)?;
+
+                        if let Some(map) = buffer.map_readable().ok() {
+                            let mut file =
+                                File::create("frame.jpg").expect("Failed to create file");
+                            file.write_all(map.as_slice())
+                                .expect("Failed to write to file");
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(VideoDecoder {
+            pipeline,
+            appsrc,
+            appsink,
+        })
     }
 
-    // Process a video packet
-    pub fn process_packet(&mut self, packet_data: &[u8]) -> Result<(), ffmpeg::Error> {
-        let mut packet = Packet::empty();
-        if let Some(data) = packet.data_mut() {
-            data.clone_from_slice(packet_data);
-        }
-        self.decoder.send_packet(&packet)?;
+    pub fn process_packet(&self, packet_data: &[u8]) -> Result<(), gst::FlowError> {
+        let buffer = gst::Buffer::from_slice(packet_data.to_vec());
+        self.appsrc.push_buffer(buffer)?;
+        Ok(())
+    }
 
-        let mut decoded = frame::Video::empty();
-        while self.decoder.receive_frame(&mut decoded).is_ok() {
-            save_frame_as_jpeg(&decoded, "frame.jpg")?;
-        }
+    pub fn start(&self) -> Result<(), gst::StateChangeError> {
+        self.pipeline.set_state(gst::State::Playing)?;
+        Ok(())
+    }
 
+    pub fn stop(&self) -> Result<(), gst::StateChangeError> {
+        self.pipeline.set_state(gst::State::Null)?;
         Ok(())
     }
 }
@@ -41,57 +110,24 @@ pub struct VideoProcessor {
 }
 
 impl VideoProcessor {
-    // Initialize with codec parameters
-    pub fn initialize(codec_params: codec::Parameters) -> Result<Self, ffmpeg::Error> {
-        let decoder = VideoDecoder::new(codec_params)?;
+    pub fn initialize() -> Result<Self, Box<dyn std::error::Error>> {
+        let decoder = VideoDecoder::new()?;
         Ok(VideoProcessor {
             decoder: Arc::new(Mutex::new(decoder)),
         })
     }
-
-    // Feed a video packet to the processor
-    pub fn feed_packet(&self, packet_data: &[u8]) -> Result<(), ffmpeg::Error> {
+    pub fn feed_packet(&self, packet_data: &[u8]) -> Result<(), gst::FlowError> {
         let mut decoder = self.decoder.lock().unwrap();
         decoder.process_packet(packet_data)
     }
 
-    // ... Other methods ...
-}
-
-pub fn save_frame_as_jpeg(frame: &frame::Video, filename: &str) -> Result<(), ffmpeg::Error> {
-    let mut output_context = format::output(&filename)?;
-    let global_header = output_context
-        .format()
-        .flags()
-        .contains(format::flag::Flags::GLOBAL_HEADER);
-
-    let encoder = encoder::find(codec::Id::MJPEG).ok_or(ffmpeg::Error::Bug)?;
-    let mut encoder_context = codec::context::Context::new()?; // Change here
-    encoder_context.set_codec(&encoder);
-
-    encoder_context.set_height(frame.height());
-    encoder_context.set_width(frame.width());
-    encoder_context.set_format(frame.format());
-    encoder_context.set_time_base((1, 30));
-    if global_header {
-        encoder_context.set_flags(codec::flag::Flags::GLOBAL_HEADER);
+    pub fn start(&self) -> Result<(), gst::StateChangeError> {
+        let decoder = self.decoder.lock().unwrap();
+        decoder.start()
     }
-    encoder_context.open(None)?;
 
-    let mut stream = output_context.add_stream(Some(&encoder_context))?;
-    output_context.write_header()?;
-
-    let mut filtered_frame = frame.clone();
-    filtered_frame.set_format(encoder_context.format());
-
-    encoder_context.send_frame(Some(&filtered_frame))?;
-    let mut packet = Packet::empty();
-    while encoder_context.receive_packet(&mut packet).is_ok() {
-        stream.write(&packet)?; // Change here
+    pub fn stop(&self) -> Result<(), gst::StateChangeError> {
+        let decoder = self.decoder.lock().unwrap();
+        decoder.stop()
     }
-    encoder_context.send_frame(None)?; // Send flush packet
-
-    output_context.write_trailer()?;
-
-    Ok(())
 }
