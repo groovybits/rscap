@@ -1,4 +1,5 @@
 pub mod stream_data;
+pub mod videodecoder;
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
