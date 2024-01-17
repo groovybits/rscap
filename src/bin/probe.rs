@@ -691,6 +691,20 @@ struct Args {
 // MAIN Function
 #[tokio::main]
 async fn main() {
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            println!("\nCtrl-C received, shutting down");
+        }
+        _ = rscap() => {
+            println!("\nRsCap exited");
+        }
+    }
+}
+
+// RsCap Function
+async fn rscap() {
     println!("RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap.");
 
     dotenv::dotenv().ok(); // read .env file
@@ -1182,7 +1196,7 @@ async fn main() {
         }
     }
 
-    println!("Exiting rscap probe");
+    println!("\nSending stop signals to threads...");
 
     // Send ZMQ stop signal
     tx.send(Vec::new()).await.unwrap();
@@ -1192,10 +1206,14 @@ async fn main() {
     dtx.send(Vec::new()).await.unwrap();
     drop(dtx);
 
+    println!("\nWaiting for threads to finish...");
+
     // Wait for the zmq_thread to finish
     capture_task.await.unwrap();
     zmq_thread.await.unwrap();
     decoder_thread.await.unwrap();
+
+    println!("\nThreads finished, exiting rscap probe");
 }
 
 // Check if the packet is MPEG-TS or SMPTE 2110
