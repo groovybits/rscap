@@ -795,7 +795,7 @@ async fn main() {
             while let Some(batch) = drx.recv().await {
                 for stream_data in &batch {
                     {
-                        let locked_processor = processor_clone.lock().unwrap();
+                        let mut locked_processor = processor_clone.lock().unwrap();
                         locked_processor
                             .process_packet(&stream_data.packet)
                             .expect("Failed to process packet");

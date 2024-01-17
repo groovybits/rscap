@@ -1,133 +1,29 @@
 use anyhow::Result as AnyResult;
-use gst::prelude::*;
-use gstreamer as gst;
-use gstreamer_app as gst_app;
-use std::fs::File;
-use std::io::Write;
 use std::sync::{Arc, Mutex}; // Using anyhow for error handling
 
 pub struct VideoDecoder {
-    pipeline: gst::Pipeline,
-    appsrc: gst_app::AppSrc,
-    #[allow(dead_code)]
-    appsink: gst_app::AppSink,
+    frame_buffer: Vec<Vec<u8>>,
 }
 
 impl VideoDecoder {
     pub fn new() -> AnyResult<Self> {
-        gst::init()?;
-
-        let pipeline = gst::Pipeline::new();
-
-        let appsrc = gst::ElementFactory::make("appsrc")
-            .build()?
-            .downcast::<gst_app::AppSrc>()
-            .map_err(|_| anyhow::Error::msg("Failed to create appsrc element"))?;
-
-        let decodebin = gst::ElementFactory::make("decodebin")
-            .build()?
-            .downcast::<gst_app::AppSrc>()
-            .map_err(|_| anyhow::Error::msg("Failed to create decodebin element"))?;
-        // fails in add_many if not AppSrc???
-        //let decodebin = gst::ElementFactory::make("decodebin").build().unwrap();
-
-        let jpegenc = gst::ElementFactory::make("jpegenc")
-            .build()?
-            .downcast::<gst_app::AppSrc>()
-            .map_err(|_| anyhow::Error::msg("Failed to create jpegenc element"))?;
-        // fails in add_many if not AppSrc???
-
-        let appsink = gst::ElementFactory::make("appsink")
-            .build()?
-            .downcast::<gst_app::AppSink>()
-            .map_err(|_| anyhow::Error::msg("Failed to create appsink element"))?;
-
-        let elements = &[&appsrc, &decodebin, &jpegenc]; //, &appsink];
-        pipeline.add_many(elements)?;
-        //let elements = &[&appsrc, &decodebin];
-        gst::Element::link_many(elements)?;
-        jpegenc.link(&appsink)?;
-        decodebin.connect_pad_added(move |_, src_pad| {
-            let sink_pad = jpegenc.static_pad("sink").unwrap();
-            if sink_pad.is_linked() {
-                return;
-            }
-            src_pad.link(&sink_pad).expect("Failed to link pads");
-        });
-
-        let mpegts_caps = gst::Caps::builder("video/mpegts").build();
-        let jpeg_caps = gst::Caps::builder("image/jpeg").build();
-
-        appsrc.set_caps(Some(&mpegts_caps));
-        appsrc.set_format(gst::Format::Time);
-
-        appsink.set_caps(Some(&jpeg_caps));
-        appsink.set_drop(true); // Drop old frames, only keep the latest
-
-        // Handle new sample from appsink
-        appsink.set_callbacks(
-            gst_app::AppSinkCallbacks::builder()
-                .new_sample(|appsink| {
-                    let sample = appsink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
-                    let buffer = sample.buffer().ok_or(gst::FlowError::Eos)?;
-
-                    if let Some(map) = buffer.map_readable().ok() {
-                        let mut file = File::create("frame.jpg").expect("Failed to create file");
-                        file.write_all(map.as_slice())
-                            .expect("Failed to write to file");
-                    }
-
-                    Ok(gst::FlowSuccess::Ok)
-                })
-                .build(),
-        );
-
-        let bus = pipeline.bus().expect("Failed to get pipeline bus");
-        for msg in bus.iter_timed(gst::ClockTime::NONE) {
-            match msg.view() {
-                gst::MessageView::Eos(..) => break,
-                gst::MessageView::Error(err) => {
-                    eprintln!("Error from {:?}: {:?}", err.src(), err.error());
-                    break;
-                }
-                _ => (),
-            }
-        }
-
+        let frames = Vec::new();
         Ok(VideoDecoder {
-            pipeline,
-            appsrc,
-            appsink,
+            frame_buffer: frames,
         })
     }
 
-    pub fn listen_to_bus(&self) {
-        let bus = self.pipeline.bus().expect("Failed to get pipeline bus");
-        for msg in bus.iter_timed(gst::ClockTime::NONE) {
-            match msg.view() {
-                gst::MessageView::Eos(..) => break,
-                gst::MessageView::Error(err) => {
-                    eprintln!("Error from {:?}: {:?}", err.src(), err.error());
-                    break;
-                }
-                _ => (),
-            }
-        }
-    }
-
-    pub fn process_packet(&self, packet_data: &[u8]) -> AnyResult<()> {
-        let buffer = gst::Buffer::from_slice(packet_data.to_vec());
-        self.appsrc.push_buffer(buffer)?;
+    pub fn process_packet(&mut self, packet_data: &[u8]) -> AnyResult<()> {
+        let buffer = packet_data.to_vec();
+        self.frame_buffer.push(buffer.to_vec());
         Ok(())
     }
 
-    pub fn start(&self) -> Result<(), gst::StateChangeError> {
-        self.pipeline.set_state(gst::State::Playing)?;
+    pub fn start(&self) -> Result<(), anyhow::Error> {
         Ok(())
     }
 
-    pub fn stop(&self) -> Result<(), gst::StateChangeError> {
-        self.pipeline.set_state(gst::State::Null)?;
+    pub fn stop(&self) -> Result<(), anyhow::Error> {
         Ok(())
     }
 }
@@ -137,23 +33,23 @@ pub struct VideoProcessor {
 }
 
 impl VideoProcessor {
-    pub fn initialize() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn initialize() -> AnyResult<Self> {
         let decoder = VideoDecoder::new()?;
         Ok(VideoProcessor {
             decoder: Arc::new(Mutex::new(decoder)),
         })
     }
     pub fn feed_packet(&self, packet_data: &[u8]) -> AnyResult<()> {
-        let decoder = self.decoder.lock().unwrap();
+        let mut decoder = self.decoder.lock().unwrap();
         decoder.process_packet(packet_data)
     }
 
-    pub fn start(&self) -> Result<(), gst::StateChangeError> {
+    pub fn start(&self) -> Result<(), anyhow::Error> {
         let decoder = self.decoder.lock().unwrap();
         decoder.start()
     }
 
-    pub fn stop(&self) -> Result<(), gst::StateChangeError> {
+    pub fn stop(&self) -> Result<(), anyhow::Error> {
         let decoder = self.decoder.lock().unwrap();
         decoder.stop()
     }
