@@ -1,18 +1,20 @@
+use anyhow::Result as AnyResult;
 use gst::prelude::*;
 use gstreamer as gst;
 use gstreamer_app as gst_app;
 use std::fs::File;
 use std::io::Write;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex}; // Using anyhow for error handling
 
 pub struct VideoDecoder {
     pipeline: gst::Pipeline,
     appsrc: gst_app::AppSrc,
+    #[allow(dead_code)]
     appsink: gst_app::AppSink,
 }
 
 impl VideoDecoder {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new() -> AnyResult<Self> {
         gst::init()?;
 
         let pipeline = gst::Pipeline::new();
@@ -20,27 +22,25 @@ impl VideoDecoder {
         let appsrc = gst::ElementFactory::make("appsrc")
             .build()?
             .downcast::<gst_app::AppSrc>()
-            .map_err(|_| Box::<dyn std::error::Error>::from("Failed to create appsrc element"))?;
+            .map_err(|_| anyhow::Error::msg("Failed to create appsrc element"))?;
 
         let decodebin = gst::ElementFactory::make("decodebin")
             .build()?
             .downcast::<gst_app::AppSrc>()
-            .map_err(|_| {
-                Box::<dyn std::error::Error>::from("Failed to create decodebin element")
-            })?;
+            .map_err(|_| anyhow::Error::msg("Failed to create decodebin element"))?;
         // fails in add_many if not AppSrc???
         //let decodebin = gst::ElementFactory::make("decodebin").build().unwrap();
 
         let jpegenc = gst::ElementFactory::make("jpegenc")
             .build()?
             .downcast::<gst_app::AppSrc>()
-            .map_err(|_| Box::<dyn std::error::Error>::from("Failed to create jpegenc element"))?;
+            .map_err(|_| anyhow::Error::msg("Failed to create jpegenc element"))?;
         // fails in add_many if not AppSrc???
 
         let appsink = gst::ElementFactory::make("appsink")
             .build()?
             .downcast::<gst_app::AppSink>()
-            .map_err(|_| Box::<dyn std::error::Error>::from("Failed to create appsink element"))?;
+            .map_err(|_| anyhow::Error::msg("Failed to create appsink element"))?;
 
         let elements = &[&appsrc, &decodebin, &jpegenc]; //, &appsink];
         pipeline.add_many(elements)?;
@@ -115,7 +115,7 @@ impl VideoDecoder {
         }
     }
 
-    pub fn process_packet(&self, packet_data: &[u8]) -> Result<(), gst::FlowError> {
+    pub fn process_packet(&self, packet_data: &[u8]) -> AnyResult<()> {
         let buffer = gst::Buffer::from_slice(packet_data.to_vec());
         self.appsrc.push_buffer(buffer)?;
         Ok(())
@@ -133,7 +133,7 @@ impl VideoDecoder {
 }
 
 pub struct VideoProcessor {
-    decoder: Arc<Mutex<VideoDecoder>>,
+    pub decoder: Arc<Mutex<VideoDecoder>>,
 }
 
 impl VideoProcessor {
@@ -143,7 +143,7 @@ impl VideoProcessor {
             decoder: Arc::new(Mutex::new(decoder)),
         })
     }
-    pub fn feed_packet(&self, packet_data: &[u8]) -> Result<(), gst::FlowError> {
+    pub fn feed_packet(&self, packet_data: &[u8]) -> AnyResult<()> {
         let decoder = self.decoder.lock().unwrap();
         decoder.process_packet(packet_data)
     }

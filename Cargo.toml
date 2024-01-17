@@ -42,6 +42,7 @@ serde_json = "1.0.111"
 gstreamer = "0.21"
 gstreamer-app = "0.21"
 gstreamer-video = "0.21"
+anyhow = "1.0.79"
 
 [build-dependencies]
 capnpc = "0.18.0"
