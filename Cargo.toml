@@ -41,6 +41,7 @@ protobuf = "3.3.0"
 protobuf-codegen-pure = "2.28.0"
 serde = { version = "1.0.195", features = ["derive" ] }
 serde_json = "1.0.111"
+anyhow = "1.0.79"
 
 [build-dependencies]
 capnpc = "0.18.0"

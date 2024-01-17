@@ -1,6 +1,32 @@
 #!/bin/bash
 set -e
 
+## RPMs seem to not work in CentOS 7.9
+USE_RPM="false"
+
+# Detect the operating system
+OS="$(uname -s)"
+echo "Detected OS: $OS"
+
+## CentOS 7.9 DPDK RPMS
+if [ "$USE_RPM" = "true" ]; then
+    if [ "$OS" = "Linux" ]; then
+        if [ -f /etc/centos-release ]; then
+            . /etc/os-release
+            if [ "$VERSION_ID" = "7" ]; then
+                echo "CentOS 7 detected."
+                echo "Yum RPMs on CentoOS 7 are available, installing..."
+                yum install -y dpdk dpdk-devel dpdk-tools
+                echo "DPDK installation is complete."
+                echo "May need drivers from https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/"
+                exit 0
+            fi
+        fi
+    fi
+fi
+
+echo "Installing DPDK from source..."
+
 # Update System
 echo "Updating system..."
 sudo yum update -y

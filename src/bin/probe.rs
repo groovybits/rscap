@@ -14,6 +14,8 @@ use capnp::message::{Builder, HeapAllocator};
 use capsule::config::{load_config, DPDKConfig};
 #[cfg(feature = "dpdk_enabled")]
 use capsule::dpdk;
+#[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
+use capsule::prelude::*;
 use clap::Parser;
 use futures::stream::StreamExt;
 use lazy_static::lazy_static;
@@ -29,6 +31,10 @@ use rtp_rs as rtp;
 use std::{
     collections::HashMap,
     error::Error as StdError,
+    fmt,
+    fs::File,
+    io,
+    io::Write,
     net::{IpAddr, Ipv4Addr, UdpSocket},
     sync::atomic::{AtomicBool, Ordering},
     sync::Arc,
@@ -36,13 +42,18 @@ use std::{
     time::Instant,
 };
 use tokio::sync::mpsc::{self};
-use zmq::PUB;
-// Include the generated paths for the Cap'n Proto schema
-//include!("../stream_data_capnp.rs");
-//include!("../stream_data_proto.rs");
+use zmq::PUSH;
 
+// Protobufs
 mod stream_data_proto; // The generated module
                        //use stream_data_proto::StreamDataProto;
+                       //
+// Include the generated paths for the Cap'n Proto schema
+include!("../stream_data_capnp.rs");
+
+// Video Processor Decoder
+use rscap::videodecoder::VideoProcessor;
+use tokio::time::Duration;
 
 // Define your custom PacketCodec
 pub struct BoxCodec;
@@ -315,45 +326,129 @@ fn determine_stream_type(pid: u16) -> String {
 #[derive(Debug)]
 struct DeviceNotFoundError;
 
-impl std::fmt::Display for DeviceNotFoundError {
+impl std::error::Error for DeviceNotFoundError {}
+
+impl DeviceNotFoundError {
+    #[allow(dead_code)]
+    fn new() -> ErrorWrapper {
+        ErrorWrapper(Box::new(Self))
+    }
+}
+
+impl fmt::Display for DeviceNotFoundError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "Target device not found")
     }
 }
 
-impl StdError for DeviceNotFoundError {}
+struct ErrorWrapper(Box<dyn StdError + Send + Sync>);
+
+impl fmt::Debug for ErrorWrapper {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl fmt::Display for ErrorWrapper {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl StdError for ErrorWrapper {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        self.0.source()
+    }
+}
+
+pub trait Packet: Send {
+    fn data(&self) -> &[u8];
+}
+
+// Common interface for DPDK functionality
+trait DpdkPort: Send {
+    fn start(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn stop(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn rx_burst(&self, packets: &mut Vec<Box<dyn Packet>>) -> Result<(), anyhow::Error>;
+    // Other necessary methods...
+}
+
+// Implementation for Linux with DPDK enabled
+#[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
+struct RealDpdkPort(dpdk::Port);
 
 #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
-fn init_dpdk(port_id: u16) -> Result<dpdk::eal::Port, Box<dyn std::error::Error>> {
-    // DPDK initialization logic here
+impl DpdkPort for RealDpdkPort {
+    fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
+        self.0.start()?;
+        Ok(())
+    }
+
+    fn stop(&self) -> Result<(), Box<dyn std::error::Error>> {
+        self.0.stop()?;
+        Ok(())
+    }
+    fn rx_burst(&self, packets: &mut Vec<Box<dyn Packet>>) -> Result<(), anyhow::Error> {
+        // Logic for rx_burst...
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
+fn init_dpdk(
+    port_id: u16,
+    promiscuous_mode: bool,
+) -> Result<Box<dyn DpdkPort>, Box<dyn std::error::Error>> {
+    // Initialize capsule environment
     let config = load_config()?;
-    info!("DPDK config: {:?} setup on port {}", config, port_id);
     dpdk::eal::init(config)?;
 
-    // Configure and start the network interface
-    let port = dpdk::eal::Port::new(port_id)?;
+    // Configure network interface
+    let port = dpdk::Port::new(port_id)?;
     port.configure()?;
-    port.start()?;
 
     // Set promiscuous mode if needed
     if promiscuous_mode {
         port.set_promiscuous(true)?;
     }
 
-    info!("DPDK port {} initialized", port_id);
+    // Start the port
+    port.start()?;
 
-    Ok(port)
+    Ok(Box::new(RealDpdkPort(port)))
 }
 
-// Placeholder for non-Linux or DPDK disabled builds
+// Placeholder implementation for non-Linux or DPDK disabled builds
 #[cfg(not(all(feature = "dpdk_enabled", target_os = "linux")))]
-fn init_dpdk(_port_id: u16) -> Result<(), Box<dyn std::error::Error>> {
-    Err("DPDK is not supported on this OS".into())
+struct DummyDpdkPort;
+
+#[cfg(not(all(feature = "dpdk_enabled", target_os = "linux")))]
+impl DpdkPort for DummyDpdkPort {
+    fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
+        Err("DPDK is not supported on this OS".into())
+    }
+
+    fn stop(&self) -> Result<(), Box<dyn std::error::Error>> {
+        Err("DPDK is not supported on this OS".into())
+    }
+
+    fn rx_burst(&self, _packets: &mut Vec<Box<dyn Packet>>) -> Result<(), anyhow::Error> {
+        Err(anyhow::Error::msg("DPDK is not supported on this OS"))
+    }
+}
+
+#[cfg(not(all(feature = "dpdk_enabled", target_os = "linux")))]
+fn init_dpdk(
+    _port_id: u16,
+    _promiscuous: bool,
+) -> Result<Box<dyn DpdkPort>, Box<dyn std::error::Error>> {
+    Ok(Box::new(DummyDpdkPort))
 }
 
 fn init_pcap(
     source_device: &str,
-    use_wireless: bool,
+    #[cfg(target_os = "linux")] _use_wireless: bool,
+    #[cfg(not(target_os = "linux"))] use_wireless: bool,
     promiscuous: bool,
     read_time_out: i32,
     read_size: i32,
@@ -558,6 +653,10 @@ struct Args {
     #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 1_000)]
     zmq_channel_size: usize,
 
+    /// MPSC Channel Size for Decoder
+    #[clap(long, env = "DECODER_CHANNEL_SIZE", default_value_t = 1_000)]
+    decoder_channel_size: usize,
+
     /// DPDK enable
     #[clap(long, env = "DPDK", default_value_t = false)]
     dpdk: bool,
@@ -569,11 +668,49 @@ struct Args {
     /// IPC Path for ZeroMQ
     #[clap(long, env = "IPC_PATH")]
     ipc_path: Option<String>,
+
+    /// Output file for ZeroMQ
+    #[clap(long, env = "OUTPUT_FILE", default_value = "")]
+    output_file: String,
+
+    /// Turn off the ZMQ thread
+    #[clap(long, env = "NO_ZMQ_THREAD", default_value_t = false)]
+    no_zmq_thread: bool,
+
+    /// ZMQ Batch size
+    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 7)]
+    zmq_batch_size: usize,
+
+    /// Decode Video
+    #[clap(long, env = "DECODE_VIDEO", default_value_t = false)]
+    decode_video: bool,
+
+    /// Decode Video Batch Size
+    #[clap(long, env = "DECODE_VIDEO_BATCH_SIZE", default_value_t = 7)]
+    decode_video_batch_size: usize,
+
+    /// Debug SMPTE2110
+    #[clap(long, env = "DEBUG_SMPTE2110", default_value_t = false)]
+    debug_smpte2110: bool,
 }
 
 // MAIN Function
 #[tokio::main]
 async fn main() {
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    tokio::select! {
+        _ = ctrl_c => {
+            println!("\nCtrl-C received, shutting down");
+        }
+        _ = rscap() => {
+            println!("\nRsCap exited");
+        }
+    }
+}
+
+// RsCap Function
+async fn rscap() {
     println!("RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap.");
 
     dotenv::dotenv().ok(); // read .env file
@@ -581,7 +718,7 @@ async fn main() {
     let args = Args::parse();
 
     // Use the parsed arguments directly
-    let batch_size = args.batch_size;
+    let mut batch_size = args.batch_size;
     let payload_offset = args.payload_offset;
     let mut packet_size = args.packet_size;
     let read_time_out = args.read_time_out;
@@ -594,7 +731,7 @@ async fn main() {
     let debug_on = args.debug_on;
     let silent = args.silent;
     let use_wireless = args.use_wireless;
-    let _send_raw_stream = args.send_raw_stream;
+    let send_raw_stream = args.send_raw_stream;
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
     let no_zmq = args.no_zmq;
@@ -605,16 +742,27 @@ async fn main() {
     let pcap_stats = args.pcap_stats;
     let mut pcap_channel_size = args.pcap_channel_size;
     let mut zmq_channel_size = args.zmq_channel_size;
+    let mut decoder_channel_size = args.decoder_channel_size;
     #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
     let use_dpdk = args.dpdk;
+    let output_file = args.output_file;
+    let no_zmq_thread = args.no_zmq_thread;
+    let mut zmq_batch_size = args.zmq_batch_size;
+    let debug_smpte2110 = args.debug_smpte2110;
+    let decode_video = args.decode_video;
+    let mut decode_video_batch_size = args.decode_video_batch_size;
 
+    // SMPTE2110 specific settings
     if args.smpte2110 {
-        // --batch-size 1 --buffer-size 10000000000 --pcap-channel-size 100000 --zmq-channel-size 10000 --packet-size 1208 --immediate-mode
-        buffer_size = 10000000000; // set buffer size to 10GB for smpte2110
-        pcap_channel_size = 100_000; // set pcap channel size to 100000 for smpte2110
-        zmq_channel_size = 10_000; // set zmq channel size to 10000 for smpte2110
-        packet_size = 1208; // set packet size to 1208 for smpte2110
         immediate_mode = true; // set immediate mode to true for smpte2110
+        buffer_size = 10_000_000_000; // set pcap buffer size to 10GB for smpte2110
+        pcap_channel_size = 1_000_000; // set pcap channel size for smpte2110
+        zmq_channel_size = 1_000_000; // set zmq channel size for smpte2110
+        decoder_channel_size = 1_000_000; // set decoder channel size for smpte2110
+        packet_size = 1_220; // set packet size to 1220 (body) + 12 (header) for RTP
+        batch_size = 3; // N x 1220 size packets for pcap read size
+        decode_video_batch_size = 7; // N x 1220 size packets for pcap read size
+        zmq_batch_size = 1080; // N x packets for how many packets to send to ZMQ per batch
     }
 
     if silent {
@@ -633,33 +781,55 @@ async fn main() {
     let (ptx, mut prx) = mpsc::channel::<Arc<Vec<u8>>>(pcap_channel_size);
 
     let running = Arc::new(AtomicBool::new(true));
-    let running_clone = running.clone();
+    let running_capture = running.clone();
+    let running_decoder = running.clone();
+    let running_zmq = running.clone();
 
     // Spawn a new thread for packet capture
     let capture_task = if cfg!(feature = "dpdk_enabled") && args.dpdk {
         // DPDK is enabled
         tokio::spawn(async move {
-            // TODO: DPDK initialization logic goes here");
-            error!("DPDK is not yet implemented");
-            // Implement DPDK initialization logic here
-            match init_dpdk(args.dpdk_port_id) {
-                Ok(()) => {
-                    let mut count = 0;
-                    // DPDK packet processing loop
-                    while running_clone.load(Ordering::SeqCst) {
-                        // Fetch and process packets using DPDK
-                        // ...
+            let port_id = 0; // Set your port ID
+            let promiscuous_mode = args.promiscuous;
 
-                        count += 1;
-                        if debug_on {
-                            // Print stats or debug information
-                            println!("DPDK packet count: {}", count);
+            // Initialize DPDK
+            let port = match init_dpdk(port_id, promiscuous_mode) {
+                Ok(p) => p,
+                Err(e) => {
+                    error!("Failed to initialize DPDK: {:?}", e);
+                    return;
+                }
+            };
+
+            let mut packets = Vec::new();
+            while running_capture.load(Ordering::SeqCst) {
+                match port.rx_burst(&mut packets) {
+                    Ok(_) => {
+                        for packet in packets.drain(..) {
+                            // Extract data from the packet
+                            let data = packet.data();
+
+                            // Convert to Arc<Vec<u8>> to maintain consistency with pcap logic
+                            let packet_data = Arc::new(data.to_vec());
+
+                            // Send packet data to processing channel
+                            ptx.send(packet_data).await.unwrap();
+
+                            // Here you can implement additional processing such as parsing the packet,
+                            // updating statistics, handling specific packet types, etc.
                         }
                     }
+                    Err(e) => {
+                        error!("Error fetching packets: {:?}", e);
+                        break;
+                    }
                 }
-                Err(e) => {
-                    error!("Failed to initialize DPDK: {}", e);
-                }
+            }
+
+            // Cleanup
+            // Handle stopping the port
+            if let Err(e) = port.stop() {
+                error!("Error stopping DPDK port: {:?}", e);
             }
         })
     } else {
@@ -684,14 +854,18 @@ async fn main() {
             let mut count = 0;
 
             let mut stats_last_sent_ts = Instant::now();
+            let mut packets_dropped = 0;
 
-            while running_clone.load(Ordering::SeqCst) {
+            while running_capture.load(Ordering::SeqCst) {
                 while let Some(packet) = stream.next().await {
                     match packet {
                         Ok(data) => {
                             count += 1;
                             let packet_data = Arc::new(data.to_vec());
                             ptx.send(packet_data).await.unwrap();
+                            if !running_capture.load(Ordering::SeqCst) {
+                                break;
+                            }
                             let current_ts = Instant::now();
                             if pcap_stats
                                 && ((current_ts.duration_since(stats_last_sent_ts).as_secs() >= 30)
@@ -700,20 +874,25 @@ async fn main() {
                                 stats_last_sent_ts = current_ts;
                                 let stats = stream.capture_mut().stats().unwrap();
                                 println!(
-                                    "#{} Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
-                                    count, stats.received, stats.dropped, stats.if_dropped
+                                    "#{} Current stats: Received: {}, Dropped: {}/{}, Interface Dropped: {} packet_size: {} bytes.",
+                                    count, stats.received, stats.dropped - packets_dropped, stats.dropped, stats.if_dropped, data.len(),
                                 );
+                                packets_dropped = stats.dropped;
                             }
                         }
                         Err(e) => {
                             // Print error and information about it
                             error!("PCap Capture Error occurred: {}", e);
                             if e == pcap::Error::TimeoutExpired {
+                                // If timeout expired, check for running_capture
+                                if !running_capture.load(Ordering::SeqCst) {
+                                    break;
+                                }
                                 // Timeout expired, continue and try again
                                 continue;
                             } else {
                                 // Exit the loop if an error occurs
-                                running_clone.store(false, Ordering::SeqCst);
+                                running_capture.store(false, Ordering::SeqCst);
                                 break;
                             }
                         }
@@ -726,6 +905,9 @@ async fn main() {
                         stats.received, stats.dropped, stats.if_dropped
                     );
                 }
+                if !running_capture.load(Ordering::SeqCst) {
+                    break;
+                }
             }
 
             let stats = stream.capture_mut().stats().unwrap();
@@ -736,47 +918,122 @@ async fn main() {
         })
     };
 
+    // Initialize the video processor
     // Setup channel for passing data between threads
+    let (dtx, mut drx) = mpsc::channel::<Vec<StreamData>>(decoder_channel_size);
+
+    // Initialize the video processor
+    let processor = VideoProcessor::initialize().expect("Failed to initialize video processor");
+
+    // Clone the Arc to pass into the spawned task
+    let processor_clone = processor.decoder.clone();
+
+    // Spawn a new thread for Decoder communication
+    let decoder_thread = tokio::spawn(async move {
+        loop {
+            if !running_decoder.load(Ordering::SeqCst) {
+                debug!("Decoder thread received stop signal.");
+                break;
+            }
+
+            if !decode_video {
+                // Sleep for a short duration to prevent a tight loop
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+
+            // Use tokio::select to simultaneously wait for a new batch or a stop signal
+            tokio::select! {
+                Some(mut batch) = drx.recv() => {
+                    debug!("Processing {} video packets in decoder thread", batch.len());
+                    for stream_data in &batch {
+                        let mut locked_processor = processor_clone.lock().unwrap();
+                        locked_processor
+                            .process_packet(&stream_data.packet)
+                            .expect("Failed to process packet");
+                        // MutexGuard is automatically dropped here
+                    }
+                    // Clear the batch after processing
+                    batch.clear();
+                }
+                _ = tokio::time::sleep(Duration::from_millis(100)), if !running_decoder.load(Ordering::SeqCst) => {
+                    // This branch allows checking the running flag regularly
+                    continue;
+                }
+            }
+        }
+    });
+
+    // Setup channel for passing stream_data for ZMQ thread sending the stream data to monitor process
     let (tx, mut rx) = mpsc::channel::<Vec<StreamData>>(zmq_channel_size);
 
     // Spawn a new thread for ZeroMQ communication
     let zmq_thread = tokio::spawn(async move {
         let context = async_zmq::Context::new();
-        let publisher = context.socket(PUB).unwrap();
+        let publisher = context.socket(PUSH).unwrap();
         // Determine the connection endpoint (IPC if provided, otherwise TCP)
         let endpoint = if let Some(ipc_path_copy) = args.ipc_path {
             format!("ipc://{}", ipc_path_copy)
         } else {
             format!("tcp://{}:{}", target_ip, target_port)
         };
-
         info!("ZeroMQ publisher startup {}", endpoint);
 
         publisher.bind(&endpoint).unwrap();
 
-        while let Some(mut batch) = rx.recv().await {
-            for stream_data in batch.iter() {
-                // Serialize StreamData to Cap'n Proto message
-                let capnp_message = stream_data_to_capnp(stream_data)
-                    .expect("Failed to convert to Cap'n Proto message");
-                let mut serialized_data = Vec::new();
-                capnp::serialize::write_message(&mut serialized_data, &capnp_message)
-                    .expect("Failed to serialize Cap'n Proto message");
+        // Initialize an Option<File> to None
+        let mut file = if !output_file.is_empty() {
+            Some(File::create(&output_file).unwrap())
+        } else {
+            None
+        };
 
-                // Create ZeroMQ message from serialized Cap'n Proto data
-                let capnp_msg = zmq::Message::from(serialized_data);
+        let mut dot_last_sent_ts = Instant::now();
 
-                // Send the Cap'n Proto message
-                /*let packet_slice = &stream_data.packet
-                [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];*/
-                /*let mut packet_msg = zmq::Message::from(Vec::new());
-                if send_raw_stream {
-                    packet_msg = zmq::Message::from(packet_slice);
-                    }*/
-                publisher.send(capnp_msg, 0 /*zmq::SNDMORE*/).unwrap();
-                //publisher.send(packet_msg, 0).unwrap();
+        while running_zmq.load(Ordering::SeqCst) {
+            while let Some(mut batch) = rx.recv().await {
+                // Process and send messages
+                for stream_data in batch.iter() {
+                    // Serialize StreamData to Cap'n Proto message
+                    let capnp_message = stream_data_to_capnp(stream_data)
+                        .expect("Failed to convert to Cap'n Proto message");
+                    let mut serialized_data = Vec::new();
+                    capnp::serialize::write_message(&mut serialized_data, &capnp_message)
+                        .expect("Failed to serialize Cap'n Proto message");
+
+                    // Create ZeroMQ message from serialized Cap'n Proto data
+                    let capnp_msg = zmq::Message::from(serialized_data);
+
+                    // Send the Cap'n Proto message
+                    if !no_zmq {
+                        publisher.send(capnp_msg, zmq::SNDMORE).unwrap();
+                    }
+
+                    let packet_slice = &stream_data.packet[stream_data.packet_start
+                        ..stream_data.packet_start + stream_data.packet_len];
+                    let packet_msg = if send_raw_stream {
+                        // Write to file if output_file is provided
+                        if let Some(file) = file.as_mut() {
+                            if !no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
+                                dot_last_sent_ts = Instant::now();
+                                print!("*");
+                                // Flush stdout to ensure the progress dots are printed
+                                io::stdout().flush().unwrap();
+                            }
+                            file.write_all(&packet_slice).unwrap();
+                        }
+                        zmq::Message::from(packet_slice)
+                    } else {
+                        zmq::Message::from(Vec::new())
+                    };
+
+                    // Send the raw packet
+                    if !no_zmq {
+                        publisher.send(packet_msg, 0).unwrap();
+                    }
+                }
+                batch.clear();
             }
-            batch.clear();
         }
     });
 
@@ -790,6 +1047,7 @@ async fn main() {
 
     // Start packet capture
     let mut batch = Vec::new();
+    let mut video_batch = Vec::new();
     let mut video_pid: Option<u16> = Some(0xFFFF);
     let mut video_codec: Option<Codec> = Some(Codec::NONE);
     let mut current_video_frame = Vec::<StreamData>::new();
@@ -798,17 +1056,23 @@ async fn main() {
         packet: Vec::new(),
     };
 
+    let mut dot_last_sent_ts = Instant::now();
     while let Some(packet) = prx.recv().await {
         if packet_count > 0 && packets_captured > packet_count {
+            println!(
+                "\nPacket count limit reached {}, signaling termination...",
+                packet_count
+            );
             running.store(false, Ordering::SeqCst);
             break;
         }
         packets_captured += 1;
 
-        if !no_progress {
+        if !no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
+            dot_last_sent_ts = Instant::now();
             print!(".");
-            // flush stdout (wastes resources) TODO: output in ncurses or something w/less output
-            //std::io::stdout().flush().unwrap();
+            // Flush stdout to ensure the progress dots are printed
+            io::stdout().flush().unwrap();
         }
 
         // Check if chunk is MPEG-TS or SMPTE 2110
@@ -822,9 +1086,15 @@ async fn main() {
         }
 
         let chunks = if is_mpegts {
-            process_mpegts_packet(payload_offset, &packet, packet_size, start_time)
+            process_mpegts_packet(payload_offset, packet, packet_size, start_time)
         } else {
-            process_smpte2110_packet(payload_offset, &packet, packet.len(), start_time)
+            process_smpte2110_packet(
+                payload_offset,
+                packet,
+                packet_size,
+                start_time,
+                debug_smpte2110,
+            )
         };
 
         // Process each chunk
@@ -899,18 +1169,44 @@ async fn main() {
                 pmt_info.pid,
             );
 
-            if pid == 0x1FFF && is_mpegts {
-                // clear the Arc so it can be reused
+            // release the packet Arc so it can be reused
+            if !send_raw_stream && stream_data.packet_len > 0 {
                 stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
-                                                           // Skip null packets
-                continue;
+                stream_data.packet_len = 0;
+                stream_data.packet_start = 0;
+                if pid == 0x1FFF && is_mpegts {
+                    continue;
+                }
+            } else if send_raw_stream {
+                // Skip null packets
+                if pid == 0x1FFF && is_mpegts {
+                    // clear the Arc so it can be reused
+                    stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
+                    continue;
+                }
             }
+
+            // Check if this is a video PID
+            if decode_video
+                && video_batch.len() >= decode_video_batch_size
+                && pid == video_pid.unwrap_or(0xFFFF)
+            {
+                dtx.send(video_batch.clone()).await.unwrap(); // Clone if necessary
+                video_batch = Vec::new();
+            } else if decode_video {
+                let mut stream_data_clone = stream_data.clone();
+                stream_data_clone.packet_start = stream_data.packet_start;
+                stream_data_clone.packet_len = stream_data.packet_len;
+                stream_data_clone.packet = Arc::new(stream_data.packet.to_vec());
+                video_batch.push(stream_data_clone);
+            }
+
             batch.push(stream_data);
 
             //info!("STATUS::PACKETS:CAPTURED: {}", packets_captured);
             // Check if batch is full
-            if !no_zmq {
-                if batch.len() >= batch_size {
+            if !no_zmq_thread {
+                if batch.len() >= zmq_batch_size {
                     //info!("STATUS::BATCH:SEND: {}", batch.len());
                     // Send the batch to the channel
                     tx.send(batch).await.unwrap();
@@ -931,19 +1227,25 @@ async fn main() {
             }
         }
     }
-    /*Err(e) => {
-    error!("Error capturing packet: {:?}", e);
-    }*/
 
-    println!("Exiting rscap probe");
+    println!("\nSending stop signals to threads...");
 
-    // Send stop signal
+    // Send ZMQ stop signal
     tx.send(Vec::new()).await.unwrap();
     drop(tx);
 
+    // Send Decoder stop signal
+    dtx.send(Vec::new()).await.unwrap();
+    drop(dtx);
+
+    println!("\nWaiting for threads to finish...");
+
     // Wait for the zmq_thread to finish
-    zmq_thread.await.unwrap();
     capture_task.await.unwrap();
+    zmq_thread.await.unwrap();
+    decoder_thread.await.unwrap();
+
+    println!("\nThreads finished, exiting rscap probe");
 }
 
 // Check if the packet is MPEG-TS or SMPTE 2110
@@ -996,38 +1298,42 @@ fn get_line_offset(buf: &[u8]) -> u16 {
 // Process the packet and return a vector of SMPTE ST 2110 packets
 fn process_smpte2110_packet(
     payload_offset: usize,
-    packet: &Arc<Vec<u8>>,
+    packet: Arc<Vec<u8>>,
     packet_size: usize,
     start_time: u64,
+    debug: bool,
 ) -> Vec<StreamData> {
     let mut streams = Vec::new();
+    let mut offset = payload_offset;
+
+    let len = packet.len();
 
     // Check if the packet is large enough to contain an RTP header
-    if packet_size > payload_offset + 12 {
+    while offset + 12 <= len {
         // Check for RTP header marker
-        if packet[payload_offset] == 0x80 || packet[payload_offset] == 0x81 {
-            let rtp_packet = &packet[payload_offset..];
+        let packet_arc = Arc::clone(&packet);
+        if packet_arc[offset] == 0x80 || packet_arc[offset] == 0x81 {
+            let rtp_packet = &packet[offset..];
 
             // Create an RtpReader
             if let Ok(rtp) = RtpReader::new(rtp_packet) {
                 // Extract the timestamp and payload type
                 let timestamp = rtp.timestamp();
                 let payload_type = rtp.payload_type();
-
-                // Calculate the actual start of the RTP payload
-                let rtp_payload_offset = payload_offset + rtp.payload_offset();
-
-                // Calculate the length of the RTP payload
-                let rtp_payload_length = packet_size - rtp_payload_offset;
+                let rtp_payload = rtp.payload();
+                let rtp_payload_offset = rtp.payload_offset();
 
                 // Extract SMPTE 2110 specific fields
                 let line_length = get_line_length(rtp_packet);
+                let rtp_packet_size = line_length as usize;
                 let line_number = get_line_number(rtp_packet);
                 let extended_sequence_number = get_extended_sequence_number(rtp_packet);
                 let line_offset = get_line_offset(rtp_packet);
                 let field_id = get_line_field_id(rtp_packet);
-
                 let line_continuation = get_line_continuation(rtp_packet);
+
+                // Calculate the length of the RTP payload
+                let rtp_payload_length = rtp_payload.len();
 
                 // Use payload type as PID (for the purpose of this example)
                 let pid = payload_type as u16;
@@ -1035,7 +1341,7 @@ fn process_smpte2110_packet(
 
                 // Create new StreamData instance
                 let mut stream_data = StreamData::new(
-                    Arc::clone(packet),
+                    packet_arc,
                     rtp_payload_offset,
                     rtp_payload_length,
                     pid,
@@ -1059,9 +1365,18 @@ fn process_smpte2110_packet(
                     line_continuation,
                     extended_sequence_number,
                 );
+                if debug {
+                    info!(
+                        "SMPTE ST 2110 packet: offset: {} size: {} timestamp: {}, payload_type: {}, line_number: {}, line_offset: {}, line_length: {}, field_id: {}, line_continuation: {}, extended_sequence_number: {}",
+                        rtp_payload_offset, rtp_payload_length, timestamp, payload_type, line_number, line_offset, line_length, field_id, line_continuation, extended_sequence_number
+                    );
+                }
 
                 // Add the StreamData to the stream list
                 streams.push(stream_data);
+
+                // Move to the next RTP packet
+                offset += rtp_packet_size;
             } else {
                 hexdump(&packet, 0, packet_size);
                 error!("Error parsing RTP header, not SMPTE ST 2110");
@@ -1070,9 +1385,6 @@ fn process_smpte2110_packet(
             hexdump(&packet, 0, packet_size);
             error!("No RTP header detected, not SMPTE ST 2110");
         }
-    } else {
-        hexdump(&packet, 0, packet_size);
-        error!("Packet too small, not SMPTE ST 2110");
     }
 
     streams
@@ -1081,7 +1393,7 @@ fn process_smpte2110_packet(
 // Process the packet and return a vector of MPEG-TS packets
 fn process_mpegts_packet(
     payload_offset: usize,
-    packet: &Arc<Vec<u8>>,
+    packet: Arc<Vec<u8>>,
     packet_size: usize,
     start_time: u64,
 ) -> Vec<StreamData> {
@@ -1108,7 +1420,7 @@ fn process_mpegts_packet(
             let continuity_counter = chunk[3] & 0x0F;
 
             let mut stream_data = StreamData::new(
-                Arc::clone(packet),
+                Arc::clone(&packet),
                 start,
                 packet_size,
                 pid,
