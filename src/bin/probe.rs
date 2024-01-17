@@ -14,6 +14,8 @@ use capnp::message::{Builder, HeapAllocator};
 use capsule::config::{load_config, DPDKConfig};
 #[cfg(feature = "dpdk_enabled")]
 use capsule::dpdk;
+#[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
+use capsule::prelude::*;
 use clap::Parser;
 use futures::stream::StreamExt;
 use lazy_static::lazy_static;
@@ -29,6 +31,7 @@ use rtp_rs as rtp;
 use std::{
     collections::HashMap,
     error::Error as StdError,
+    fmt,
     fs::File,
     io,
     io::Write,
@@ -317,40 +320,123 @@ fn determine_stream_type(pid: u16) -> String {
 #[derive(Debug)]
 struct DeviceNotFoundError;
 
-impl std::fmt::Display for DeviceNotFoundError {
+impl std::error::Error for DeviceNotFoundError {}
+
+impl DeviceNotFoundError {
+    #[allow(dead_code)]
+    fn new() -> ErrorWrapper {
+        ErrorWrapper(Box::new(Self))
+    }
+}
+
+impl fmt::Display for DeviceNotFoundError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "Target device not found")
     }
 }
 
-impl StdError for DeviceNotFoundError {}
+struct ErrorWrapper(Box<dyn StdError + Send + Sync>);
+
+impl fmt::Debug for ErrorWrapper {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl fmt::Display for ErrorWrapper {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl StdError for ErrorWrapper {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        self.0.source()
+    }
+}
+
+pub trait Packet: Send {
+    fn data(&self) -> &[u8];
+}
+
+// Common interface for DPDK functionality
+trait DpdkPort: Send {
+    fn start(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn stop(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn rx_burst(&self, packets: &mut Vec<Box<dyn Packet>>) -> Result<(), anyhow::Error>;
+    // Other necessary methods...
+}
+
+// Implementation for Linux with DPDK enabled
+#[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
+struct RealDpdkPort(dpdk::Port);
 
 #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
-fn init_dpdk(port_id: u16) -> Result<dpdk::eal::Port, Box<dyn std::error::Error>> {
-    // DPDK initialization logic here
+impl DpdkPort for RealDpdkPort {
+    fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
+        self.0.start()?;
+        Ok(())
+    }
+
+    fn stop(&self) -> Result<(), Box<dyn std::error::Error>> {
+        self.0.stop()?;
+        Ok(())
+    }
+    fn rx_burst(&self, packets: &mut Vec<Box<dyn Packet>>) -> Result<(), anyhow::Error> {
+        // Logic for rx_burst...
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
+fn init_dpdk(
+    port_id: u16,
+    promiscuous_mode: bool,
+) -> Result<Box<dyn DpdkPort>, Box<dyn std::error::Error>> {
+    // Initialize capsule environment
     let config = load_config()?;
-    info!("DPDK config: {:?} setup on port {}", config, port_id);
     dpdk::eal::init(config)?;
 
-    // Configure and start the network interface
-    let port = dpdk::eal::Port::new(port_id)?;
+    // Configure network interface
+    let port = dpdk::Port::new(port_id)?;
     port.configure()?;
-    port.start()?;
 
     // Set promiscuous mode if needed
     if promiscuous_mode {
         port.set_promiscuous(true)?;
     }
 
-    info!("DPDK port {} initialized", port_id);
+    // Start the port
+    port.start()?;
 
-    Ok(port)
+    Ok(Box::new(RealDpdkPort(port)))
 }
 
-// Placeholder for non-Linux or DPDK disabled builds
+// Placeholder implementation for non-Linux or DPDK disabled builds
 #[cfg(not(all(feature = "dpdk_enabled", target_os = "linux")))]
-fn init_dpdk(_port_id: u16) -> Result<(), Box<dyn std::error::Error>> {
-    Err("DPDK is not supported on this OS".into())
+struct DummyDpdkPort;
+
+#[cfg(not(all(feature = "dpdk_enabled", target_os = "linux")))]
+impl DpdkPort for DummyDpdkPort {
+    fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
+        Err("DPDK is not supported on this OS".into())
+    }
+
+    fn stop(&self) -> Result<(), Box<dyn std::error::Error>> {
+        Err("DPDK is not supported on this OS".into())
+    }
+
+    fn rx_burst(&self, _packets: &mut Vec<Box<dyn Packet>>) -> Result<(), anyhow::Error> {
+        Err(anyhow::Error::msg("DPDK is not supported on this OS"))
+    }
+}
+
+#[cfg(not(all(feature = "dpdk_enabled", target_os = "linux")))]
+fn init_dpdk(
+    _port_id: u16,
+    _promiscuous: bool,
+) -> Result<Box<dyn DpdkPort>, Box<dyn std::error::Error>> {
+    Ok(Box::new(DummyDpdkPort))
 }
 
 fn init_pcap(
@@ -681,27 +767,47 @@ async fn main() {
     let capture_task = if cfg!(feature = "dpdk_enabled") && args.dpdk {
         // DPDK is enabled
         tokio::spawn(async move {
-            // TODO: DPDK initialization logic goes here");
-            error!("DPDK is not yet implemented");
-            // Implement DPDK initialization logic here
-            match init_dpdk(args.dpdk_port_id) {
-                Ok(()) => {
-                    let mut count = 0;
-                    // DPDK packet processing loop
-                    while running_clone.load(Ordering::SeqCst) {
-                        // Fetch and process packets using DPDK
-                        // ...
+            let port_id = 0; // Set your port ID
+            let promiscuous_mode = args.promiscuous;
 
-                        count += 1;
-                        if debug_on {
-                            // Print stats or debug information
-                            println!("DPDK packet count: {}", count);
+            // Initialize DPDK
+            let port = match init_dpdk(port_id, promiscuous_mode) {
+                Ok(p) => p,
+                Err(e) => {
+                    error!("Failed to initialize DPDK: {:?}", e);
+                    return;
+                }
+            };
+
+            let mut packets = Vec::new();
+            while running_clone.load(Ordering::SeqCst) {
+                match port.rx_burst(&mut packets) {
+                    Ok(_) => {
+                        for packet in packets.drain(..) {
+                            // Extract data from the packet
+                            let data = packet.data();
+
+                            // Convert to Arc<Vec<u8>> to maintain consistency with pcap logic
+                            let packet_data = Arc::new(data.to_vec());
+
+                            // Send packet data to processing channel
+                            ptx.send(packet_data).await.unwrap();
+
+                            // Here you can implement additional processing such as parsing the packet,
+                            // updating statistics, handling specific packet types, etc.
                         }
                     }
+                    Err(e) => {
+                        error!("Error fetching packets: {:?}", e);
+                        break;
+                    }
                 }
-                Err(e) => {
-                    error!("Failed to initialize DPDK: {}", e);
-                }
+            }
+
+            // Cleanup
+            // Handle stopping the port
+            if let Err(e) = port.stop() {
+                error!("Error stopping DPDK port: {:?}", e);
             }
         })
     } else {
