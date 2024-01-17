@@ -44,6 +44,7 @@ use zmq::PUSH;
 include!("../stream_data_capnp.rs");
 // Video Processor Decoder
 use rscap::videodecoder::VideoProcessor;
+use tokio::time::Duration;
 
 // Define your custom PacketCodec
 pub struct BoxCodec;
@@ -792,7 +793,13 @@ async fn main() {
     // Spawn a new thread for Decoder communication
     let decoder_thread = tokio::spawn(async move {
         loop {
-            while let Some(batch) = drx.recv().await {
+            if !decode_video {
+                // sleep for 1 second
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+            while let Some(mut batch) = drx.recv().await {
+                debug!("processing {} video packets in decoder thread", batch.len());
                 for stream_data in &batch {
                     {
                         let mut locked_processor = processor_clone.lock().unwrap();
@@ -802,7 +809,12 @@ async fn main() {
                         // MutexGuard is automatically dropped here
                     }
                     // Now the mutex is not locked across the await point
+                    debug!(
+                        "processed video packet with continuity counter {}",
+                        stream_data.continuity_counter
+                    );
                 }
+                batch.clear();
             }
         }
     });
@@ -921,7 +933,6 @@ async fn main() {
             is_mpegts = false;
         }
 
-        let packet_size = packet.len();
         let chunks = if is_mpegts {
             process_mpegts_packet(payload_offset, packet, packet_size, start_time)
         } else {
@@ -1025,7 +1036,7 @@ async fn main() {
 
             // Check if this is a video PID
             if decode_video
-                && batch.len() >= decode_video_batch_size
+                && video_batch.len() >= decode_video_batch_size
                 && pid == video_pid.unwrap_or(0xFFFF)
             {
                 dtx.send(video_batch.clone()).await.unwrap(); // Clone if necessary
@@ -1076,9 +1087,9 @@ async fn main() {
     drop(dtx);
 
     // Wait for the zmq_thread to finish
+    capture_task.await.unwrap();
     zmq_thread.await.unwrap();
     decoder_thread.await.unwrap();
-    capture_task.await.unwrap();
 }
 
 // Check if the packet is MPEG-TS or SMPTE 2110

@@ -1,4 +1,5 @@
 use anyhow::Result as AnyResult;
+use log::debug;
 use std::sync::{Arc, Mutex}; // Using anyhow for error handling
 
 pub struct VideoDecoder {
@@ -15,6 +16,7 @@ impl VideoDecoder {
 
     pub fn process_packet(&mut self, packet_data: &[u8]) -> AnyResult<()> {
         let buffer = packet_data.to_vec();
+        debug!("Pushing packet to frame buffer of size {}", buffer.len());
         self.frame_buffer.push(buffer.to_vec());
         Ok(())
     }
