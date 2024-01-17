@@ -39,6 +39,7 @@ capnp = "0.18.0"
 kafka = "0.9.0"
 serde = { version = "1.0.195", features = ["derive" ] }
 serde_json = "1.0.111"
+anyhow = "1.0.79"
 
 [build-dependencies]
 capnpc = "0.18.0"

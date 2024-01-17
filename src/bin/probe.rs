@@ -32,6 +32,9 @@ use std::{
     collections::HashMap,
     error::Error as StdError,
     fmt,
+    fs::File,
+    io,
+    io::Write,
     net::{IpAddr, Ipv4Addr, UdpSocket},
     sync::atomic::{AtomicBool, Ordering},
     sync::Arc,
@@ -39,7 +42,7 @@ use std::{
     time::Instant,
 };
 use tokio::sync::mpsc::{self};
-use zmq::PUB;
+use zmq::PUSH;
 // Include the generated paths for the Cap'n Proto schema
 include!("../stream_data_capnp.rs");
 
@@ -356,10 +359,7 @@ pub trait Packet: Send {
 trait DpdkPort: Send {
     fn start(&self) -> Result<(), Box<dyn std::error::Error>>;
     fn stop(&self) -> Result<(), Box<dyn std::error::Error>>;
-    fn rx_burst(
-        &self,
-        packets: &mut Vec<Box<dyn Packet>>,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    fn rx_burst(&self, packets: &mut Vec<Box<dyn Packet>>) -> Result<(), anyhow::Error>;
     // Other necessary methods...
 }
 
@@ -378,10 +378,7 @@ impl DpdkPort for RealDpdkPort {
         self.0.stop()?;
         Ok(())
     }
-    fn rx_burst(
-        &self,
-        packets: &mut Vec<Box<dyn Packet>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn rx_burst(&self, packets: &mut Vec<Box<dyn Packet>>) -> Result<(), anyhow::Error> {
         // Logic for rx_burst...
         Ok(())
     }
@@ -425,11 +422,8 @@ impl DpdkPort for DummyDpdkPort {
         Err("DPDK is not supported on this OS".into())
     }
 
-    fn rx_burst(
-        &self,
-        _packets: &mut Vec<Box<dyn Packet>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Err("DPDK is not supported on this OS".into())
+    fn rx_burst(&self, _packets: &mut Vec<Box<dyn Packet>>) -> Result<(), anyhow::Error> {
+        Err(anyhow::Error::msg("DPDK is not supported on this OS"))
     }
 }
 
@@ -659,6 +653,22 @@ struct Args {
     /// IPC Path for ZeroMQ
     #[clap(long, env = "IPC_PATH")]
     ipc_path: Option<String>,
+
+    /// Output file for ZeroMQ
+    #[clap(long, env = "OUTPUT_FILE", default_value = "")]
+    output_file: String,
+
+    /// Turn off the ZMQ thread
+    #[clap(long, env = "NO_ZMQ_THREAD", default_value_t = false)]
+    no_zmq_thread: bool,
+
+    /// ZMQ Batch size
+    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 7)]
+    zmq_batch_size: usize,
+
+    /// Debug SMPTE2110
+    #[clap(long, env = "DEBUG_SMPTE2110", default_value_t = false)]
+    debug_smpte2110: bool,
 }
 
 // MAIN Function
@@ -671,7 +681,7 @@ async fn main() {
     let args = Args::parse();
 
     // Use the parsed arguments directly
-    let batch_size = args.batch_size;
+    let mut batch_size = args.batch_size;
     let payload_offset = args.payload_offset;
     let mut packet_size = args.packet_size;
     let read_time_out = args.read_time_out;
@@ -684,7 +694,7 @@ async fn main() {
     let debug_on = args.debug_on;
     let silent = args.silent;
     let use_wireless = args.use_wireless;
-    let _send_raw_stream = args.send_raw_stream;
+    let send_raw_stream = args.send_raw_stream;
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
     let no_zmq = args.no_zmq;
@@ -697,14 +707,20 @@ async fn main() {
     let mut zmq_channel_size = args.zmq_channel_size;
     #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
     let use_dpdk = args.dpdk;
+    let output_file = args.output_file;
+    let no_zmq_thread = args.no_zmq_thread;
+    let mut zmq_batch_size = args.zmq_batch_size;
+    let debug_smpte2110 = args.debug_smpte2110;
 
+    // SMPTE2110 specific settings
     if args.smpte2110 {
-        // --batch-size 1 --buffer-size 10000000000 --pcap-channel-size 100000 --zmq-channel-size 10000 --packet-size 1208 --immediate-mode
-        buffer_size = 10000000000; // set buffer size to 10GB for smpte2110
-        pcap_channel_size = 100_000; // set pcap channel size to 100000 for smpte2110
-        zmq_channel_size = 10_000; // set zmq channel size to 10000 for smpte2110
-        packet_size = 1208; // set packet size to 1208 for smpte2110
         immediate_mode = true; // set immediate mode to true for smpte2110
+        buffer_size = 10_000_000_000; // set pcap buffer size to 10GB for smpte2110
+        pcap_channel_size = 1_000_000; // set pcap channel size for smpte2110
+        zmq_channel_size = 1_000_000; // set zmq channel size for smpte2110
+        packet_size = 1_220; // set packet size to 1208 (body) + 12 (header) for RTP
+        batch_size = 3; // N x 1220 size packets for pcap read size
+        zmq_batch_size = 1080; // N x packets for how many packets to send to ZMQ per batch
     }
 
     if silent {
@@ -794,6 +810,7 @@ async fn main() {
             let mut count = 0;
 
             let mut stats_last_sent_ts = Instant::now();
+            let mut packets_dropped = 0;
 
             while running_clone.load(Ordering::SeqCst) {
                 while let Some(packet) = stream.next().await {
@@ -810,9 +827,10 @@ async fn main() {
                                 stats_last_sent_ts = current_ts;
                                 let stats = stream.capture_mut().stats().unwrap();
                                 println!(
-                                    "#{} Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
-                                    count, stats.received, stats.dropped, stats.if_dropped
+                                    "#{} Current stats: Received: {}, Dropped: {}/{}, Interface Dropped: {} packet_size: {} bytes.",
+                                    count, stats.received, stats.dropped - packets_dropped, stats.dropped, stats.if_dropped, data.len(),
                                 );
+                                packets_dropped = stats.dropped;
                             }
                         }
                         Err(e) => {
@@ -852,17 +870,25 @@ async fn main() {
     // Spawn a new thread for ZeroMQ communication
     let zmq_thread = tokio::spawn(async move {
         let context = async_zmq::Context::new();
-        let publisher = context.socket(PUB).unwrap();
+        let publisher = context.socket(PUSH).unwrap();
         // Determine the connection endpoint (IPC if provided, otherwise TCP)
         let endpoint = if let Some(ipc_path_copy) = args.ipc_path {
             format!("ipc://{}", ipc_path_copy)
         } else {
             format!("tcp://{}:{}", target_ip, target_port)
         };
-
         info!("ZeroMQ publisher startup {}", endpoint);
 
         publisher.bind(&endpoint).unwrap();
+
+        // Initialize an Option<File> to None
+        let mut file = if !output_file.is_empty() {
+            Some(File::create(&output_file).unwrap())
+        } else {
+            None
+        };
+
+        let mut dot_last_sent_ts = Instant::now();
 
         while let Some(mut batch) = rx.recv().await {
             for stream_data in batch.iter() {
@@ -877,14 +903,32 @@ async fn main() {
                 let capnp_msg = zmq::Message::from(serialized_data);
 
                 // Send the Cap'n Proto message
-                /*let packet_slice = &stream_data.packet
-                [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];*/
-                /*let mut packet_msg = zmq::Message::from(Vec::new());
-                if send_raw_stream {
-                    packet_msg = zmq::Message::from(packet_slice);
-                    }*/
-                publisher.send(capnp_msg, 0 /*zmq::SNDMORE*/).unwrap();
-                //publisher.send(packet_msg, 0).unwrap();
+                if !no_zmq {
+                    publisher.send(capnp_msg, zmq::SNDMORE).unwrap();
+                }
+
+                let packet_slice = &stream_data.packet
+                    [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
+                let packet_msg = if send_raw_stream {
+                    // Write to file if output_file is provided
+                    if let Some(file) = file.as_mut() {
+                        if !no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
+                            dot_last_sent_ts = Instant::now();
+                            print!("*");
+                            // Flush stdout to ensure the progress dots are printed
+                            io::stdout().flush().unwrap();
+                        }
+                        file.write_all(&packet_slice).unwrap();
+                    }
+                    zmq::Message::from(packet_slice)
+                } else {
+                    zmq::Message::from(Vec::new())
+                };
+
+                // Send the raw packet
+                if !no_zmq {
+                    publisher.send(packet_msg, 0).unwrap();
+                }
             }
             batch.clear();
         }
@@ -908,6 +952,7 @@ async fn main() {
         packet: Vec::new(),
     };
 
+    let mut dot_last_sent_ts = Instant::now();
     while let Some(packet) = prx.recv().await {
         if packet_count > 0 && packets_captured > packet_count {
             running.store(false, Ordering::SeqCst);
@@ -915,10 +960,11 @@ async fn main() {
         }
         packets_captured += 1;
 
-        if !no_progress {
+        if !no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
+            dot_last_sent_ts = Instant::now();
             print!(".");
-            // flush stdout (wastes resources) TODO: output in ncurses or something w/less output
-            //std::io::stdout().flush().unwrap();
+            // Flush stdout to ensure the progress dots are printed
+            io::stdout().flush().unwrap();
         }
 
         // Check if chunk is MPEG-TS or SMPTE 2110
@@ -932,9 +978,15 @@ async fn main() {
         }
 
         let chunks = if is_mpegts {
-            process_mpegts_packet(payload_offset, &packet, packet_size, start_time)
+            process_mpegts_packet(payload_offset, packet, packet_size, start_time)
         } else {
-            process_smpte2110_packet(payload_offset, &packet, packet.len(), start_time)
+            process_smpte2110_packet(
+                payload_offset,
+                packet,
+                packet_size,
+                start_time,
+                debug_smpte2110,
+            )
         };
 
         // Process each chunk
@@ -1009,18 +1061,28 @@ async fn main() {
                 pmt_info.pid,
             );
 
-            if pid == 0x1FFF && is_mpegts {
-                // clear the Arc so it can be reused
+            // release the packet Arc so it can be reused
+            if !send_raw_stream && stream_data.packet_len > 0 {
                 stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
-                                                           // Skip null packets
-                continue;
+                stream_data.packet_len = 0;
+                stream_data.packet_start = 0;
+                if pid == 0x1FFF && is_mpegts {
+                    continue;
+                }
+            } else if send_raw_stream {
+                // Skip null packets
+                if pid == 0x1FFF && is_mpegts {
+                    // clear the Arc so it can be reused
+                    stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
+                    continue;
+                }
             }
             batch.push(stream_data);
 
             //info!("STATUS::PACKETS:CAPTURED: {}", packets_captured);
             // Check if batch is full
-            if !no_zmq {
-                if batch.len() >= batch_size {
+            if !no_zmq_thread {
+                if batch.len() >= zmq_batch_size {
                     //info!("STATUS::BATCH:SEND: {}", batch.len());
                     // Send the batch to the channel
                     tx.send(batch).await.unwrap();
@@ -1103,38 +1165,42 @@ fn get_line_offset(buf: &[u8]) -> u16 {
 // Process the packet and return a vector of SMPTE ST 2110 packets
 fn process_smpte2110_packet(
     payload_offset: usize,
-    packet: &Arc<Vec<u8>>,
+    packet: Arc<Vec<u8>>,
     packet_size: usize,
     start_time: u64,
+    debug: bool,
 ) -> Vec<StreamData> {
     let mut streams = Vec::new();
+    let mut offset = payload_offset;
+
+    let len = packet.len();
 
     // Check if the packet is large enough to contain an RTP header
-    if packet_size > payload_offset + 12 {
+    while offset + 12 <= len {
         // Check for RTP header marker
-        if packet[payload_offset] == 0x80 || packet[payload_offset] == 0x81 {
-            let rtp_packet = &packet[payload_offset..];
+        let packet_arc = Arc::clone(&packet);
+        if packet_arc[offset] == 0x80 || packet_arc[offset] == 0x81 {
+            let rtp_packet = &packet[offset..];
 
             // Create an RtpReader
             if let Ok(rtp) = RtpReader::new(rtp_packet) {
                 // Extract the timestamp and payload type
                 let timestamp = rtp.timestamp();
                 let payload_type = rtp.payload_type();
-
-                // Calculate the actual start of the RTP payload
-                let rtp_payload_offset = payload_offset + rtp.payload_offset();
-
-                // Calculate the length of the RTP payload
-                let rtp_payload_length = packet_size - rtp_payload_offset;
+                let rtp_payload = rtp.payload();
+                let rtp_payload_offset = rtp.payload_offset();
 
                 // Extract SMPTE 2110 specific fields
                 let line_length = get_line_length(rtp_packet);
+                let rtp_packet_size = line_length as usize;
                 let line_number = get_line_number(rtp_packet);
                 let extended_sequence_number = get_extended_sequence_number(rtp_packet);
                 let line_offset = get_line_offset(rtp_packet);
                 let field_id = get_line_field_id(rtp_packet);
-
                 let line_continuation = get_line_continuation(rtp_packet);
+
+                // Calculate the length of the RTP payload
+                let rtp_payload_length = rtp_payload.len();
 
                 // Use payload type as PID (for the purpose of this example)
                 let pid = payload_type as u16;
@@ -1142,7 +1208,7 @@ fn process_smpte2110_packet(
 
                 // Create new StreamData instance
                 let mut stream_data = StreamData::new(
-                    Arc::clone(packet),
+                    packet_arc,
                     rtp_payload_offset,
                     rtp_payload_length,
                     pid,
@@ -1166,9 +1232,18 @@ fn process_smpte2110_packet(
                     line_continuation,
                     extended_sequence_number,
                 );
+                if debug {
+                    info!(
+                        "SMPTE ST 2110 packet: offset: {} size: {} timestamp: {}, payload_type: {}, line_number: {}, line_offset: {}, line_length: {}, field_id: {}, line_continuation: {}, extended_sequence_number: {}",
+                        rtp_payload_offset, rtp_payload_length, timestamp, payload_type, line_number, line_offset, line_length, field_id, line_continuation, extended_sequence_number
+                    );
+                }
 
                 // Add the StreamData to the stream list
                 streams.push(stream_data);
+
+                // Move to the next RTP packet
+                offset += rtp_packet_size;
             } else {
                 hexdump(&packet, 0, packet_size);
                 error!("Error parsing RTP header, not SMPTE ST 2110");
@@ -1177,9 +1252,6 @@ fn process_smpte2110_packet(
             hexdump(&packet, 0, packet_size);
             error!("No RTP header detected, not SMPTE ST 2110");
         }
-    } else {
-        hexdump(&packet, 0, packet_size);
-        error!("Packet too small, not SMPTE ST 2110");
     }
 
     streams
@@ -1188,7 +1260,7 @@ fn process_smpte2110_packet(
 // Process the packet and return a vector of MPEG-TS packets
 fn process_mpegts_packet(
     payload_offset: usize,
-    packet: &Arc<Vec<u8>>,
+    packet: Arc<Vec<u8>>,
     packet_size: usize,
     start_time: u64,
 ) -> Vec<StreamData> {
@@ -1215,7 +1287,7 @@ fn process_mpegts_packet(
             let continuity_counter = chunk[3] & 0x0F;
 
             let mut stream_data = StreamData::new(
-                Arc::clone(packet),
+                Arc::clone(&packet),
                 start,
                 packet_size,
                 pid,
