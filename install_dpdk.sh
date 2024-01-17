@@ -1,6 +1,26 @@
 #!/bin/bash
 set -e
 
+# Detect the operating system
+OS="$(uname -s)"
+echo "Detected OS: $OS"
+
+## CentOS 7.9 DPDK RPMS
+if [ "$OS" = "Linux" ]; then
+    if [ -f /etc/centos-release ]; then
+        . /etc/os-release
+        if [ "$VERSION_ID" = "7" ]; then
+            echo "CentOS 7 detected."
+            echo "Yum RPMs on CentoOS 7 are available, installing..."
+            yum install -y dpdk dpdk-devel dpdk-tools
+            echo "DPDK installation is complete."
+            exit 0
+        fi
+    fi
+fi
+
+echo "Installing DPDK from source..."
+
 # Update System
 echo "Updating system..."
 sudo yum update -y
