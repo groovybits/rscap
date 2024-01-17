@@ -42,6 +42,9 @@ use tokio::sync::mpsc::{self};
 use zmq::PUSH;
 // Include the generated paths for the Cap'n Proto schema
 include!("../stream_data_capnp.rs");
+// Video Processor Decoder
+use rscap::videodecoder::VideoProcessor;
+use tokio::time::Duration;
 
 // Define your custom PacketCodec
 pub struct BoxCodec;
@@ -352,7 +355,8 @@ fn init_dpdk(_port_id: u16) -> Result<(), Box<dyn std::error::Error>> {
 
 fn init_pcap(
     source_device: &str,
-    use_wireless: bool,
+    #[cfg(target_os = "linux")] _use_wireless: bool,
+    #[cfg(not(target_os = "linux"))] use_wireless: bool,
     promiscuous: bool,
     read_time_out: i32,
     read_size: i32,
@@ -557,6 +561,10 @@ struct Args {
     #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 1_000)]
     zmq_channel_size: usize,
 
+    /// MPSC Channel Size for Decoder
+    #[clap(long, env = "DECODER_CHANNEL_SIZE", default_value_t = 1_000)]
+    decoder_channel_size: usize,
+
     /// DPDK enable
     #[clap(long, env = "DPDK", default_value_t = false)]
     dpdk: bool,
@@ -580,6 +588,14 @@ struct Args {
     /// ZMQ Batch size
     #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 7)]
     zmq_batch_size: usize,
+
+    /// Decode Video
+    #[clap(long, env = "DECODE_VIDEO", default_value_t = false)]
+    decode_video: bool,
+
+    /// Decode Video Batch Size
+    #[clap(long, env = "DECODE_VIDEO_BATCH_SIZE", default_value_t = 7)]
+    decode_video_batch_size: usize,
 
     /// Debug SMPTE2110
     #[clap(long, env = "DEBUG_SMPTE2110", default_value_t = false)]
@@ -620,12 +636,15 @@ async fn main() {
     let pcap_stats = args.pcap_stats;
     let mut pcap_channel_size = args.pcap_channel_size;
     let mut zmq_channel_size = args.zmq_channel_size;
+    let mut decoder_channel_size = args.decoder_channel_size;
     #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
     let use_dpdk = args.dpdk;
     let output_file = args.output_file;
     let no_zmq_thread = args.no_zmq_thread;
     let mut zmq_batch_size = args.zmq_batch_size;
     let debug_smpte2110 = args.debug_smpte2110;
+    let decode_video = args.decode_video;
+    let mut decode_video_batch_size = args.decode_video_batch_size;
 
     // SMPTE2110 specific settings
     if args.smpte2110 {
@@ -633,8 +652,10 @@ async fn main() {
         buffer_size = 10_000_000_000; // set pcap buffer size to 10GB for smpte2110
         pcap_channel_size = 1_000_000; // set pcap channel size for smpte2110
         zmq_channel_size = 1_000_000; // set zmq channel size for smpte2110
-        packet_size = 1_220; // set packet size to 1208 (body) + 12 (header) for RTP
+        decoder_channel_size = 1_000_000; // set decoder channel size for smpte2110
+        packet_size = 1_220; // set packet size to 1220 (body) + 12 (header) for RTP
         batch_size = 3; // N x 1220 size packets for pcap read size
+        decode_video_batch_size = 7; // N x 1220 size packets for pcap read size
         zmq_batch_size = 1080; // N x packets for how many packets to send to ZMQ per batch
     }
 
@@ -759,7 +780,46 @@ async fn main() {
         })
     };
 
+    // Initialize the video processor
     // Setup channel for passing data between threads
+    let (dtx, mut drx) = mpsc::channel::<Vec<StreamData>>(decoder_channel_size);
+
+    // Initialize the video processor
+    let processor = VideoProcessor::initialize().expect("Failed to initialize video processor");
+
+    // Clone the Arc to pass into the spawned task
+    let processor_clone = processor.decoder.clone();
+
+    // Spawn a new thread for Decoder communication
+    let decoder_thread = tokio::spawn(async move {
+        loop {
+            if !decode_video {
+                // sleep for 1 second
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+            while let Some(mut batch) = drx.recv().await {
+                debug!("processing {} video packets in decoder thread", batch.len());
+                for stream_data in &batch {
+                    {
+                        let mut locked_processor = processor_clone.lock().unwrap();
+                        locked_processor
+                            .process_packet(&stream_data.packet)
+                            .expect("Failed to process packet");
+                        // MutexGuard is automatically dropped here
+                    }
+                    // Now the mutex is not locked across the await point
+                    debug!(
+                        "processed video packet with continuity counter {}",
+                        stream_data.continuity_counter
+                    );
+                }
+                batch.clear();
+            }
+        }
+    });
+
+    // Setup channel for passing stream_data for ZMQ thread sending the stream data to monitor process
     let (tx, mut rx) = mpsc::channel::<Vec<StreamData>>(zmq_channel_size);
 
     // Spawn a new thread for ZeroMQ communication
@@ -839,6 +899,7 @@ async fn main() {
 
     // Start packet capture
     let mut batch = Vec::new();
+    let mut video_batch = Vec::new();
     let mut video_pid: Option<u16> = Some(0xFFFF);
     let mut video_codec: Option<Codec> = Some(Codec::NONE);
     let mut current_video_frame = Vec::<StreamData>::new();
@@ -972,6 +1033,22 @@ async fn main() {
                     continue;
                 }
             }
+
+            // Check if this is a video PID
+            if decode_video
+                && video_batch.len() >= decode_video_batch_size
+                && pid == video_pid.unwrap_or(0xFFFF)
+            {
+                dtx.send(video_batch.clone()).await.unwrap(); // Clone if necessary
+                video_batch = Vec::new();
+            } else if decode_video {
+                let mut stream_data_clone = stream_data.clone();
+                stream_data_clone.packet_start = stream_data.packet_start;
+                stream_data_clone.packet_len = stream_data.packet_len;
+                stream_data_clone.packet = Arc::new(stream_data.packet.to_vec());
+                video_batch.push(stream_data_clone);
+            }
+
             batch.push(stream_data);
 
             //info!("STATUS::PACKETS:CAPTURED: {}", packets_captured);
@@ -998,19 +1075,21 @@ async fn main() {
             }
         }
     }
-    /*Err(e) => {
-    error!("Error capturing packet: {:?}", e);
-    }*/
 
     println!("Exiting rscap probe");
 
-    // Send stop signal
+    // Send ZMQ stop signal
     tx.send(Vec::new()).await.unwrap();
     drop(tx);
 
+    // Send Decoder stop signal
+    dtx.send(Vec::new()).await.unwrap();
+    drop(dtx);
+
     // Wait for the zmq_thread to finish
-    zmq_thread.await.unwrap();
     capture_task.await.unwrap();
+    zmq_thread.await.unwrap();
+    decoder_thread.await.unwrap();
 }
 
 // Check if the packet is MPEG-TS or SMPTE 2110
