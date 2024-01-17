@@ -323,6 +323,7 @@ struct DeviceNotFoundError;
 impl std::error::Error for DeviceNotFoundError {}
 
 impl DeviceNotFoundError {
+    #[allow(dead_code)]
     fn new() -> ErrorWrapper {
         ErrorWrapper(Box::new(Self))
     }
