@@ -1163,6 +1163,21 @@ async fn rscap() {
                 pmt_info.pid,
             );
 
+            // Check if this is a video PID
+            if decode_video
+                && video_batch.len() >= decode_video_batch_size
+                && pid == video_pid.unwrap_or(0xFFFF)
+            {
+                dtx.send(video_batch.clone()).await.unwrap(); // Clone if necessary
+                video_batch = Vec::new();
+            } else if decode_video {
+                let mut stream_data_clone = stream_data.clone();
+                stream_data_clone.packet_start = stream_data.packet_start;
+                stream_data_clone.packet_len = stream_data.packet_len;
+                stream_data_clone.packet = Arc::new(stream_data.packet.to_vec());
+                video_batch.push(stream_data_clone);
+            }
+
             // release the packet Arc so it can be reused
             if !send_raw_stream && stream_data.packet_len > 0 {
                 stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
@@ -1178,21 +1193,6 @@ async fn rscap() {
                     stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
                     continue;
                 }
-            }
-
-            // Check if this is a video PID
-            if decode_video
-                && video_batch.len() >= decode_video_batch_size
-                && pid == video_pid.unwrap_or(0xFFFF)
-            {
-                dtx.send(video_batch.clone()).await.unwrap(); // Clone if necessary
-                video_batch = Vec::new();
-            } else if decode_video {
-                let mut stream_data_clone = stream_data.clone();
-                stream_data_clone.packet_start = stream_data.packet_start;
-                stream_data_clone.packet_len = stream_data.packet_len;
-                stream_data_clone.packet = Arc::new(stream_data.packet.to_vec());
-                video_batch.push(stream_data_clone);
             }
 
             batch.push(stream_data);

@@ -4,111 +4,66 @@
  * TODO: Add support for decoding H264 and extracting SEI messages of all types
 */
 
-use anyhow::{Context as AnyContext, Result as AnyResult};
+use anyhow::Result as AnyResult;
+use h264_reader::nal::UnitType;
+use h264_reader::push::NalInterest;
 use h264_reader::{
-    avcc::AvcDecoderConfigurationRecord,
-    nal::{self, sei::pic_timing::PicTiming, sei::SeiReader, Nal, NalHeader},
+    annexb::AnnexBReader,
+    nal::{pps, sps, Nal, RefNal},
+    Context as H264Context,
 };
-use log::debug;
-use std::convert::TryFrom;
-use std::error::Error;
-use std::format;
-use std::io::Cursor;
-use std::sync::{Arc, Mutex}; // Using anyhow for error handling
-
-// Custom Error type for AVC errors
-#[derive(Debug)]
-struct AvccErrorWrapper(String);
-
-impl std::fmt::Display for AvccErrorWrapper {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "AVC Error: {}", self.0)
-    }
-}
-
-impl Error for AvccErrorWrapper {}
-
-impl From<h264_reader::avcc::AvccError> for AvccErrorWrapper {
-    fn from(err: h264_reader::avcc::AvccError) -> Self {
-        AvccErrorWrapper(format!("{:?}", err))
-    }
-}
+use std::sync::{Arc, Mutex};
 
 pub struct VideoDecoder {
-    frame_buffer: Vec<Vec<u8>>,
-    avc_config_record: Option<Vec<u8>>,
+    //frame_buffer: Vec<Vec<u8>>,
+    h264_ctx: H264Context,
 }
 
 impl VideoDecoder {
     pub fn new() -> AnyResult<Self> {
         Ok(VideoDecoder {
-            frame_buffer: Vec::new(),
-            avc_config_record: None,
+            //frame_buffer: Vec::new(),
+            h264_ctx: H264Context::new(),
         })
     }
 
-    fn process_h264_data(&mut self, data: &[u8], ctx: &mut H264Context) -> AnyResult<()> {
-        // Process the H264 data here
-        // Assuming `nal::parse_nal_units` is the correct method to parse NAL units
-        for nal in nal::parse_nal_units(data) {
-            match nal.header() {
-                NalHeader::Slice { .. } => {
-                    // Process slice data here
-                }
-                NalHeader::Sei => {
-                    // Process SEI message
-                    if let Ok(sei) = SeiMessage::try_from(nal) {
-                        for message in sei.messages() {
-                            match message {
-                                SeiMessage::PicTiming(pic_timing) => {
-                                    // Extract the pic_timing data here
-                                    println!("PicTiming: {:?}", pic_timing);
-                                }
-                                _ => {}
-                            }
-                        }
+    pub fn process_packet(&mut self, packet_data: &[u8]) -> AnyResult<()> {
+        // Using the existing h264_ctx instead of creating a new Context
+        let mut annexb_reader = AnnexBReader::accumulate(|nal: RefNal<'_>| {
+            if !nal.is_complete() {
+                return NalInterest::Buffer;
+            }
+
+            let hdr = match nal.header() {
+                Ok(h) => h,
+                Err(_) => return NalInterest::Buffer, // Proper error handling
+            };
+
+            match hdr.nal_unit_type() {
+                UnitType::SeqParameterSet => {
+                    if let Ok(sps) = sps::SeqParameterSet::from_bits(nal.rbsp_bits()) {
+                        self.h264_ctx.put_seq_param_set(sps);
                     }
                 }
-                // Handle other NAL types as needed
+                UnitType::PicParameterSet => {
+                    if let Ok(pps) =
+                        pps::PicParameterSet::from_bits(&self.h264_ctx, nal.rbsp_bits())
+                    {
+                        self.h264_ctx.put_pic_param_set(pps);
+                    }
+                }
+                // ... handle other NAL unit types as necessary ...
                 _ => {}
             }
-        }
-        Ok(())
-    }
+            NalInterest::Buffer
+        });
 
-    pub fn process_packet(&mut self, packet_data: &[u8]) -> AnyResult<()> {
-        if let Some(avc_config_record) = self.extract_avc_config_record(packet_data) {
-            let record = AvcDecoderConfigurationRecord::try_from(avc_config_record.as_slice())
-                .map_err(|e| anyhow::Error::new(e))
-                .context("Failed to create AVC Decoder Configuration Record")?;
+        annexb_reader.push(packet_data);
+        annexb_reader.reset();
 
-            let mut ctx = record
-                .create_context()
-                .map_err(|e| anyhow::Error::new(e))
-                .context("Failed to create AVC Context")?;
+        // Additional processing using self.h264_ctx as needed
+        // ...
 
-            // Now process the H264 data in the frame buffer
-            for frame in &self.frame_buffer {
-                self.process_h264_data(frame, &mut ctx)
-                    .context("Failed to process H264 data")?;
-            }
-        }
-        Ok(())
-    }
-
-    // Assuming `extract_avc_config_record` is a function you implement to extract the AVC configuration record from MPEG-TS packets
-    pub fn extract_avc_config_record(&self, _ts_packet: &[u8]) -> Option<Vec<u8>> {
-        // Extract AVC configuration record from the TS packet
-        // Placeholder for implementation
-        // This needs to be implemented based on your specific MPEG-TS packet structure
-        None
-    }
-
-    pub fn start(&self) -> Result<(), anyhow::Error> {
-        Ok(())
-    }
-
-    pub fn stop(&self) -> Result<(), anyhow::Error> {
         Ok(())
     }
 }
@@ -124,18 +79,9 @@ impl VideoProcessor {
             decoder: Arc::new(Mutex::new(decoder)),
         })
     }
+
     pub fn feed_packet(&self, packet_data: &[u8]) -> AnyResult<()> {
         let mut decoder = self.decoder.lock().unwrap();
         decoder.process_packet(packet_data)
-    }
-
-    pub fn start(&self) -> Result<(), anyhow::Error> {
-        let decoder = self.decoder.lock().unwrap();
-        decoder.start()
-    }
-
-    pub fn stop(&self) -> Result<(), anyhow::Error> {
-        let decoder = self.decoder.lock().unwrap();
-        decoder.stop()
     }
 }
