@@ -997,38 +997,99 @@ async fn rscap() {
                 Some(mut batch) = drx.recv() => {
                     debug!("Processing {} video packets in decoder thread", batch.len());
                     for stream_data in &batch {
+                        // packet is a subset of the original packet, starting at the payload
+                        let packet_start = stream_data.packet_start;
+                        let packet_end = stream_data.packet_start + stream_data.packet_len;
+
+                        // check if packet_start + 4 is less than packet_end
+                        if packet_start + 4 >= packet_end {
+                            continue;
+                        }
+
                         // Skip MPEG-TS header and adaptation field
                         let header_len = 4;
-                        let adaptation_field_control = (stream_data.packet[3] & 0b00110000) >> 4;
+                        let adaptation_field_control = (stream_data.packet[3 + packet_start] & 0b00110000) >> 4;
 
                         if adaptation_field_control == 0b10 {
                             continue; // Skip packets with only adaptation field (no payload)
                         }
 
                         let payload_start = if adaptation_field_control != 0b01 {
-                            header_len + 1 + stream_data.packet[4] as usize
+                            header_len + 1 + stream_data.packet[4 + packet_start] as usize
                         } else {
                             header_len
                         };
 
                         // Process payload, skipping padding bytes
                         let mut pos = payload_start;
-                        while pos + 4 < stream_data.packet.len() {
-                            if stream_data.packet[pos..pos + 4] == [0x00, 0x00, 0x00, 0x01] {
+                        while pos + 4 < packet_end {
+                            if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x01] {
                                 let nal_start = pos;
-                                pos += 4; // Move past the start code
+                                pos += 3; // Move past the short start code
 
-                                while pos + 4 <= stream_data.packet.len() && stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
+                                // Search for the next start code
+                                while pos + 4 <= packet_end &&
+                                      stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
+                                    if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x01] && pos > nal_start + 3 {
+                                        // Found a short start code, so back up and process the NAL unit
+                                        break;
+                                    } else if stream_data.packet[pos + 1] == 0xff && pos > nal_start + 1 {
+                                        // check for 0xff padding and that we are at least 2 bytes into the nal
+                                        break;
+                                    } else if stream_data.packet[pos..pos + 4] == [0x00, 0x00, 0x00, 0x00] && pos > nal_start + 3 {
+                                        // check for 0x00 0x00 0x00 0x00 sequence to stop at
+                                        break;
+                                    }
                                     pos += 1;
                                 }
 
                                 let nal_end = pos; // End of NAL unit found or end of packet
-                                if nal_end - nal_start > 10 { // Threshold for significant NAL unit size
+                                if nal_end - nal_start > 3 { // Threshold for significant NAL unit size
                                     let nal_unit = &stream_data.packet[nal_start..nal_end];
+
+                                    // Debug print the NAL unit
+                                    if debug_on {
+                                        info!("Extracted Short NAL Unit from {} to {} of hex value:", nal_start, nal_end);
+                                        let nal_unit_arc = Arc::new(nal_unit.to_vec());
+                                        hexdump(&nal_unit_arc, 0, nal_unit.len());
+                                    }
+
                                     // Process the NAL unit
-                                    /*info!("Extracted NAL Unit from {} to {} of hex value:", nal_start, nal_end);
-                                    let nal_unit_arc = Arc::new(nal_unit.to_vec());
-                                    hexdump(&nal_unit_arc, 0, nal_unit.len());*/
+                                    annexb_reader.push(nal_unit);
+                                    annexb_reader.reset();
+                                }
+                            } else if pos + 4 < packet_end && stream_data.packet[pos..pos + 4] == [0x00, 0x00, 0x00, 0x01] {
+                                let nal_start = pos;
+                                pos += 4; // Move past the long start code
+
+                                // Search for the next start code
+                                while pos + 4 <= packet_end &&
+                                      stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
+                                    if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x01] && pos > nal_start + 3 {
+                                        // Found a long start code, so back up and process the NAL unit
+                                        break;
+                                    } else if stream_data.packet[pos + 1] == 0xff && pos > nal_start + 1 {
+                                        // check for 0xff padding and that we are at least 2 bytes into the nal
+                                        break;
+                                    } else if stream_data.packet[pos..pos + 4] == [0x00, 0x00, 0x00, 0x00] && pos > nal_start + 3 {
+                                        // check for 0x00 0x00 0x00 0x00 sequence to stop at
+                                        break;
+                                    }
+                                    pos += 1;
+                                }
+
+                                let nal_end = pos; // End of NAL unit found or end of packet
+                                if nal_end - nal_start > 3 { // Threshold for significant NAL unit size
+                                    let nal_unit = &stream_data.packet[nal_start..nal_end];
+
+                                    // Debug print the NAL unit
+                                    if debug_on {
+                                        info!("Extracted NAL Unit from {} to {} of hex value:", nal_start, nal_end);
+                                        let nal_unit_arc = Arc::new(nal_unit.to_vec());
+                                        hexdump(&nal_unit_arc, 0, nal_unit.len());
+                                    }
+
+                                    // Process the NAL unit
                                     annexb_reader.push(nal_unit);
                                     annexb_reader.reset();
                                 }
