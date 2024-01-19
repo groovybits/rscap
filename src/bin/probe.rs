@@ -986,8 +986,8 @@ async fn rscap() {
                 Some(mut batch) = drx.recv() => {
                     debug!("Processing {} video packets in decoder thread", batch.len());
                     for stream_data in &batch {
-                        let payload_offset = 4;
-                        let packet_slice = &stream_data.packet[stream_data.packet_start + payload_offset..stream_data.packet_start + stream_data.packet_len - payload_offset];
+                        let payload_offset = 4 + 2;
+                        let packet_slice = &stream_data.packet[stream_data.packet_start + payload_offset..(stream_data.packet_start + stream_data.packet_len) - payload_offset];
                         annexb_reader.push(packet_slice);
                         // MutexGuard is automatically dropped here
                     }
