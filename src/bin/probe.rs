@@ -46,7 +46,11 @@ use zmq::PUSH;
 // Include the generated paths for the Cap'n Proto schema
 include!("../stream_data_capnp.rs");
 // Video Processor Decoder
-use rscap::videodecoder::VideoProcessor;
+use h264_reader::annexb::AnnexBReader;
+use h264_reader::nal::{pps, sei, slice, sps, Nal, RefNal, UnitType};
+use h264_reader::push::NalInterest;
+use h264_reader::Context;
+//use rscap::videodecoder::VideoProcessor;
 use tokio::time::Duration;
 
 // Define your custom PacketCodec
@@ -144,7 +148,8 @@ fn process_packet(
             let uptime = arrival_time - stream_data.start_time;
 
             // print out each field of structure
-            debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, uptime);
+            debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {} packet_offset: {}, packet_len: {}",
+                stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, uptime, stream_data_packet.packet_start, stream_data_packet.packet_len);
 
             stream_data_packet.bitrate = stream_data.bitrate;
             stream_data_packet.bitrate_avg = stream_data.bitrate_avg;
@@ -912,15 +917,61 @@ async fn rscap() {
         })
     };
 
+    let mut ctx = Context::default();
+    let mut scratch = Vec::new();
+    // Use the `move` keyword to move ownership of `ctx` and `scratch` into the closure
+    let mut annexb_reader = AnnexBReader::accumulate(move |nal: RefNal<'_>| {
+        if !nal.is_complete() {
+            return NalInterest::Buffer;
+        }
+        let hdr = match nal.header() {
+            Ok(h) => h,
+            Err(e) => {
+                error!("Failed to parse NAL header: {:?}", e);
+                return NalInterest::Buffer;
+            }
+        };
+        match hdr.nal_unit_type() {
+            UnitType::SeqParameterSet => {
+                if let Ok(sps) = sps::SeqParameterSet::from_bits(nal.rbsp_bits()) {
+                    info!("Found SPS: {:?}", sps);
+                    ctx.put_seq_param_set(sps);
+                }
+            }
+            UnitType::PicParameterSet => {
+                if let Ok(pps) = pps::PicParameterSet::from_bits(&ctx, nal.rbsp_bits()) {
+                    info!("Found PPS: {:?}", pps);
+                    ctx.put_pic_param_set(pps);
+                }
+            }
+            UnitType::SEI => {
+                let mut r = sei::SeiReader::from_rbsp_bytes(nal.rbsp_bytes(), &mut scratch);
+                while let Ok(Some(msg)) = r.next() {
+                    match msg.payload_type {
+                        sei::HeaderType::PicTiming => {
+                            let sps = match ctx.sps().next() {
+                                Some(s) => s,
+                                None => continue,
+                            };
+                            let pic_timing = sei::pic_timing::PicTiming::read(sps, &msg);
+                            info!("Found PicTiming: {:?}", pic_timing);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            UnitType::SliceLayerWithoutPartitioningIdr
+            | UnitType::SliceLayerWithoutPartitioningNonIdr => {
+                let _ = slice::SliceHeader::from_bits(&ctx, &mut nal.rbsp_bits(), hdr);
+            }
+            _ => {}
+        }
+        NalInterest::Buffer
+    });
+
     // Initialize the video processor
     // Setup channel for passing data between threads
     let (dtx, mut drx) = mpsc::channel::<Vec<StreamData>>(decoder_channel_size);
-
-    // Initialize the video processor
-    let processor = VideoProcessor::initialize().expect("Failed to initialize video processor");
-
-    // Clone the Arc to pass into the spawned task
-    let processor_clone = processor.decoder.clone();
 
     // Spawn a new thread for Decoder communication
     let decoder_thread = tokio::spawn(async move {
@@ -941,18 +992,53 @@ async fn rscap() {
                 Some(mut batch) = drx.recv() => {
                     debug!("Processing {} video packets in decoder thread", batch.len());
                     for stream_data in &batch {
-                        let mut locked_processor = processor_clone.lock().unwrap();
-                        locked_processor
-                            .process_packet(&stream_data.packet)
-                            .expect("Failed to process packet");
-                        // MutexGuard is automatically dropped here
+                        // Skip MPEG-TS header and adaptation field
+                        let header_len = 4;
+                        let adaptation_field_control = (stream_data.packet[3] & 0b00110000) >> 4;
+
+                        if adaptation_field_control == 0b10 {
+                            continue; // Skip packets with only adaptation field (no payload)
+                        }
+
+                        let payload_start = if adaptation_field_control != 0b01 {
+                            header_len + 1 + stream_data.packet[4] as usize
+                        } else {
+                            header_len
+                        };
+
+                        // Process payload, skipping padding bytes
+                        let mut pos = payload_start;
+                        while pos + 4 < stream_data.packet.len() {
+                            if stream_data.packet[pos..pos + 4] == [0x00, 0x00, 0x00, 0x01] {
+                                let nal_start = pos;
+                                pos += 4; // Move past the start code
+
+                                while pos + 4 <= stream_data.packet.len() && stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
+                                    pos += 1;
+                                }
+
+                                let nal_end = pos; // End of NAL unit found or end of packet
+                                if nal_end - nal_start > 10 { // Threshold for significant NAL unit size
+                                    let nal_unit = &stream_data.packet[nal_start..nal_end];
+                                    // Process the NAL unit
+                                    /*info!("Extracted NAL Unit from {} to {} of hex value:", nal_start, nal_end);
+                                    let nal_unit_arc = Arc::new(nal_unit.to_vec());
+                                    hexdump(&nal_unit_arc, 0, nal_unit.len());*/
+                                    annexb_reader.push(nal_unit);
+                                }
+                            } else {
+                                pos += 1; // Move to the next byte if no start code found
+                            }
+                        }
                     }
+                    annexb_reader.reset();
                     // Clear the batch after processing
                     batch.clear();
                 }
-                _ = tokio::time::sleep(Duration::from_millis(100)), if !running_decoder.load(Ordering::SeqCst) => {
+                _ = tokio::time::sleep(Duration::from_millis(10)), if !running_decoder.load(Ordering::SeqCst) => {
                     // This branch allows checking the running flag regularly
-                    continue;
+                    info!("Decoder thread received stop signal.");
+                    break;
                 }
             }
         }
@@ -1163,6 +1249,21 @@ async fn rscap() {
                 pmt_info.pid,
             );
 
+            // Check if this is a video PID
+            if decode_video
+                && video_batch.len() >= decode_video_batch_size
+                && pid == video_pid.unwrap_or(0xFFFF)
+            {
+                dtx.send(video_batch).await.unwrap(); // Clone if necessary
+                video_batch = Vec::new();
+            } else if decode_video {
+                let mut stream_data_clone = stream_data.clone();
+                stream_data_clone.packet_start = stream_data.packet_start;
+                stream_data_clone.packet_len = stream_data.packet_len;
+                stream_data_clone.packet = Arc::new(stream_data.packet.to_vec());
+                video_batch.push(stream_data_clone);
+            }
+
             // release the packet Arc so it can be reused
             if !send_raw_stream && stream_data.packet_len > 0 {
                 stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
@@ -1178,21 +1279,6 @@ async fn rscap() {
                     stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
                     continue;
                 }
-            }
-
-            // Check if this is a video PID
-            if decode_video
-                && video_batch.len() >= decode_video_batch_size
-                && pid == video_pid.unwrap_or(0xFFFF)
-            {
-                dtx.send(video_batch.clone()).await.unwrap(); // Clone if necessary
-                video_batch = Vec::new();
-            } else if decode_video {
-                let mut stream_data_clone = stream_data.clone();
-                stream_data_clone.packet_start = stream_data.packet_start;
-                stream_data_clone.packet_len = stream_data.packet_len;
-                stream_data_clone.packet = Arc::new(stream_data.packet.to_vec());
-                video_batch.push(stream_data_clone);
             }
 
             batch.push(stream_data);
