@@ -992,12 +992,52 @@ async fn rscap() {
                 Some(mut batch) = drx.recv() => {
                     debug!("Processing {} video packets in decoder thread", batch.len());
                     for stream_data in &batch {
-                        let payload_offset = 4 + 2;
+                        // Skip MPEG-TS header and adaptation field
+                        let header_len = 4; // Adjust based on your MPEG-TS packet structure
+                        let adaptation_field_control = (stream_data.packet[3] & 0b00110000) >> 4;
+                        let payload_start = if adaptation_field_control == 0b01 || adaptation_field_control == 0b10 {
+                            header_len
+                        } else {
+                            header_len + 1 + stream_data.packet[4] as usize
+                        };
+
+                        // Process payload, skipping padding bytes
+                        let mut pos = payload_start;
+                        while pos < stream_data.packet.len() {
+                            if stream_data.packet[pos] == 0xFF {
+                                // Skip padding bytes
+                                pos += 1;
+                                continue;
+                            }
+
+                            // Find the next NAL unit start code
+                            if pos + 3 < stream_data.packet.len() && stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x01] {
+                                // Extract NAL unit
+                                let nal_start = pos + 3;
+                                pos += 4; // Move past the start code
+
+                                // Find the end of the NAL unit
+                                while pos < stream_data.packet.len() && stream_data.packet[pos..pos + 3] != [0x00, 0x00, 0x01] {
+                                    pos += 1;
+                                }
+
+                                let nal_end = if pos < stream_data.packet.len() { pos } else { stream_data.packet.len() };
+                                let nal_unit = &stream_data.packet[nal_start..nal_end];
+
+                                // Process the NAL unit
+                                annexb_reader.push(nal_unit);
+                            } else {
+                                // No start code found, move to next byte
+                                pos += 1;
+                            }
+                        }
+
+                        /*let payload_offset = 4 + 2;
                         let packet_slice = &stream_data.packet[stream_data.packet_start + payload_offset..(stream_data.packet_start + stream_data.packet_len) - payload_offset];
                         let packet_slice_arc = Arc::new(packet_slice.to_vec());
                         hexdump(&packet_slice_arc, 0, packet_slice_arc.len());
                         info!("AnnexB Adding Packet Slice PID {} slice length: {}", stream_data.pid, packet_slice.len());
-                        annexb_reader.push(packet_slice);
+                        annexb_reader.push(packet_slice);*/
                         // MutexGuard is automatically dropped here
                     }
                     annexb_reader.reset();
