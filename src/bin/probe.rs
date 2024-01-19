@@ -1025,6 +1025,9 @@ async fn rscap() {
                                 let nal_unit = &stream_data.packet[nal_start..nal_end];
 
                                 // Process the NAL unit
+                                info!("Extracted NAL Unit from {} to {} of hex value:", nal_start, nal_end);
+                                let nal_unit_arc = Arc::new(nal_unit.to_vec());
+                                hexdump(&nal_unit_arc, 0, nal_unit.len());
                                 annexb_reader.push(nal_unit);
                             } else {
                                 // No start code found, move to next byte
