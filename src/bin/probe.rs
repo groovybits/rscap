@@ -1019,7 +1019,7 @@ async fn rscap() {
 
                                 let nal_end = pos; // End of NAL unit found or end of packet
                                 if nal_end - nal_start > 10 { // Threshold for significant NAL unit size
-                                    let nal_unit = &stream_data.packet[nal_start-4..nal_end];
+                                    let nal_unit = &stream_data.packet[nal_start..nal_end];
                                     // Process the NAL unit
                                     info!("Extracted NAL Unit from {} to {} of hex value:", nal_start, nal_end);
                                     let nal_unit_arc = Arc::new(nal_unit.to_vec());
