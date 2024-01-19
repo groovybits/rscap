@@ -1003,35 +1003,29 @@ async fn rscap() {
 
                         // Process payload, skipping padding bytes
                         let mut pos = payload_start;
-                        while pos < stream_data.packet.len() {
-                            if stream_data.packet[pos] == 0xFF {
-                                // Skip padding bytes
-                                pos += 1;
-                                continue;
-                            }
-
-                            // Find the next NAL unit start code
-                            if pos + 3 < stream_data.packet.len() && stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x01] {
-                                // Extract NAL unit
-                                let nal_start = pos + 3;
+                        while pos + 4 < stream_data.packet.len() {
+                            if stream_data.packet[pos..pos + 4] == [0x00, 0x00, 0x00, 0x01] {
+                                let nal_start = pos + 4;
                                 pos += 4; // Move past the start code
 
-                                // Find the end of the NAL unit
-                                while pos + 3 < stream_data.packet.len() && stream_data.packet[pos..pos + 3] != [0x00, 0x00, 0x01] {
+                                while pos + 4 < stream_data.packet.len() && stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
                                     pos += 1;
                                 }
 
-                                let nal_end = if pos < stream_data.packet.len() { pos } else { stream_data.packet.len() };
-                                let nal_unit = &stream_data.packet[nal_start..nal_end];
-
-                                // Process the NAL unit
-                                info!("Extracted NAL Unit from {} to {} of hex value:", nal_start, nal_end);
-                                let nal_unit_arc = Arc::new(nal_unit.to_vec());
-                                hexdump(&nal_unit_arc, 0, nal_unit.len());
-                                annexb_reader.push(nal_unit);
+                                let nal_end = pos;
+                                if nal_end > nal_start {
+                                    let nal_unit = &stream_data.packet[nal_start..nal_end];
+                                    // Process the NAL unit
+                                    info!("Extracted NAL Unit from {} to {} of hex value:", nal_start, nal_end);
+                                    let nal_unit_arc = Arc::new(nal_unit.to_vec());
+                                    hexdump(&nal_unit_arc, 0, nal_unit.len());
+                                    annexb_reader.push(nal_unit);
+                                } else {
+                                    // Log warning about potential malformed data
+                                    error!("Malformed NAL unit detected");
+                                }
                             } else {
-                                // No start code found, move to next byte
-                                pos += 1;
+                                pos += 1; // No start code found, move to the next byte
                             }
                         }
 
