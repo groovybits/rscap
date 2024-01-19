@@ -1030,13 +1030,13 @@ async fn rscap() {
                                     let nal_unit_arc = Arc::new(nal_unit.to_vec());
                                     hexdump(&nal_unit_arc, 0, nal_unit.len());*/
                                     annexb_reader.push(nal_unit);
+                                    annexb_reader.reset();
                                 }
                             } else {
                                 pos += 1; // Move to the next byte if no start code found
                             }
                         }
                     }
-                    annexb_reader.reset();
                     // Clear the batch after processing
                     batch.clear();
                 }
