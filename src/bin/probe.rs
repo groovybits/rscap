@@ -993,28 +993,39 @@ async fn rscap() {
                     debug!("Processing {} video packets in decoder thread", batch.len());
                     for stream_data in &batch {
                         // Skip MPEG-TS header and adaptation field
-                        let header_len = 4; // Adjust based on your MPEG-TS packet structure
+                        let header_len = 4;
                         let adaptation_field_control = (stream_data.packet[3] & 0b00110000) >> 4;
-                        let payload_start = if adaptation_field_control == 0b01 || adaptation_field_control == 0b10 {
-                            header_len
-                        } else {
+
+                        // Skip packets with only adaptation field (no payload)
+                        if adaptation_field_control == 0b10 {
+                            continue;
+                        }
+
+                        let payload_start = if adaptation_field_control != 0b01 {
                             header_len + 1 + stream_data.packet[4] as usize
+                        } else {
+                            header_len
                         };
 
-                        // Process payload, skipping padding bytes
                         let mut pos = payload_start;
                         while pos + 4 < stream_data.packet.len() {
                             if stream_data.packet[pos..pos + 4] == [0x00, 0x00, 0x00, 0x01] {
                                 let nal_start = pos + 4;
-                                pos += 4; // Move past the start code
+                                pos += 4;
 
                                 while pos + 4 <= stream_data.packet.len() &&
-                                        stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
+                                        stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] &&
+                                        stream_data.packet[pos] != 0xFF {
                                     pos += 1;
                                 }
 
-                                let nal_end = pos;
-                                if nal_end - nal_start > 3 { // Prevent very short NAL unit extraction
+                                let nal_end = if pos < stream_data.packet.len() && stream_data.packet[pos] == 0xFF {
+                                    nal_start
+                                } else {
+                                    pos
+                                };
+
+                                if nal_end - nal_start > 10 { // Adjust this value as needed for your stream
                                     let nal_unit = &stream_data.packet[nal_start..nal_end];
                                     // Process the NAL unit
                                     info!("Extracted NAL Unit from {} to {} of hex value:", nal_start, nal_end);
@@ -1022,8 +1033,11 @@ async fn rscap() {
                                     hexdump(&nal_unit_arc, 0, nal_unit.len());
                                     annexb_reader.push(nal_unit);
                                 }
+                            } else if stream_data.packet[pos] == 0xFF {
+                                // Padding byte found, stop processing this packet
+                                break;
                             } else {
-                                pos += 1; // No start code found, move to the next byte
+                                pos += 1;
                             }
                         }
                     }
