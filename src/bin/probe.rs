@@ -1007,37 +1007,53 @@ async fn rscap() {
                             header_len
                         };
 
-                        let mut pos = payload_start;
+                        let pos = payload_start;
                         while pos + 4 < stream_data.packet.len() {
-                            if stream_data.packet[pos..pos + 4] == [0x00, 0x00, 0x00, 0x01] {
-                                let nal_start = pos + 4;
-                                pos += 4;
+                            let header_len = 4;
+                            let adaptation_field_control = (stream_data.packet[3] & 0b00110000) >> 4;
 
-                                while pos + 4 <= stream_data.packet.len() &&
-                                        stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] &&
-                                        stream_data.packet[pos] != 0xFF {
+                            if adaptation_field_control == 0b10 {
+                                continue; // Skip packets with only adaptation field (no payload)
+                            }
+
+                            let payload_start = if adaptation_field_control == 0b01 {
+                                header_len
+                            } else {
+                                header_len + 1 + stream_data.packet[4] as usize
+                            };
+
+                            let mut pos = payload_start;
+                            while pos + 4 < stream_data.packet.len() {
+                                if stream_data.packet[pos..pos + 4] == [0x00, 0x00, 0x00, 0x01] {
+                                    let nal_start = pos;
+                                    pos += 4; // Move past the start code
+
+                                    while pos + 4 <= stream_data.packet.len() && stream_data.packet[pos] != 0xFF {
+                                        if stream_data.packet[pos..pos + 4] == [0x00, 0x00, 0x00, 0x01] {
+                                            break;
+                                        }
+                                        pos += 1;
+                                    }
+
+                                    let nal_end = if pos < stream_data.packet.len() && stream_data.packet[pos] == 0xFF {
+                                        nal_start
+                                    } else {
+                                        pos
+                                    };
+
+                                    if nal_end - nal_start > 10 { // Threshold for significant NAL unit size
+                                        let nal_unit = &stream_data.packet[nal_start..nal_end];
+                                        // Process the NAL unit
+                                        info!("Extracted NAL Unit from {} to {} of hex value:", nal_start, nal_end);
+                                        let nal_unit_arc = Arc::new(nal_unit.to_vec());
+                                        hexdump(&nal_unit_arc, 0, nal_unit.len());
+                                        annexb_reader.push(nal_unit);
+                                    }
+                                } else if stream_data.packet[pos] == 0xFF {
+                                    break; // Padding byte found, stop processing this packet
+                                } else {
                                     pos += 1;
                                 }
-
-                                let nal_end = if pos < stream_data.packet.len() && stream_data.packet[pos] == 0xFF {
-                                    nal_start
-                                } else {
-                                    pos
-                                };
-
-                                if nal_end - nal_start > 10 { // Adjust this value as needed for your stream
-                                    let nal_unit = &stream_data.packet[nal_start..nal_end];
-                                    // Process the NAL unit
-                                    info!("Extracted NAL Unit from {} to {} of hex value:", nal_start, nal_end);
-                                    let nal_unit_arc = Arc::new(nal_unit.to_vec());
-                                    hexdump(&nal_unit_arc, 0, nal_unit.len());
-                                    annexb_reader.push(nal_unit);
-                                }
-                            } else if stream_data.packet[pos] == 0xFF {
-                                // Padding byte found, stop processing this packet
-                                break;
-                            } else {
-                                pos += 1;
                             }
                         }
                     }
