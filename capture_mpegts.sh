@@ -7,8 +7,7 @@ MEM_BIND=0
 ## MPEGTS
 RUST_LOG=$ERROR_LEVEL numactl --cpubind=$CPU_BIND --membind=$MEM_BIND \
     target/release/probe \
-        --no-progress \
         --pcap-stats \
-        --immediate-mode \
-        --show-tr101290 \
-        --send-raw-stream
+        --decode-video \
+        --debug-nal-types "sps,pps,pic_timing,sei,slice,unknown" \
+        --parse-short-nals # --debug-nals --debug-on --show-tr101290
