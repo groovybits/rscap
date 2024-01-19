@@ -46,7 +46,11 @@ use zmq::PUSH;
 // Include the generated paths for the Cap'n Proto schema
 include!("../stream_data_capnp.rs");
 // Video Processor Decoder
-use rscap::videodecoder::VideoProcessor;
+use h264_reader::annexb::AnnexBReader;
+use h264_reader::nal::{pps, sei, slice, sps, Nal, RefNal, UnitType};
+use h264_reader::push::NalInterest;
+use h264_reader::Context;
+//use rscap::videodecoder::VideoProcessor;
 use tokio::time::Duration;
 
 // Define your custom PacketCodec
@@ -912,15 +916,55 @@ async fn rscap() {
         })
     };
 
+    let mut ctx = Context::default();
+    let mut scratch = Vec::new();
+    // Use the `move` keyword to move ownership of `ctx` and `scratch` into the closure
+    let mut annexb_reader = AnnexBReader::accumulate(move |nal: RefNal<'_>| {
+        if !nal.is_complete() {
+            return NalInterest::Buffer;
+        }
+        let hdr = match nal.header() {
+            Ok(h) => h,
+            Err(_) => return NalInterest::Buffer,
+        };
+        match hdr.nal_unit_type() {
+            UnitType::SeqParameterSet => {
+                if let Ok(sps) = sps::SeqParameterSet::from_bits(nal.rbsp_bits()) {
+                    ctx.put_seq_param_set(sps);
+                }
+            }
+            UnitType::PicParameterSet => {
+                if let Ok(pps) = pps::PicParameterSet::from_bits(&ctx, nal.rbsp_bits()) {
+                    ctx.put_pic_param_set(pps);
+                }
+            }
+            UnitType::SEI => {
+                let mut r = sei::SeiReader::from_rbsp_bytes(nal.rbsp_bytes(), &mut scratch);
+                while let Ok(Some(msg)) = r.next() {
+                    match msg.payload_type {
+                        sei::HeaderType::PicTiming => {
+                            let sps = match ctx.sps().next() {
+                                Some(s) => s,
+                                None => continue,
+                            };
+                            let _ = sei::pic_timing::PicTiming::read(sps, &msg);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            UnitType::SliceLayerWithoutPartitioningIdr
+            | UnitType::SliceLayerWithoutPartitioningNonIdr => {
+                let _ = slice::SliceHeader::from_bits(&ctx, &mut nal.rbsp_bits(), hdr);
+            }
+            _ => {}
+        }
+        NalInterest::Buffer
+    });
+
     // Initialize the video processor
     // Setup channel for passing data between threads
     let (dtx, mut drx) = mpsc::channel::<Vec<StreamData>>(decoder_channel_size);
-
-    // Initialize the video processor
-    let processor = VideoProcessor::initialize().expect("Failed to initialize video processor");
-
-    // Clone the Arc to pass into the spawned task
-    let processor_clone = processor.decoder.clone();
 
     // Spawn a new thread for Decoder communication
     let decoder_thread = tokio::spawn(async move {
@@ -941,10 +985,7 @@ async fn rscap() {
                 Some(mut batch) = drx.recv() => {
                     debug!("Processing {} video packets in decoder thread", batch.len());
                     for stream_data in &batch {
-                        let mut locked_processor = processor_clone.lock().unwrap();
-                        locked_processor
-                            .process_packet(&stream_data.packet)
-                            .expect("Failed to process packet");
+                        annexb_reader.push(&*stream_data.packet);
                         // MutexGuard is automatically dropped here
                     }
                     // Clear the batch after processing
@@ -1169,7 +1210,7 @@ async fn rscap() {
                 && video_batch.len() >= decode_video_batch_size
                 && pid == video_pid.unwrap_or(0xFFFF)
             {
-                dtx.send(video_batch.clone()).await.unwrap(); // Clone if necessary
+                dtx.send(video_batch).await.unwrap(); // Clone if necessary
                 video_batch = Vec::new();
             } else if decode_video {
                 let mut stream_data_clone = stream_data.clone();
