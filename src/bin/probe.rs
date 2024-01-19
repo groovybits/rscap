@@ -964,9 +964,12 @@ async fn rscap() {
             }
             UnitType::SliceLayerWithoutPartitioningIdr
             | UnitType::SliceLayerWithoutPartitioningNonIdr => {
-                let _ = slice::SliceHeader::from_bits(&ctx, &mut nal.rbsp_bits(), hdr);
+                let msg = slice::SliceHeader::from_bits(&ctx, &mut nal.rbsp_bits(), hdr);
+                info!("Found slice: {:?}", msg);
             }
-            _ => {}
+            _ => {
+                info!("Found NAL: {:?}", hdr);
+            }
         }
         NalInterest::Buffer
     });
