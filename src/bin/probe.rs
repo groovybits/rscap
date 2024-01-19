@@ -950,9 +950,10 @@ async fn rscap() {
                     // Clear the batch after processing
                     batch.clear();
                 }
-                _ = tokio::time::sleep(Duration::from_millis(100)), if !running_decoder.load(Ordering::SeqCst) => {
+                _ = tokio::time::sleep(Duration::from_millis(10)), if !running_decoder.load(Ordering::SeqCst) => {
                     // This branch allows checking the running flag regularly
-                    continue;
+                    info!("Decoder thread received stop signal.");
+                    break;
                 }
             }
         }
