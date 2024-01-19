@@ -926,16 +926,21 @@ async fn rscap() {
         }
         let hdr = match nal.header() {
             Ok(h) => h,
-            Err(_) => return NalInterest::Buffer,
+            Err(e) => {
+                error!("Failed to parse NAL header: {:?}", e);
+                return NalInterest::Buffer;
+            }
         };
         match hdr.nal_unit_type() {
             UnitType::SeqParameterSet => {
                 if let Ok(sps) = sps::SeqParameterSet::from_bits(nal.rbsp_bits()) {
+                    info!("Found SPS: {:?}", sps);
                     ctx.put_seq_param_set(sps);
                 }
             }
             UnitType::PicParameterSet => {
                 if let Ok(pps) = pps::PicParameterSet::from_bits(&ctx, nal.rbsp_bits()) {
+                    info!("Found PPS: {:?}", pps);
                     ctx.put_pic_param_set(pps);
                 }
             }
@@ -948,7 +953,8 @@ async fn rscap() {
                                 Some(s) => s,
                                 None => continue,
                             };
-                            let _ = sei::pic_timing::PicTiming::read(sps, &msg);
+                            let pic_timing = sei::pic_timing::PicTiming::read(sps, &msg);
+                            info!("Found PicTiming: {:?}", pic_timing);
                         }
                         _ => {}
                     }
@@ -988,6 +994,9 @@ async fn rscap() {
                     for stream_data in &batch {
                         let payload_offset = 4 + 2;
                         let packet_slice = &stream_data.packet[stream_data.packet_start + payload_offset..(stream_data.packet_start + stream_data.packet_len) - payload_offset];
+                        let packet_slice_arc = Arc::new(packet_slice.to_vec());
+                        hexdump(&packet_slice_arc, 0, packet_slice_arc.len());
+                        info!("AnnexB Adding Packet Slice PID {} slice length: {}", stream_data.pid, packet_slice.len());
                         annexb_reader.push(packet_slice);
                         // MutexGuard is automatically dropped here
                     }
