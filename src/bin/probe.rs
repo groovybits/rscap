@@ -1008,37 +1008,24 @@ async fn rscap() {
                                 let nal_start = pos + 4;
                                 pos += 4; // Move past the start code
 
-                                while pos + 4 < stream_data.packet.len() && stream_data.packet[pos] != 0xFF && stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
+                                while pos + 4 <= stream_data.packet.len() &&
+                                        stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
                                     pos += 1;
                                 }
 
                                 let nal_end = pos;
-                                if nal_end > nal_start {
+                                if nal_end - nal_start > 3 { // Prevent very short NAL unit extraction
                                     let nal_unit = &stream_data.packet[nal_start..nal_end];
                                     // Process the NAL unit
                                     info!("Extracted NAL Unit from {} to {} of hex value:", nal_start, nal_end);
                                     let nal_unit_arc = Arc::new(nal_unit.to_vec());
                                     hexdump(&nal_unit_arc, 0, nal_unit.len());
                                     annexb_reader.push(nal_unit);
-                                } else {
-                                    // Log warning about potential malformed data
-                                    error!("Malformed NAL unit detected");
                                 }
-                            } else if stream_data.packet[pos] == 0xFF {
-                                // Padding byte found, stop processing this packet
-                                break;
                             } else {
                                 pos += 1; // No start code found, move to the next byte
                             }
                         }
-
-                        /*let payload_offset = 4 + 2;
-                        let packet_slice = &stream_data.packet[stream_data.packet_start + payload_offset..(stream_data.packet_start + stream_data.packet_len) - payload_offset];
-                        let packet_slice_arc = Arc::new(packet_slice.to_vec());
-                        hexdump(&packet_slice_arc, 0, packet_slice_arc.len());
-                        info!("AnnexB Adding Packet Slice PID {} slice length: {}", stream_data.pid, packet_slice.len());
-                        annexb_reader.push(packet_slice);*/
-                        // MutexGuard is automatically dropped here
                     }
                     annexb_reader.reset();
                     // Clear the batch after processing
