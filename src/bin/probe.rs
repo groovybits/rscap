@@ -691,6 +691,18 @@ struct Args {
     /// Debug SMPTE2110
     #[clap(long, env = "DEBUG_SMPTE2110", default_value_t = false)]
     debug_smpte2110: bool,
+
+    /// Debug NALs
+    #[clap(long, env = "DEBUG_NALS", default_value_t = false)]
+    debug_nals: bool,
+
+    /// List of NAL types to debug, comma separated: sps, pps, pic_timing, sei, slice, unknown
+    #[clap(long, env = "DEBUG_NAL_TYPES", default_value = "")]
+    debug_nal_types: String,
+
+    // Parse short NALs that are 0x000001
+    #[clap(long, env = "PARSE_SHORT_NALS", default_value_t = false)]
+    parse_short_nals: bool,
 }
 
 // MAIN Function
@@ -710,8 +722,6 @@ async fn main() {
 
 // RsCap Function
 async fn rscap() {
-    println!("RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap.");
-
     dotenv::dotenv().ok(); // read .env file
 
     let args = Args::parse();
@@ -750,6 +760,15 @@ async fn rscap() {
     let debug_smpte2110 = args.debug_smpte2110;
     let decode_video = args.decode_video;
     let mut decode_video_batch_size = args.decode_video_batch_size;
+    let debug_nals = args.debug_nals;
+    let debug_nal_types = args.debug_nal_types;
+    let parse_short_nals = args.parse_short_nals;
+
+    println!("Starting RsCap Probe...");
+
+    // turn debug_nal_types into a vector
+    // Assuming debug_nal_types is a String
+    let debug_nal_types: Vec<String> = debug_nal_types.split(',').map(|s| s.to_string()).collect();
 
     // SMPTE2110 specific settings
     if args.smpte2110 {
@@ -927,20 +946,34 @@ async fn rscap() {
         let hdr = match nal.header() {
             Ok(h) => h,
             Err(e) => {
-                error!("Failed to parse NAL header: {:?}", e);
+                // check if we are in debug mode for nals, else check if this is a ForbiddenZeroBit error, which we ignore
+                let e_str = format!("{:?}", e);
+                if !debug_nals && e_str == "ForbiddenZeroBit" {
+                    // ignore forbidden zero bit error unless we are in debug mode
+                } else {
+                    // show nal contents
+                    debug!("---\n{:?}\n---", nal);
+                    error!("Failed to parse NAL header: {:?}", e);
+                }
                 return NalInterest::Buffer;
             }
         };
         match hdr.nal_unit_type() {
             UnitType::SeqParameterSet => {
                 if let Ok(sps) = sps::SeqParameterSet::from_bits(nal.rbsp_bits()) {
-                    info!("Found SPS: {:?}", sps);
+                    // check if debug_nal_types has sps
+                    if debug_nal_types.contains(&"sps".to_string()) {
+                        println!("Found SPS: {:?}", sps);
+                    }
                     ctx.put_seq_param_set(sps);
                 }
             }
             UnitType::PicParameterSet => {
                 if let Ok(pps) = pps::PicParameterSet::from_bits(&ctx, nal.rbsp_bits()) {
-                    info!("Found PPS: {:?}", pps);
+                    // check if debug_nal_types has pps
+                    if debug_nal_types.contains(&"pps".to_string()) {
+                        println!("Found PPS: {:?}", pps);
+                    }
                     ctx.put_pic_param_set(pps);
                 }
             }
@@ -954,17 +987,34 @@ async fn rscap() {
                                 None => continue,
                             };
                             let pic_timing = sei::pic_timing::PicTiming::read(sps, &msg);
-                            info!("Found PicTiming: {:?}", pic_timing);
+                            // check if debug_nal_types has pic_timing
+                            if debug_nal_types.contains(&"pic_timing".to_string()) {
+                                println!("Found PicTiming: {:?}", pic_timing);
+                            }
                         }
-                        _ => {}
+                        _ => {
+                            // check if debug_nal_types has sei
+                            if debug_nal_types.contains(&"sei".to_string()) {
+                                println!("Found SEI: {:?}", msg);
+                            }
+                        }
                     }
                 }
             }
             UnitType::SliceLayerWithoutPartitioningIdr
             | UnitType::SliceLayerWithoutPartitioningNonIdr => {
-                let _ = slice::SliceHeader::from_bits(&ctx, &mut nal.rbsp_bits(), hdr);
+                let msg = slice::SliceHeader::from_bits(&ctx, &mut nal.rbsp_bits(), hdr);
+                // check if debug_nal_types has slice
+                if debug_nal_types.contains(&"slice".to_string()) {
+                    println!("Found NAL Slice: {:?}", msg);
+                }
             }
-            _ => {}
+            _ => {
+                // check if debug_nal_types has nal
+                if debug_nal_types.contains(&"unknown".to_string()) {
+                    println!("Found Unknown NAL: {:?}", nal);
+                }
+            }
         }
         NalInterest::Buffer
     });
@@ -992,46 +1042,152 @@ async fn rscap() {
                 Some(mut batch) = drx.recv() => {
                     debug!("Processing {} video packets in decoder thread", batch.len());
                     for stream_data in &batch {
+                        // packet is a subset of the original packet, starting at the payload
+                        let packet_start = stream_data.packet_start;
+                        let packet_end = stream_data.packet_start + stream_data.packet_len;
+
+                        if packet_end - packet_start > packet_size {
+                            error!("NAL Parser: Packet size {} is larger than packet buffer size {}. Skipping packet.",
+                                packet_end - packet_start, packet_size);
+                            continue;
+                        }
+
+                        // check if packet_start + 4 is less than packet_end
+                        if packet_start + 4 >= packet_end {
+                            continue;
+                        }
+
                         // Skip MPEG-TS header and adaptation field
                         let header_len = 4;
-                        let adaptation_field_control = (stream_data.packet[3] & 0b00110000) >> 4;
+                        let adaptation_field_control = (stream_data.packet[packet_start + 3] & 0b00110000) >> 4;
 
                         if adaptation_field_control == 0b10 {
                             continue; // Skip packets with only adaptation field (no payload)
                         }
 
                         let payload_start = if adaptation_field_control != 0b01 {
-                            header_len + 1 + stream_data.packet[4] as usize
+                            header_len + 1 + stream_data.packet[packet_start + 4] as usize
                         } else {
                             header_len
                         };
 
+                        // confirm payload_start is sane
+                        if payload_start >= packet_end || packet_end - payload_start < 4 {
+                            error!("NAL Parser: Payload start {} is invalid with packet_start as {} and packet_end as {}. Skipping packet.",
+                                payload_start, packet_start, packet_end);
+                            continue;
+                        }
+
                         // Process payload, skipping padding bytes
                         let mut pos = payload_start;
-                        while pos + 4 < stream_data.packet.len() {
-                            if stream_data.packet[pos..pos + 4] == [0x00, 0x00, 0x00, 0x01] {
+                        while pos + 4 < packet_end {
+                            if parse_short_nals && stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x01] {
                                 let nal_start = pos;
-                                pos += 4; // Move past the start code
+                                pos += 3; // Move past the short start code
 
-                                while pos + 4 <= stream_data.packet.len() && stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
+                                // Search for the next start code
+                                while pos + 4 <= packet_end &&
+                                      stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
+                                    // Check for short start code, 0xff padding, or 0x00000000 sequence
+                                    if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x01] && pos > nal_start + 3 {
+                                        // Found a short start code, so back up and process the NAL unit
+                                        break;
+                                    } else if stream_data.packet[pos + 1] == 0xff && pos > nal_start + 3 {
+                                        // check for 0xff padding and that we are at least 2 bytes into the nal
+                                        break;
+                                    } else if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x00] && pos > nal_start + 3 {
+                                        // check for 0x00 0x00 0x00 0x00 sequence to stop at
+                                        break;
+                                    }
                                     pos += 1;
                                 }
 
+                                // check if we only have 4 bytes left in the packet, if so then collect them too
+                                if pos + 4 >= packet_end {
+                                    while pos < packet_end {
+                                        if stream_data.packet[pos..pos + 1] == [0xff] {
+                                            // check for 0xff padding and that we are at least 2 bytes into the nal
+                                            break;
+                                        } else if pos + 2 < packet_end && stream_data.packet[pos..pos + 2] == [0x00, 0x00] {
+                                            // check for 0x00 0x00 sequence to stop at
+                                            break;
+                                        }
+                                        pos += 1;
+                                    }
+                                }
+
                                 let nal_end = pos; // End of NAL unit found or end of packet
-                                if nal_end - nal_start > 10 { // Threshold for significant NAL unit size
+                                if nal_end - nal_start > 3 { // Threshold for significant NAL unit size
                                     let nal_unit = &stream_data.packet[nal_start..nal_end];
+
+                                    // Debug print the NAL unit
+                                    if debug_nals {
+                                        let packet_len = nal_end - nal_start;
+                                        info!("Extracted {} byte Short NAL Unit from packet range {}-{}:", packet_len, nal_start, nal_end);
+                                        let nal_unit_arc = Arc::new(nal_unit.to_vec());
+                                        hexdump(&nal_unit_arc, 0, packet_len);
+                                    }
+
                                     // Process the NAL unit
-                                    /*info!("Extracted NAL Unit from {} to {} of hex value:", nal_start, nal_end);
-                                    let nal_unit_arc = Arc::new(nal_unit.to_vec());
-                                    hexdump(&nal_unit_arc, 0, nal_unit.len());*/
                                     annexb_reader.push(nal_unit);
+                                    annexb_reader.reset();
+                                }
+                            } else if pos + 4 < packet_end && stream_data.packet[pos..pos + 4] == [0x00, 0x00, 0x00, 0x01] {
+                                let nal_start = pos;
+                                pos += 4; // Move past the long start code
+
+                                // Search for the next start code
+                                while pos + 4 <= packet_end &&
+                                      stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
+                                    // Check for short start code
+                                    if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x01] && pos > nal_start + 3 {
+                                        // Found a short start code, so back up and process the NAL unit
+                                        break;
+                                    } else if stream_data.packet[pos + 1] == 0xff && pos > nal_start + 3 {
+                                        // check for 0xff padding and that we are at least 2 bytes into the nal
+                                        break;
+                                    } else if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x00] && pos > nal_start + 3 {
+                                        // check for 0x00 0x00 0x00 0x00 sequence to stop at
+                                        break;
+                                    }
+                                    pos += 1;
+                                }
+
+                                // check if we only have 4 bytes left in the packet, if so then collect them too
+                                if pos + 4 >= packet_end {
+                                    while pos < packet_end {
+                                        if stream_data.packet[pos..pos + 1] == [0xff] {
+                                            // check for 0xff padding and that we are at least 2 bytes into the nal
+                                            break;
+                                        } else if pos + 2 < packet_end && stream_data.packet[pos..pos + 2] == [0x00, 0x00] {
+                                            // check for 0x00 0x00 sequence to stop at
+                                            break;
+                                        }
+                                        pos += 1;
+                                    }
+                                }
+
+                                let nal_end = pos; // End of NAL unit found or end of packet
+                                if nal_end - nal_start > 3 { // Threshold for significant NAL unit size
+                                    let nal_unit = &stream_data.packet[nal_start..nal_end];
+
+                                    // Debug print the NAL unit
+                                    if debug_nals {
+                                        let packet_len = nal_end - nal_start;
+                                        let nal_unit_arc = Arc::new(nal_unit.to_vec());
+                                        hexdump(&nal_unit_arc, 0, packet_len);
+                                        info!("Extracted {} byte Long NAL Unit from packet range {}-{}:", packet_len, nal_start, nal_end);
+                                    }
+
+                                    // Process the NAL unit
+                                    annexb_reader.push(nal_unit);
+                                    annexb_reader.reset();
                                 }
                             } else {
                                 pos += 1; // Move to the next byte if no start code found
                             }
                         }
                     }
-                    annexb_reader.reset();
                     // Clear the batch after processing
                     batch.clear();
                 }
@@ -1159,8 +1315,8 @@ async fn rscap() {
         let chunk_type = is_mpegts_or_smpte2110(&packet[payload_offset..]);
         if chunk_type != 1 {
             if chunk_type == 0 {
-                error!("Not MPEG-TS or SMPTE 2110");
                 hexdump(&packet, 0, packet.len());
+                error!("Not MPEG-TS or SMPTE 2110");
             }
             is_mpegts = false;
         }
@@ -1249,19 +1405,24 @@ async fn rscap() {
                 pmt_info.pid,
             );
 
-            // Check if this is a video PID
-            if decode_video
-                && video_batch.len() >= decode_video_batch_size
-                && pid == video_pid.unwrap_or(0xFFFF)
-            {
-                dtx.send(video_batch).await.unwrap(); // Clone if necessary
-                video_batch = Vec::new();
-            } else if decode_video {
-                let mut stream_data_clone = stream_data.clone();
-                stream_data_clone.packet_start = stream_data.packet_start;
-                stream_data_clone.packet_len = stream_data.packet_len;
-                stream_data_clone.packet = Arc::new(stream_data.packet.to_vec());
-                video_batch.push(stream_data_clone);
+            // If MpegTS, Check if this is a video PID and if so parse NALS and decode video
+            if is_mpegts {
+                if pid == video_pid.unwrap_or(0xFFFF) {
+                    if decode_video && video_batch.len() >= decode_video_batch_size {
+                        dtx.send(video_batch).await.unwrap(); // Clone if necessary
+                        video_batch = Vec::new();
+                    } else if decode_video {
+                        let mut stream_data_clone = stream_data.clone();
+                        stream_data_clone.packet_start = stream_data.packet_start;
+                        stream_data_clone.packet_len = stream_data.packet_len;
+                        stream_data_clone.packet = Arc::new(stream_data.packet.to_vec());
+                        video_batch.push(stream_data_clone);
+                    }
+                } else {
+                    // TODO: Add handling for other PIDs besides video only
+                }
+            } else {
+                // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
             }
 
             // release the packet Arc so it can be reused
@@ -1280,7 +1441,6 @@ async fn rscap() {
                     continue;
                 }
             }
-
             batch.push(stream_data);
 
             //info!("STATUS::PACKETS:CAPTURED: {}", packets_captured);
@@ -1512,8 +1672,8 @@ fn process_mpegts_packet(
             stream_data.update_stats(packet_size, current_unix_timestamp_ms().unwrap_or(0));
             streams.push(stream_data);
         } else {
-            error!("ProcessPacket: Not MPEG-TS");
             hexdump(&packet, start, packet_size);
+            error!("ProcessPacket: Not MPEG-TS");
             read_size = 1; // Skip to the next byte
         }
         start += read_size;

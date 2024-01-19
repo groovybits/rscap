@@ -14,7 +14,6 @@ pub fn current_unix_timestamp_ms() -> Result<u64, &'static str> {
 // Print a hexdump of the packet
 pub fn hexdump(packet_arc: &Arc<Vec<u8>>, packet_offset: usize, packet_len: usize) {
     let packet = &packet_arc[packet_offset..packet_offset + packet_len];
-    println!("--------------------------------------------------");
     // print in rows of 16 bytes
     let mut packet_dump = String::new();
     for (i, chunk) in packet.iter().take(packet_len).enumerate() {
@@ -23,7 +22,8 @@ pub fn hexdump(packet_arc: &Arc<Vec<u8>>, packet_offset: usize, packet_len: usiz
         }
         packet_dump.push_str(&format!("{:02x} ", chunk));
     }
-    println!("{}", packet_dump);
-    println!("");
-    println!("--------------------------------------------------");
+    println!(
+        "--- Packet Offset {} Packet Length {} ---\n{}\n---",
+        packet_offset, packet_len, packet_dump
+    );
 }
