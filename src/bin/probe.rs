@@ -1008,7 +1008,7 @@ async fn rscap() {
                                 let nal_start = pos + 4;
                                 pos += 4; // Move past the start code
 
-                                while pos + 4 < stream_data.packet.len() && stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
+                                while pos + 4 < stream_data.packet.len() && stream_data.packet[pos] != 0xFF && stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
                                     pos += 1;
                                 }
 
@@ -1024,6 +1024,9 @@ async fn rscap() {
                                     // Log warning about potential malformed data
                                     error!("Malformed NAL unit detected");
                                 }
+                            } else if stream_data.packet[pos] == 0xFF {
+                                // Padding byte found, stop processing this packet
+                                break;
                             } else {
                                 pos += 1; // No start code found, move to the next byte
                             }
