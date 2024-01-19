@@ -1017,7 +1017,7 @@ async fn rscap() {
                                 pos += 4; // Move past the start code
 
                                 // Find the end of the NAL unit
-                                while pos < stream_data.packet.len() && stream_data.packet[pos..pos + 3] != [0x00, 0x00, 0x01] {
+                                while pos + 3 < stream_data.packet.len() && stream_data.packet[pos..pos + 3] != [0x00, 0x00, 0x01] {
                                     pos += 1;
                                 }
 
