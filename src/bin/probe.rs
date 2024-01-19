@@ -956,7 +956,9 @@ async fn rscap() {
                             let pic_timing = sei::pic_timing::PicTiming::read(sps, &msg);
                             info!("Found PicTiming: {:?}", pic_timing);
                         }
-                        _ => {}
+                        _ => {
+                            info!("Found SEI: {:?}", msg);
+                        }
                     }
                 }
             }
