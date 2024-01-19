@@ -990,6 +990,7 @@ async fn rscap() {
                         annexb_reader.push(packet_slice);
                         // MutexGuard is automatically dropped here
                     }
+                    annexb_reader.reset();
                     // Clear the batch after processing
                     batch.clear();
                 }
