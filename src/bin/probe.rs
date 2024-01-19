@@ -1030,13 +1030,14 @@ async fn rscap() {
                                 // Search for the next start code
                                 while pos + 4 <= packet_end &&
                                       stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
+                                    // Check for short start code, 0xff padding, or 0x00000000 sequence
                                     if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x01] && pos > nal_start + 3 {
                                         // Found a short start code, so back up and process the NAL unit
                                         break;
-                                    } else if stream_data.packet[pos + 1] == 0xff && pos > nal_start + 1 {
+                                    } else if stream_data.packet[pos + 1] == 0xff && pos > nal_start + 3 {
                                         // check for 0xff padding and that we are at least 2 bytes into the nal
                                         break;
-                                    } else if stream_data.packet[pos..pos + 4] == [0x00, 0x00, 0x00, 0x00] && pos > nal_start + 3 {
+                                    } else if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x00] && pos > nal_start + 3 {
                                         // check for 0x00 0x00 0x00 0x00 sequence to stop at
                                         break;
                                     }
@@ -1065,13 +1066,14 @@ async fn rscap() {
                                 // Search for the next start code
                                 while pos + 4 <= packet_end &&
                                       stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
+                                    // Check for short start code
                                     if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x01] && pos > nal_start + 3 {
-                                        // Found a long start code, so back up and process the NAL unit
+                                        // Found a short start code, so back up and process the NAL unit
                                         break;
-                                    } else if stream_data.packet[pos + 1] == 0xff && pos > nal_start + 1 {
+                                    } else if stream_data.packet[pos + 1] == 0xff && pos > nal_start + 3 {
                                         // check for 0xff padding and that we are at least 2 bytes into the nal
                                         break;
-                                    } else if stream_data.packet[pos..pos + 4] == [0x00, 0x00, 0x00, 0x00] && pos > nal_start + 3 {
+                                    } else if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x00] && pos > nal_start + 3 {
                                         // check for 0x00 0x00 0x00 0x00 sequence to stop at
                                         break;
                                     }
