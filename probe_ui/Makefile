@@ -1,9 +1,5 @@
 
-all:
-	echo "choose a specific target to make"
-
-kafka_prometheus_scraper:
-	node premetheus.js
+all: kafka_websocket_dashboard
 
 kafka_websocket_dashboard:
 	node server.js
