@@ -19,6 +19,7 @@ TODO:
 - Add System metrics <https://github.com/dholroyd/nix/tree/master> for view of OS health and load.
 - Add Network metrics via pcap potentially or Rust crate, have not located one yet.
 - Add HLS input support <https://github.com/dholroyd/hls_m3u8> for streams.
+- Add decoder for viewing thumbnail of stream, potentially using <https://github.com/rust-av/rust-av> Rust AV pure rust, else binding libav C.
 
 ![rscap](https://storage.googleapis.com/gaib/2/rscap/rscap.png)
 
