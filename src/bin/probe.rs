@@ -481,7 +481,7 @@ struct Args {
     #[clap(long, env = "DEBUG_NALS", default_value_t = false)]
     debug_nals: bool,
 
-    /// List of NAL types to debug, comma separated: sps, pps, pic_timing, sei, slice, unknown
+    /// List of NAL types to debug, comma separated: sps, pps, pic_timing, sei, slice, user_data_unregistered, buffering_period, unknown
     #[clap(long, env = "DEBUG_NAL_TYPES", default_value = "")]
     debug_nal_types: String,
 
@@ -774,13 +774,45 @@ async fn rscap() {
                             let pic_timing = sei::pic_timing::PicTiming::read(sps, &msg);
                             // check if debug_nal_types has pic_timing
                             if debug_nal_types.contains(&"pic_timing".to_string()) {
-                                println!("Found PicTiming: {:?}", pic_timing);
+                                println!(
+                                    "Found PicTiming: {:?} Payload: [{:?}]",
+                                    pic_timing, msg.payload
+                                );
                             }
                         }
+                        h264_reader::nal::sei::HeaderType::BufferingPeriod => {
+                            let sps = match ctx.sps().next() {
+                                Some(s) => s,
+                                None => continue,
+                            };
+                            let buffering_period =
+                                sei::buffering_period::BufferingPeriod::read(&ctx, &msg);
+                            // check if debug_nal_types has buffering_period
+                            if debug_nal_types.contains(&"buffering_period".to_string()) {
+                                println!(
+                                    "Found BufferingPeriod: {:?} Payload: [{:?}] - {:?}",
+                                    buffering_period, msg.payload, sps
+                                );
+                            }
+                        }
+                        h264_reader::nal::sei::HeaderType::UserDataUnregistered => {
+                            let user_data_unregistered =
+                                sei::user_data_registered_itu_t_t35::ItuTT35::read(&msg);
+                            // check if debug_nal_types has user_data_unregistered
+                            if debug_nal_types.contains(&"user_data_unregistered".to_string()) {
+                                println!(
+                                    "Found UserDataUnregistered: {:?} Payload: [{:?}]",
+                                    user_data_unregistered, msg.payload
+                                );
+                            }
+                        } // todo
                         _ => {
                             // check if debug_nal_types has sei
                             if debug_nal_types.contains(&"sei".to_string()) {
-                                println!("Found SEI: {:?}", msg);
+                                println!(
+                                    "Unknown Found SEI type {:?} payload: [{:?}]",
+                                    msg.payload_type, msg.payload
+                                );
                             }
                         }
                     }
