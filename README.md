@@ -147,17 +147,17 @@ Options:
       --read-time-out <READ_TIME_OUT>
           Sets the read timeout [env: READ_TIME_OUT=] [default: 60000]
       --target-port <TARGET_PORT>
-          Sets the target port [env: TARGET_PORT=5556] [default: 5556]
+          Sets the target port [env: TARGET_PORT=] [default: 5556]
       --target-ip <TARGET_IP>
-          Sets the target IP [env: TARGET_IP=127.0.0.1] [default: 127.0.0.1]
+          Sets the target IP [env: TARGET_IP=] [default: 127.0.0.1]
       --source-device <SOURCE_DEVICE>
-          Sets the source device [env: SOURCE_DEVICE=en7] [default: ]
+          Sets the source device [env: SOURCE_DEVICE=] [default: ]
       --source-ip <SOURCE_IP>
-          Sets the source IP [env: SOURCE_IP=224.0.0.200] [default: 224.0.0.200]
+          Sets the source IP [env: SOURCE_IP=] [default: 224.0.0.200]
       --source-protocol <SOURCE_PROTOCOL>
           Sets the source protocol [env: SOURCE_PROTOCOL=] [default: udp]
       --source-port <SOURCE_PORT>
-          Sets the source port [env: SOURCE_PORT=10000] [default: 10000]
+          Sets the source port [env: SOURCE_PORT=] [default: 10000]
       --debug-on
           Sets the debug mode [env: DEBUG=]
       --silent
@@ -223,6 +223,8 @@ Options:
 ## Monitor Command Line Options (as of 01/04/2024)
 
 ```text
+RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe.
+
 Usage: monitor [OPTIONS]
 
 Options:
@@ -239,8 +241,10 @@ Options:
       --send-to-kafka                  Send to Kafka if true [env: SEND_TO_KAFKA=]
       --kafka-timeout <KAFKA_TIMEOUT>  Kafka timeout to drop packets [env: KAFKA_TIMEOUT=] [default: 0]
       --ipc-path <IPC_PATH>            IPC Path for ZeroMQ [env: IPC_PATH=]
+      --show-os-stats                  Show OS [env: SHOW_OS_STATS=]
   -h, --help                           Print help
-  -V, --version                        Print version```
+  -V, --version                        Print version
+```
 
 ## Profiling with Intel Vtune (Linux/Windows)
 

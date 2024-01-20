@@ -136,7 +136,7 @@ async fn produce_message(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "1.1",
+    version = "1.2",
     about = "RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe."
 )]
 struct Args {
@@ -201,8 +201,6 @@ struct Args {
 async fn main() {
     dotenv::dotenv().ok(); // read .env file
 
-    println!("RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe.");
-
     let args = Args::parse();
 
     // Use the parsed arguments directly
@@ -220,6 +218,8 @@ async fn main() {
     let kafka_timeout = args.kafka_timeout;
     let ipc_path = args.ipc_path;
     let show_os_stats = args.show_os_stats;
+
+    println!("RsCap Monitor starting up...");
 
     // Determine the connection endpoint (IPC if provided, otherwise TCP)
     let endpoint = if let Some(ipc_path_copy) = ipc_path {
@@ -369,5 +369,5 @@ async fn main() {
         counter += 1;
     }
 
-    info!("Finished rscap monitor");
+    info!("Finished RsCap monitor");
 }
