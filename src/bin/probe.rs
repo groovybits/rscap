@@ -75,40 +75,77 @@ fn is_standard_ascii(byte: u8) -> bool {
     byte >= 0x20 && byte <= 0x7F
 }
 
-// Decode CEA-608 characters
-fn decode_character(byte1: u8, byte2: u8) -> Option<char> {
+// Decode CEA-608 characters, including control codes
+fn decode_character(byte1: u8, byte2: u8) -> Option<String> {
+    println!("Decoding: {:02X} {:02X}", byte1, byte2); // Debugging
+
+    // Handle standard ASCII characters
     if is_standard_ascii(byte1) && is_standard_ascii(byte2) {
-        Some(byte1 as char)
-    } else {
-        // Handle control characters and extended character set here
-        None
+        return Some(format!("{}{}", byte1 as char, byte2 as char));
+    }
+
+    // Handle special control characters (Example)
+    // This is a simplified version, actual implementation may vary based on control characters
+    match (byte1, byte2) {
+        (0x14, 0x2C) => Some(String::from("[Clear Caption]")),
+        (0x14, 0x20) => Some(String::from("[Roll-Up Caption]")),
+        // Add more control character handling here
+        _ => {
+            println!("Unhandled control character: {:02X} {:02X}", byte1, byte2); // Debugging
+            None
+        }
     }
 }
 
-// Main decoding function
-fn decode_cea_608(data: &[u8]) -> Vec<String> {
-    let mut captions = Vec::new();
+// Function to check if the byte pair represents XDS data
+fn is_xds(byte1: u8, byte2: u8) -> bool {
+    // Implement logic to identify XDS data
+    // Placeholder logic: Example only
+    byte1 == 0x01 && byte2 >= 0x20 && byte2 <= 0x7F
+}
+
+// Simplified CEA-608 decoding function
+fn decode_cea_608(data: &[u8]) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let mut captions_cc1 = Vec::new();
+    let mut captions_cc2 = Vec::new();
+    let mut xds_data = Vec::new();
     let mut current_caption = String::new();
 
-    for chunk in data.chunks(2) {
-        if chunk.len() == 2 {
-            if let Some(decoded_char) = decode_character(chunk[0], chunk[1]) {
-                current_caption.push(decoded_char);
-
-                if decoded_char == '\r' {
-                    captions.push(current_caption.clone());
-                    current_caption.clear();
+    for chunk in data.chunks(3) {
+        if chunk.len() == 3 {
+            // The first byte determines the channel: 0x04 for CC1/XDS, 0x05 for CC2
+            match chunk[0] {
+                0x04 => {
+                    if let Some(decoded_char) = decode_character(chunk[1], chunk[2]) {
+                        // Handle CC1 or XDS data
+                        if is_xds(chunk[1], chunk[2]) {
+                            xds_data.push(decoded_char);
+                        } else {
+                            current_caption.push_str(&decoded_char);
+                            if decoded_char.contains('\r') {
+                                captions_cc1.push(current_caption.clone());
+                                current_caption.clear();
+                            }
+                        }
+                    }
                 }
+                0x05 => {
+                    // Handle CC2 data
+                    if let Some(decoded_char) = decode_character(chunk[1], chunk[2]) {
+                        captions_cc2.push(decoded_char);
+                    }
+                }
+                _ => println!("Unknown caption channel: {:02X}", chunk[0]),
             }
         }
     }
 
     // Add the last caption if it's not empty
     if !current_caption.is_empty() {
-        captions.push(current_caption);
+        captions_cc1.push(current_caption);
     }
 
-    captions
+    (captions_cc1, captions_cc2, xds_data)
 }
 
 // convert stream data sructure to capnp message
@@ -865,20 +902,23 @@ async fn rscap() {
                         h264_reader::nal::sei::HeaderType::UserDataRegisteredItuTT35 => {
                             match sei::user_data_registered_itu_t_t35::ItuTT35::read(&msg) {
                                 Ok((itu_t_t35_data, remaining_data)) => {
-                                    // Check if debug_nal_types has user_data_unregistered or all
                                     if debug_nal_types
                                         .contains(&"user_data_registered_itu_tt35".to_string())
                                         || debug_nal_types.contains(&"all".to_string())
                                     {
-                                        if debug_nal_types
-                                            .contains(&"user_data_registered_itu_tt35".to_string())
-                                            || debug_nal_types.contains(&"all".to_string())
-                                        {
-                                            println!("Found UserDataRegisteredItuTT35: {:?}, Remaining Data: {:?}", itu_t_t35_data, remaining_data);
+                                        println!("Found UserDataRegisteredItuTT35: {:?}, Remaining Data: {:?}", itu_t_t35_data, remaining_data);
+                                    }
+                                    if is_cea_608(&itu_t_t35_data) {
+                                        let (captions_cc1, captions_cc2, xds_data) =
+                                            decode_cea_608(remaining_data);
+                                        if !captions_cc1.is_empty() {
+                                            println!("CEA-608 CC1 Captions: {:?}", captions_cc1);
                                         }
-                                        if is_cea_608(&itu_t_t35_data) {
-                                            let captions = decode_cea_608(remaining_data);
-                                            println!("CEA-608 Captions: {:?}", captions);
+                                        if !captions_cc2.is_empty() {
+                                            println!("CEA-608 CC2 Captions: {:?}", captions_cc2);
+                                        }
+                                        if !xds_data.is_empty() {
+                                            println!("CEA-608 XDS Data: {:?}", xds_data);
                                         }
                                     }
                                 }
