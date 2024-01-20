@@ -11,10 +11,15 @@ let debug = false;
 
 app.use(express.static('public'));  // This line serves static files from the 'public' directory
 
+// Kafka topic and broker hostname and port
 const kafka = new Kafka({
   clientId: 'test',
-  brokers: ['sun:9092']
+  brokers: ['127.0.0.1:9092']
 });
+
+// RsCap hostname and port to target for metrics
+const targetIp = '224.0.0.200';
+const targetPort = '10000';
 
 const consumer = kafka.consumer({ groupId: 'test' });
 
@@ -87,8 +92,6 @@ async function fetchData() {
         // check dst field "dst":"224.0.0.200:10000" to confirm we are coming from the right source, confirm it exists and be safe about checking it
         if (messageJson.dst !== undefined || messageJson.dst !== null || messageJson.dst !== '') {
           // check dst field for our target ip address and port
-          let targetIp = '224.0.0.200';
-          let targetPort = '10000';
           if (messageJson.dst.indexOf(targetIp) === 0 && messageJson.dst.indexOf(targetPort) > -1) {
             // if dst field is present and contains our target ip address and port, continue
             //console.log(`Message:`, messageJson);
@@ -122,6 +125,6 @@ async function fetchData() {
 
 fetchData();
 
-server.listen(3001, '127.0.0.1', () => {
-  console.log('Server is listening on http://127.0.0.1:3001');
+server.listen(3001, '0.0.0.0', () => {
+  console.log('Server is listening on http://0.0.0.0:3001');
 });
