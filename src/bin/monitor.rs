@@ -29,6 +29,8 @@ use capnp;
 use rscap::hexdump;
 use rscap::stream_data::StreamData;
 include!("../stream_data_capnp.rs");
+use rscap::{get_stats_as_json, StatsType};
+use serde_json::json;
 use std::sync::Arc;
 
 // convert the stream data structure to the capnp format
@@ -189,6 +191,10 @@ struct Args {
     /// IPC Path for ZeroMQ
     #[clap(long, env = "IPC_PATH")]
     ipc_path: Option<String>,
+
+    /// Show OS
+    #[clap(long, env = "SHOW_OS_STATS", default_value_t = false)]
+    show_os_stats: bool,
 }
 
 #[tokio::main]
@@ -213,6 +219,7 @@ async fn main() {
     let send_to_kafka = args.send_to_kafka;
     let kafka_timeout = args.kafka_timeout;
     let ipc_path = args.ipc_path;
+    let show_os_stats = args.show_os_stats;
 
     // Determine the connection endpoint (IPC if provided, otherwise TCP)
     let endpoint = if let Some(ipc_path_copy) = ipc_path {
@@ -248,6 +255,8 @@ async fn main() {
         None
     };
 
+    let mut dot_last_file_write = Instant::now();
+    let mut dot_last_sent_stats = Instant::now();
     let mut dot_last_sent_ts = Instant::now();
     loop {
         // check for packet count
@@ -262,6 +271,13 @@ async fn main() {
 
         // get first message
         let header_msg = packet_msg[0].clone();
+
+        // OS and Network stats
+        let system_stats_json = if show_os_stats {
+            get_stats_as_json(StatsType::System).await
+        } else {
+            json!({})
+        };
 
         // Deserialize the received message into StreamData
         match capnp_to_stream_data(&header_msg) {
@@ -321,6 +337,13 @@ async fn main() {
             std::io::stdout().flush().unwrap();
         }
 
+        if dot_last_sent_stats.elapsed().as_secs() > 10 {
+            dot_last_sent_stats = Instant::now();
+            if show_os_stats && system_stats_json != json!({}) {
+                info!("System stats as JSON:\n{:?}", system_stats_json);
+            }
+        }
+
         // get first message
         let data_msg = packet_msg[1].clone();
 
@@ -335,8 +358,8 @@ async fn main() {
 
         // Write to file if output_file is provided
         if let Some(file) = file.as_mut() {
-            if !no_progress && dot_last_sent_ts.elapsed().as_secs() > 1 {
-                dot_last_sent_ts = Instant::now();
+            if !no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
+                dot_last_file_write = Instant::now();
                 print!("*");
                 // flush stdout
                 std::io::stdout().flush().unwrap();
