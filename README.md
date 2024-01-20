@@ -282,4 +282,4 @@ Running VTune [vtune.sh](vtune.sh)
 - SMPTE2110 data stream and audio stream support (need to have more than one pcap ip/port and distinguish them apart).
 - Meme like overlay of current frame and stream metrics on the thumbnail images with precise timing and frame information like a scope. (phone/pad usage)
 
-### Chris Kennedy (C) 2024 LGPL
+### Chris Kennedy (C) 2024 MIT License
