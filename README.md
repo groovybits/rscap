@@ -38,7 +38,7 @@ captured by the probe.
 
 Use .env and/or command line args to override the default/env variables.
 
-## Building and executing (see [compile.sh](compile.sh) for extensible setup Linux/MacOS)
+## Building and executing (see [scripts/compile.sh](scripts/compile.sh) for extensible setup Linux/MacOS)
 
 Install Rust via Homebrew on MacOS or from Rust main website (preferred from main website)...
 
@@ -81,11 +81,11 @@ make
 sudo make install
 ```
 
-Build and run the pcap stream probe [./compile.sh](compile.sh) (script takes care of most issues)
+Build and run the pcap stream probe [./scripts/compile.sh](scripts/compile.sh) (script takes care of most issues)
 
 ```text
 # Compile release,release-with-debug, and release  versions in target/ directories.
-./compile.sh
+./scripts/compile.sh
 
 # Use ENV Variable RUST_LOG= for logging level and cmdline args
 sudo RUST_LOG=info target/release/probe \
@@ -250,12 +250,12 @@ Options:
 
 Get VTune: [Intel oneAPI Base Toolkit](https://software.intel.com/content/www/us/en/develop/tools/oneapi/base-toolkit/download.html)
 
-Running VTune [vtune.sh](vtune.sh)
+Running VTune [scripts/vtune.sh](scripts/vtune.sh)
 
 ```text
 ## Runtime for VTune
 # Web UI (Best) Read [Intel VTune Documentation](https://www.intel.com/content/www/us/en/docs/vtune-profiler/user-guide/2024-0/web-server-ui.html)
-./vtune.sh
+./scripts/vtune.sh
 ```
 
 ## TODO - roadmap plans
