@@ -776,14 +776,18 @@ async fn rscap() {
                                 None => continue,
                             };
                             let pic_timing = sei::pic_timing::PicTiming::read(sps, &msg);
-                            // check if debug_nal_types has pic_timing
-                            if debug_nal_types.contains(&"pic_timing".to_string())
-                                || debug_nal_types.contains(&"all".to_string())
-                            {
-                                println!(
-                                    "Found PicTiming: {:?} Payload: [{:?}]",
-                                    pic_timing, msg.payload
-                                );
+                            match pic_timing {
+                                Ok(pic_timing_data) => {
+                                    // Check if debug_nal_types has pic_timing or all
+                                    if debug_nal_types.contains(&"pic_timing".to_string())
+                                        || debug_nal_types.contains(&"all".to_string())
+                                    {
+                                        println!("Found PicTiming: {:?}", pic_timing_data);
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Error parsing PicTiming SEI: {:?}", e);
+                                }
                             }
                         }
                         h264_reader::nal::sei::HeaderType::BufferingPeriod => {
@@ -804,18 +808,25 @@ async fn rscap() {
                             }
                         }
                         h264_reader::nal::sei::HeaderType::UserDataUnregistered => {
-                            let user_data_unregistered =
-                                sei::user_data_registered_itu_t_t35::ItuTT35::read(&msg);
-                            // check if debug_nal_types has user_data_unregistered
-                            if debug_nal_types.contains(&"user_data_unregistered".to_string())
-                                || debug_nal_types.contains(&"all".to_string())
-                            {
-                                println!(
-                                    "Found UserDataUnregistered: {:?} Payload: [{:?}]",
-                                    user_data_unregistered, msg.payload
-                                );
+                            match sei::user_data_registered_itu_t_t35::ItuTT35::read(&msg) {
+                                Ok((itu_t_t35_data, remaining_data)) => {
+                                    // Check if debug_nal_types has user_data_unregistered or all
+                                    if debug_nal_types
+                                        .contains(&"user_data_unregistered".to_string())
+                                        || debug_nal_types.contains(&"all".to_string())
+                                    {
+                                        println!(
+                                            "Found UserDataUnregistered: {:?}, Remaining Data: {:?}",
+                                            itu_t_t35_data, remaining_data
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Error parsing ITU T.35 data: {:?}", e);
+                                }
                             }
-                        } // todo
+                        }
+
                         _ => {
                             // check if debug_nal_types has sei
                             if debug_nal_types.contains(&"sei".to_string())
