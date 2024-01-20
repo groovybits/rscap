@@ -8,7 +8,7 @@
  *
  * Author: Chris Kennedy (C) 2024 LTN Global
  *
- * License: LGPL v2.1
+ * License: MIT
  *
  */
 

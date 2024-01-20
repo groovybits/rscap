@@ -3,7 +3,7 @@
  *
  * Written in 2024 by Chris Kennedy (C) LTN Global
  *
- * License: LGPL v2.1
+ * License: MIT
  *
  */
 
