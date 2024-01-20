@@ -481,7 +481,7 @@ struct Args {
     #[clap(long, env = "DEBUG_NALS", default_value_t = false)]
     debug_nals: bool,
 
-    /// List of NAL types to debug, comma separated: sps, pps, pic_timing, sei, slice, unknown
+    /// List of NAL types to debug, comma separated: all, sps, pps, pic_timing, sei, slice, user_data_unregistered, buffering_period, unknown
     #[clap(long, env = "DEBUG_NAL_TYPES", default_value = "")]
     debug_nal_types: String,
 
@@ -747,7 +747,9 @@ async fn rscap() {
             UnitType::SeqParameterSet => {
                 if let Ok(sps) = sps::SeqParameterSet::from_bits(nal.rbsp_bits()) {
                     // check if debug_nal_types has sps
-                    if debug_nal_types.contains(&"sps".to_string()) {
+                    if debug_nal_types.contains(&"sps".to_string())
+                        || debug_nal_types.contains(&"all".to_string())
+                    {
                         println!("Found SPS: {:?}", sps);
                     }
                     ctx.put_seq_param_set(sps);
@@ -756,7 +758,9 @@ async fn rscap() {
             UnitType::PicParameterSet => {
                 if let Ok(pps) = pps::PicParameterSet::from_bits(&ctx, nal.rbsp_bits()) {
                     // check if debug_nal_types has pps
-                    if debug_nal_types.contains(&"pps".to_string()) {
+                    if debug_nal_types.contains(&"pps".to_string())
+                        || debug_nal_types.contains(&"all".to_string())
+                    {
                         println!("Found PPS: {:?}", pps);
                     }
                     ctx.put_pic_param_set(pps);
@@ -772,15 +776,66 @@ async fn rscap() {
                                 None => continue,
                             };
                             let pic_timing = sei::pic_timing::PicTiming::read(sps, &msg);
-                            // check if debug_nal_types has pic_timing
-                            if debug_nal_types.contains(&"pic_timing".to_string()) {
-                                println!("Found PicTiming: {:?}", pic_timing);
+                            match pic_timing {
+                                Ok(pic_timing_data) => {
+                                    // Check if debug_nal_types has pic_timing or all
+                                    if debug_nal_types.contains(&"pic_timing".to_string())
+                                        || debug_nal_types.contains(&"all".to_string())
+                                    {
+                                        println!("Found PicTiming: {:?}", pic_timing_data);
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Error parsing PicTiming SEI: {:?}", e);
+                                }
                             }
                         }
+                        h264_reader::nal::sei::HeaderType::BufferingPeriod => {
+                            let sps = match ctx.sps().next() {
+                                Some(s) => s,
+                                None => continue,
+                            };
+                            let buffering_period =
+                                sei::buffering_period::BufferingPeriod::read(&ctx, &msg);
+                            // check if debug_nal_types has buffering_period
+                            if debug_nal_types.contains(&"buffering_period".to_string())
+                                || debug_nal_types.contains(&"all".to_string())
+                            {
+                                println!(
+                                    "Found BufferingPeriod: {:?} Payload: [{:?}] - {:?}",
+                                    buffering_period, msg.payload, sps
+                                );
+                            }
+                        }
+                        h264_reader::nal::sei::HeaderType::UserDataUnregistered => {
+                            match sei::user_data_registered_itu_t_t35::ItuTT35::read(&msg) {
+                                Ok((itu_t_t35_data, remaining_data)) => {
+                                    // Check if debug_nal_types has user_data_unregistered or all
+                                    if debug_nal_types
+                                        .contains(&"user_data_unregistered".to_string())
+                                        || debug_nal_types.contains(&"all".to_string())
+                                    {
+                                        println!(
+                                            "Found UserDataUnregistered: {:?}, Remaining Data: {:?}",
+                                            itu_t_t35_data, remaining_data
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Error parsing ITU T.35 data: {:?}", e);
+                                }
+                            }
+                        }
+
                         _ => {
                             // check if debug_nal_types has sei
-                            if debug_nal_types.contains(&"sei".to_string()) {
-                                println!("Found SEI: {:?}", msg);
+                            if debug_nal_types.contains(&"sei".to_string())
+                                || debug_nal_types.contains(&"all".to_string())
+                            {
+                                println!(
+                                    "Unknown Found SEI type {:?} payload: [{:?}]",
+                                    msg.payload_type, msg.payload
+                                );
                             }
                         }
                     }
