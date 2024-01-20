@@ -75,6 +75,28 @@ fn is_standard_ascii(byte: u8) -> bool {
     byte >= 0x20 && byte <= 0x7F
 }
 
+// Function to check if the byte pair represents XDS data
+fn is_xds(byte1: u8, byte2: u8) -> bool {
+    // Implement logic to identify XDS data
+    // Placeholder logic: Example only
+    byte1 == 0x01 && byte2 >= 0x20 && byte2 <= 0x7F
+}
+
+// Function to decode CEA-608 CC1/CC2
+fn decode_cea_608_cc1_cc2(byte1: u8, byte2: u8) -> Option<String> {
+    decode_character(byte1, byte2)
+    // The above line replaces the previous implementation and uses decode_character
+    // to handle both ASCII and control codes.
+}
+
+fn decode_cea_608_xds(byte1: u8, byte2: u8) -> Option<String> {
+    if is_xds(byte1, byte2) {
+        Some(format!("XDS: {:02X} {:02X}", byte1, byte2))
+    } else {
+        None
+    }
+}
+
 // Decode CEA-608 characters, including control codes
 fn decode_character(byte1: u8, byte2: u8) -> Option<String> {
     println!("Decoding: {:02X} {:02X}", byte1, byte2); // Debugging
@@ -97,52 +119,31 @@ fn decode_character(byte1: u8, byte2: u8) -> Option<String> {
     }
 }
 
-// Function to check if the byte pair represents XDS data
-fn is_xds(byte1: u8, byte2: u8) -> bool {
-    // Implement logic to identify XDS data
-    // Placeholder logic: Example only
-    byte1 == 0x01 && byte2 >= 0x20 && byte2 <= 0x7F
-}
-
 // Simplified CEA-608 decoding function
+// Main CEA-608 decoding function
 fn decode_cea_608(data: &[u8]) -> (Vec<String>, Vec<String>, Vec<String>) {
     let mut captions_cc1 = Vec::new();
     let mut captions_cc2 = Vec::new();
     let mut xds_data = Vec::new();
-    let mut current_caption = String::new();
 
     for chunk in data.chunks(3) {
         if chunk.len() == 3 {
-            // The first byte determines the channel: 0x04 for CC1/XDS, 0x05 for CC2
             match chunk[0] {
                 0x04 => {
-                    if let Some(decoded_char) = decode_character(chunk[1], chunk[2]) {
-                        // Handle CC1 or XDS data
-                        if is_xds(chunk[1], chunk[2]) {
-                            xds_data.push(decoded_char);
-                        } else {
-                            current_caption.push_str(&decoded_char);
-                            if decoded_char.contains('\r') {
-                                captions_cc1.push(current_caption.clone());
-                                current_caption.clear();
-                            }
-                        }
+                    if let Some(decoded) = decode_cea_608_cc1_cc2(chunk[1], chunk[2]) {
+                        captions_cc1.push(decoded);
+                    } else if let Some(decoded) = decode_cea_608_xds(chunk[1], chunk[2]) {
+                        xds_data.push(decoded);
                     }
                 }
                 0x05 => {
-                    // Handle CC2 data
-                    if let Some(decoded_char) = decode_character(chunk[1], chunk[2]) {
-                        captions_cc2.push(decoded_char);
+                    if let Some(decoded) = decode_cea_608_cc1_cc2(chunk[1], chunk[2]) {
+                        captions_cc2.push(decoded);
                     }
                 }
                 _ => println!("Unknown caption channel: {:02X}", chunk[0]),
             }
         }
-    }
-
-    // Add the last caption if it's not empty
-    if !current_caption.is_empty() {
-        captions_cc1.push(current_caption);
     }
 
     (captions_cc1, captions_cc2, xds_data)
