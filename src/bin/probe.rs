@@ -70,47 +70,45 @@ fn is_cea_608(itu_t_t35_data: &sei::user_data_registered_itu_t_t35::ItuTT35) -> 
     }
 }
 
+// This function checks if the byte is a standard ASCII character
+fn is_standard_ascii(byte: u8) -> bool {
+    byte >= 0x20 && byte <= 0x7F
+}
+
+// Decode CEA-608 characters
+fn decode_character(byte1: u8, byte2: u8) -> Option<char> {
+    if is_standard_ascii(byte1) && is_standard_ascii(byte2) {
+        Some(byte1 as char)
+    } else {
+        // Handle control characters and extended character set here
+        None
+    }
+}
+
+// Main decoding function
 fn decode_cea_608(data: &[u8]) -> Vec<String> {
     let mut captions = Vec::new();
     let mut current_caption = String::new();
 
     for chunk in data.chunks(2) {
         if chunk.len() == 2 {
-            let cc_data1 = chunk[0];
-            let cc_data2 = chunk[1];
+            if let Some(decoded_char) = decode_character(chunk[0], chunk[1]) {
+                current_caption.push(decoded_char);
 
-            if cc_data1 == 0 && cc_data2 == 0 {
-                // This is padding, ignore it.
-                continue;
-            }
-
-            if cc_data1 >= 0x10 && cc_data1 <= 0x1F {
-                // This range is for control codes, handle accordingly.
-                // Control codes determine things like caption positioning, styling, etc.
-                // You'll need to write specific logic based on the CCExtractor's implementation
-                // or CEA-608 specifications for each control code.
-            } else {
-                // This range is for standard characters.
-                let char1 = decode_character(cc_data1);
-                let char2 = decode_character(cc_data2);
-                current_caption.push_str(&format!("{}{}", char1, char2));
+                if decoded_char == '\r' {
+                    captions.push(current_caption.clone());
+                    current_caption.clear();
+                }
             }
         }
     }
 
-    captions.push(current_caption);
-    captions
-}
-
-fn decode_character(code: u8) -> String {
-    // Placeholder for character decoding logic.
-    // You should map CEA-608 character codes to their respective characters.
-    // This mapping can be found in the CEA-608 standard documentation.
-    // For example:
-    match code {
-        0x20..=0x7F => (code as char).to_string(),
-        _ => " ".to_string(), // Replace unknown characters with space.
+    // Add the last caption if it's not empty
+    if !current_caption.is_empty() {
+        captions.push(current_caption);
     }
+
+    captions
 }
 
 // convert stream data sructure to capnp message
