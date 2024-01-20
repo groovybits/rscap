@@ -1,13 +1,14 @@
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use sysinfo::{NetworkExt, NetworksExt};
 use sysinfo::{ProcessorExt, System, SystemExt};
 
-static SYSTEM: Lazy<Mutex<System>> = Lazy::new(|| {
+static SYSTEM: Lazy<Mutex<(System, Instant)>> = Lazy::new(|| {
     let mut system = System::new_all();
     system.refresh_all(); // Initial refresh
-    Mutex::new(system)
+    Mutex::new((system, Instant::now()))
 });
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -42,10 +43,14 @@ pub struct LoadAverage {
 }
 
 pub fn get_system_stats() -> SystemStats {
-    // Access the lazily-initialized static system instance
-    let mut system = SYSTEM.lock().unwrap();
+    let mut system_and_instant = SYSTEM.lock().unwrap();
+    let (system, last_updated) = &mut *system_and_instant;
 
-    system.refresh_all();
+    // Only refresh if it's been more than a second since the last update
+    if last_updated.elapsed() > Duration::from_secs(1) {
+        system.refresh_all();
+        *last_updated = Instant::now();
+    }
 
     let host_name = system.host_name().unwrap_or_else(|| "Unknown".to_string());
     let kernel_version = system
@@ -72,12 +77,14 @@ pub fn get_system_stats() -> SystemStats {
         })
         .collect();
 
+    let cpu_usage = system.global_processor_info().cpu_usage();
+
     SystemStats {
         total_memory: system.total_memory(),
         used_memory: system.used_memory(),
         total_swap: system.total_swap(),
         used_swap: system.used_swap(),
-        cpu_usage: system.global_processor_info().cpu_usage(),
+        cpu_usage,
         cpu_count,
         core_count,
         boot_time,
