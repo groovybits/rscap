@@ -61,6 +61,58 @@ impl PacketCodec for BoxCodec {
     }
 }
 
+fn is_cea_608(itu_t_t35_data: &sei::user_data_registered_itu_t_t35::ItuTT35) -> bool {
+    // In this example, we check if the ITU-T T.35 data matches the known format for CEA-608.
+    // This is a simplified example and might need adjustment based on the actual data format.
+    match itu_t_t35_data {
+        sei::user_data_registered_itu_t_t35::ItuTT35::UnitedStates => true,
+        _ => false,
+    }
+}
+
+fn decode_cea_608(data: &[u8]) -> Vec<String> {
+    let mut captions = Vec::new();
+    let mut current_caption = String::new();
+
+    for chunk in data.chunks(2) {
+        if chunk.len() == 2 {
+            let cc_data1 = chunk[0];
+            let cc_data2 = chunk[1];
+
+            if cc_data1 == 0 && cc_data2 == 0 {
+                // This is padding, ignore it.
+                continue;
+            }
+
+            if cc_data1 >= 0x10 && cc_data1 <= 0x1F {
+                // This range is for control codes, handle accordingly.
+                // Control codes determine things like caption positioning, styling, etc.
+                // You'll need to write specific logic based on the CCExtractor's implementation
+                // or CEA-608 specifications for each control code.
+            } else {
+                // This range is for standard characters.
+                let char1 = decode_character(cc_data1);
+                let char2 = decode_character(cc_data2);
+                current_caption.push_str(&format!("{}{}", char1, char2));
+            }
+        }
+    }
+
+    captions.push(current_caption);
+    captions
+}
+
+fn decode_character(code: u8) -> String {
+    // Placeholder for character decoding logic.
+    // You should map CEA-608 character codes to their respective characters.
+    // This mapping can be found in the CEA-608 standard documentation.
+    // For example:
+    match code {
+        0x20..=0x7F => (code as char).to_string(),
+        _ => " ".to_string(), // Replace unknown characters with space.
+    }
+}
+
 // convert stream data sructure to capnp message
 fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapAllocator>> {
     let mut message = Builder::new_default();
@@ -481,8 +533,13 @@ struct Args {
     #[clap(long, env = "DEBUG_NALS", default_value_t = false)]
     debug_nals: bool,
 
-    /// List of NAL types to debug, comma separated: all, sps, pps, pic_timing, sei, slice, user_data_unregistered, buffering_period, unknown
-    #[clap(long, env = "DEBUG_NAL_TYPES", default_value = "")]
+    /// List of NAL types to debug, comma separated: all, sps, pps, pic_timing, sei, slice, user_data_registered_itu_tt35, user_data_unregistered, buffering_period, unknown
+    #[clap(
+        long,
+        env = "DEBUG_NAL_TYPES",
+        default_value = "",
+        help = "List of NAL types to debug, comma separated: all, sps, pps, pic_timing, sei, slice, user_data_registered_itu_tt35, user_data_unregistered, buffering_period, unknown"
+    )]
     debug_nal_types: String,
 
     // Parse short NALs that are 0x000001
@@ -807,18 +864,24 @@ async fn rscap() {
                                 );
                             }
                         }
-                        h264_reader::nal::sei::HeaderType::UserDataUnregistered => {
+                        h264_reader::nal::sei::HeaderType::UserDataRegisteredItuTT35 => {
                             match sei::user_data_registered_itu_t_t35::ItuTT35::read(&msg) {
                                 Ok((itu_t_t35_data, remaining_data)) => {
                                     // Check if debug_nal_types has user_data_unregistered or all
                                     if debug_nal_types
-                                        .contains(&"user_data_unregistered".to_string())
+                                        .contains(&"user_data_registered_itu_tt35".to_string())
                                         || debug_nal_types.contains(&"all".to_string())
                                     {
-                                        println!(
-                                            "Found UserDataUnregistered: {:?}, Remaining Data: {:?}",
-                                            itu_t_t35_data, remaining_data
-                                        );
+                                        if debug_nal_types
+                                            .contains(&"user_data_registered_itu_tt35".to_string())
+                                            || debug_nal_types.contains(&"all".to_string())
+                                        {
+                                            println!("Found UserDataRegisteredItuTT35: {:?}, Remaining Data: {:?}", itu_t_t35_data, remaining_data);
+                                        }
+                                        if is_cea_608(&itu_t_t35_data) {
+                                            let captions = decode_cea_608(remaining_data);
+                                            println!("CEA-608 Captions: {:?}", captions);
+                                        }
                                     }
                                 }
                                 Err(e) => {
@@ -826,7 +889,17 @@ async fn rscap() {
                                 }
                             }
                         }
-
+                        h264_reader::nal::sei::HeaderType::UserDataUnregistered => {
+                            // Check if debug_nal_types has user_data_unregistered or all
+                            if debug_nal_types.contains(&"user_data_unregistered".to_string())
+                                || debug_nal_types.contains(&"all".to_string())
+                            {
+                                println!(
+                                    "Found SEI type UserDataUnregistered {:?} payload: [{:?}]",
+                                    msg.payload_type, msg.payload
+                                );
+                            }
+                        }
                         _ => {
                             // check if debug_nal_types has sei
                             if debug_nal_types.contains(&"sei".to_string())
