@@ -912,6 +912,10 @@ async fn rscap() {
                                     if is_cea_608(&itu_t_t35_data) {
                                         let (captions_cc1, captions_cc2, xds_data) =
                                             decode_cea_608(remaining_data);
+                                        println!(
+                                            "CEA-608 Data: {:?} cc1: {:?} cc2: {:?} xds: {:?}",
+                                            itu_t_t35_data, captions_cc1, captions_cc2, xds_data
+                                        );
                                         if !captions_cc1.is_empty() {
                                             println!("CEA-608 CC1 Captions: {:?}", captions_cc1);
                                         }
@@ -957,13 +961,17 @@ async fn rscap() {
             | UnitType::SliceLayerWithoutPartitioningNonIdr => {
                 let msg = slice::SliceHeader::from_bits(&ctx, &mut nal.rbsp_bits(), hdr);
                 // check if debug_nal_types has slice
-                if debug_nal_types.contains(&"slice".to_string()) {
+                if debug_nal_types.contains(&"slice".to_string())
+                    || debug_nal_types.contains(&"all".to_string())
+                {
                     println!("Found NAL Slice: {:?}", msg);
                 }
             }
             _ => {
                 // check if debug_nal_types has nal
-                if debug_nal_types.contains(&"unknown".to_string()) {
+                if debug_nal_types.contains(&"unknown".to_string())
+                    || debug_nal_types.contains(&"all".to_string())
+                {
                     println!("Found Unknown NAL: {:?}", nal);
                 }
             }
