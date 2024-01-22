@@ -61,6 +61,94 @@ impl PacketCodec for BoxCodec {
     }
 }
 
+fn is_cea_608(itu_t_t35_data: &sei::user_data_registered_itu_t_t35::ItuTT35) -> bool {
+    // In this example, we check if the ITU-T T.35 data matches the known format for CEA-608.
+    // This is a simplified example and might need adjustment based on the actual data format.
+    match itu_t_t35_data {
+        sei::user_data_registered_itu_t_t35::ItuTT35::UnitedStates => true,
+        _ => false,
+    }
+}
+
+// This function checks if the byte is a standard ASCII character
+fn is_standard_ascii(byte: u8) -> bool {
+    byte >= 0x20 && byte <= 0x7F
+}
+
+// Function to check if the byte pair represents XDS data
+fn is_xds(byte1: u8, byte2: u8) -> bool {
+    // Implement logic to identify XDS data
+    // Placeholder logic: Example only
+    byte1 == 0x01 && byte2 >= 0x20 && byte2 <= 0x7F
+}
+
+// Function to decode CEA-608 CC1/CC2
+fn decode_cea_608_cc1_cc2(byte1: u8, byte2: u8) -> Option<String> {
+    decode_character(byte1, byte2)
+    // The above line replaces the previous implementation and uses decode_character
+    // to handle both ASCII and control codes.
+}
+
+fn decode_cea_608_xds(byte1: u8, byte2: u8) -> Option<String> {
+    if is_xds(byte1, byte2) {
+        Some(format!("XDS: {:02X} {:02X}", byte1, byte2))
+    } else {
+        None
+    }
+}
+
+// Decode CEA-608 characters, including control codes
+fn decode_character(byte1: u8, byte2: u8) -> Option<String> {
+    println!("Decoding: {:02X} {:02X}", byte1, byte2); // Debugging
+
+    // Handle standard ASCII characters
+    if is_standard_ascii(byte1) && is_standard_ascii(byte2) {
+        return Some(format!("{}{}", byte1 as char, byte2 as char));
+    }
+
+    // Handle special control characters (Example)
+    // This is a simplified version, actual implementation may vary based on control characters
+    match (byte1, byte2) {
+        (0x14, 0x2C) => Some(String::from("[Clear Caption]")),
+        (0x14, 0x20) => Some(String::from("[Roll-Up Caption]")),
+        // Add more control character handling here
+        _ => {
+            println!("Unhandled control character: {:02X} {:02X}", byte1, byte2); // Debugging
+            None
+        }
+    }
+}
+
+// Simplified CEA-608 decoding function
+// Main CEA-608 decoding function
+fn decode_cea_608(data: &[u8]) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let mut captions_cc1 = Vec::new();
+    let mut captions_cc2 = Vec::new();
+    let mut xds_data = Vec::new();
+
+    for chunk in data.chunks(3) {
+        if chunk.len() == 3 {
+            match chunk[0] {
+                0x04 => {
+                    if let Some(decoded) = decode_cea_608_cc1_cc2(chunk[1], chunk[2]) {
+                        captions_cc1.push(decoded);
+                    } else if let Some(decoded) = decode_cea_608_xds(chunk[1], chunk[2]) {
+                        xds_data.push(decoded);
+                    }
+                }
+                0x05 => {
+                    if let Some(decoded) = decode_cea_608_cc1_cc2(chunk[1], chunk[2]) {
+                        captions_cc2.push(decoded);
+                    }
+                }
+                _ => println!("Unknown caption channel: {:02X}", chunk[0]),
+            }
+        }
+    }
+
+    (captions_cc1, captions_cc2, xds_data)
+}
+
 // convert stream data sructure to capnp message
 fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapAllocator>> {
     let mut message = Builder::new_default();
@@ -481,8 +569,13 @@ struct Args {
     #[clap(long, env = "DEBUG_NALS", default_value_t = false)]
     debug_nals: bool,
 
-    /// List of NAL types to debug, comma separated: all, sps, pps, pic_timing, sei, slice, user_data_unregistered, buffering_period, unknown
-    #[clap(long, env = "DEBUG_NAL_TYPES", default_value = "")]
+    /// List of NAL types to debug, comma separated: all, sps, pps, pic_timing, sei, slice, user_data_registered_itu_tt35, user_data_unregistered, buffering_period, unknown
+    #[clap(
+        long,
+        env = "DEBUG_NAL_TYPES",
+        default_value = "",
+        help = "List of NAL types to debug, comma separated: all, sps, pps, pic_timing, sei, slice, user_data_registered_itu_tt35, user_data_unregistered, buffering_period, unknown"
+    )]
     debug_nal_types: String,
 
     // Parse short NALs that are 0x000001
@@ -807,18 +900,31 @@ async fn rscap() {
                                 );
                             }
                         }
-                        h264_reader::nal::sei::HeaderType::UserDataUnregistered => {
+                        h264_reader::nal::sei::HeaderType::UserDataRegisteredItuTT35 => {
                             match sei::user_data_registered_itu_t_t35::ItuTT35::read(&msg) {
                                 Ok((itu_t_t35_data, remaining_data)) => {
-                                    // Check if debug_nal_types has user_data_unregistered or all
                                     if debug_nal_types
-                                        .contains(&"user_data_unregistered".to_string())
+                                        .contains(&"user_data_registered_itu_tt35".to_string())
                                         || debug_nal_types.contains(&"all".to_string())
                                     {
+                                        println!("Found UserDataRegisteredItuTT35: {:?}, Remaining Data: {:?}", itu_t_t35_data, remaining_data);
+                                    }
+                                    if is_cea_608(&itu_t_t35_data) {
+                                        let (captions_cc1, captions_cc2, xds_data) =
+                                            decode_cea_608(remaining_data);
                                         println!(
-                                            "Found UserDataUnregistered: {:?}, Remaining Data: {:?}",
-                                            itu_t_t35_data, remaining_data
+                                            "CEA-608 Data: {:?} cc1: {:?} cc2: {:?} xds: {:?}",
+                                            itu_t_t35_data, captions_cc1, captions_cc2, xds_data
                                         );
+                                        if !captions_cc1.is_empty() {
+                                            println!("CEA-608 CC1 Captions: {:?}", captions_cc1);
+                                        }
+                                        if !captions_cc2.is_empty() {
+                                            println!("CEA-608 CC2 Captions: {:?}", captions_cc2);
+                                        }
+                                        if !xds_data.is_empty() {
+                                            println!("CEA-608 XDS Data: {:?}", xds_data);
+                                        }
                                     }
                                 }
                                 Err(e) => {
@@ -826,7 +932,17 @@ async fn rscap() {
                                 }
                             }
                         }
-
+                        h264_reader::nal::sei::HeaderType::UserDataUnregistered => {
+                            // Check if debug_nal_types has user_data_unregistered or all
+                            if debug_nal_types.contains(&"user_data_unregistered".to_string())
+                                || debug_nal_types.contains(&"all".to_string())
+                            {
+                                println!(
+                                    "Found SEI type UserDataUnregistered {:?} payload: [{:?}]",
+                                    msg.payload_type, msg.payload
+                                );
+                            }
+                        }
                         _ => {
                             // check if debug_nal_types has sei
                             if debug_nal_types.contains(&"sei".to_string())
@@ -845,13 +961,17 @@ async fn rscap() {
             | UnitType::SliceLayerWithoutPartitioningNonIdr => {
                 let msg = slice::SliceHeader::from_bits(&ctx, &mut nal.rbsp_bits(), hdr);
                 // check if debug_nal_types has slice
-                if debug_nal_types.contains(&"slice".to_string()) {
+                if debug_nal_types.contains(&"slice".to_string())
+                    || debug_nal_types.contains(&"all".to_string())
+                {
                     println!("Found NAL Slice: {:?}", msg);
                 }
             }
             _ => {
                 // check if debug_nal_types has nal
-                if debug_nal_types.contains(&"unknown".to_string()) {
+                if debug_nal_types.contains(&"unknown".to_string())
+                    || debug_nal_types.contains(&"all".to_string())
+                {
                     println!("Found Unknown NAL: {:?}", nal);
                 }
             }
