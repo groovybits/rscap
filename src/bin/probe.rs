@@ -19,13 +19,14 @@ use capsule::prelude::*;
 use clap::Parser;
 use futures::stream::StreamExt;
 use log::{debug, error, info};
+use mpeg2ts_reader::demultiplex;
 use pcap::{Active, Capture, Device, PacketCodec};
+use rscap::mpegts;
 use rscap::stream_data::{
     identify_video_pid, is_mpegts_or_smpte2110, parse_and_store_pat, process_packet,
     update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
 };
 use rscap::{current_unix_timestamp_ms, hexdump};
-
 use std::{
     error::Error as StdError,
     fmt,
@@ -99,7 +100,7 @@ fn decode_cea_608_xds(byte1: u8, byte2: u8) -> Option<String> {
 
 // Decode CEA-608 characters, including control codes
 fn decode_character(byte1: u8, byte2: u8) -> Option<String> {
-    println!("Decoding: {:02X} {:02X}", byte1, byte2); // Debugging
+    debug!("Decoding: {:02X} {:02X}", byte1, byte2); // Debugging
 
     // Handle standard ASCII characters
     if is_standard_ascii(byte1) && is_standard_ascii(byte2) {
@@ -113,7 +114,7 @@ fn decode_character(byte1: u8, byte2: u8) -> Option<String> {
         (0x14, 0x20) => Some(String::from("[Roll-Up Caption]")),
         // Add more control character handling here
         _ => {
-            println!("Unhandled control character: {:02X} {:02X}", byte1, byte2); // Debugging
+            error!("Unhandled control character: {:02X} {:02X}", byte1, byte2); // Debugging
             None
         }
     }
@@ -141,7 +142,7 @@ fn decode_cea_608(data: &[u8]) -> (Vec<String>, Vec<String>, Vec<String>) {
                         captions_cc2.push(decoded);
                     }
                 }
-                _ => println!("Unknown caption channel: {:02X}", chunk[0]),
+                _ => debug!("Unknown caption channel: {:02X}", chunk[0]),
             }
         }
     }
@@ -912,18 +913,18 @@ async fn rscap() {
                                     if is_cea_608(&itu_t_t35_data) {
                                         let (captions_cc1, captions_cc2, xds_data) =
                                             decode_cea_608(remaining_data);
-                                        println!(
+                                        debug!(
                                             "CEA-608 Data: {:?} cc1: {:?} cc2: {:?} xds: {:?}",
                                             itu_t_t35_data, captions_cc1, captions_cc2, xds_data
                                         );
                                         if !captions_cc1.is_empty() {
-                                            println!("CEA-608 CC1 Captions: {:?}", captions_cc1);
+                                            debug!("CEA-608 CC1 Captions: {:?}", captions_cc1);
                                         }
                                         if !captions_cc2.is_empty() {
-                                            println!("CEA-608 CC2 Captions: {:?}", captions_cc2);
+                                            debug!("CEA-608 CC2 Captions: {:?}", captions_cc2);
                                         }
                                         if !xds_data.is_empty() {
-                                            println!("CEA-608 XDS Data: {:?}", xds_data);
+                                            debug!("CEA-608 XDS Data: {:?}", xds_data);
                                         }
                                     }
                                 }
@@ -1252,6 +1253,9 @@ async fn rscap() {
         packet: Vec::new(),
     };
 
+    let mut demux_ctx = mpegts::DumpDemuxContext::new();
+    let mut demux = demultiplex::Demultiplex::new(&mut demux_ctx);
+
     let mut dot_last_sent_ts = Instant::now();
     while let Some(packet) = prx.recv().await {
         if packet_count > 0 && packets_captured > packet_count {
@@ -1282,6 +1286,8 @@ async fn rscap() {
         }
 
         let chunks = if is_mpegts {
+            // Push the packet into the demuxer
+            demux.push(&mut demux_ctx, &packet);
             process_mpegts_packet(payload_offset, packet, packet_size, start_time)
         } else {
             process_smpte2110_packet(
@@ -1367,6 +1373,7 @@ async fn rscap() {
 
             // If MpegTS, Check if this is a video PID and if so parse NALS and decode video
             if is_mpegts {
+                // Check if this is a video PID
                 if pid == video_pid.unwrap_or(0xFFFF) {
                     if decode_video && video_batch.len() >= decode_video_batch_size {
                         dtx.send(video_batch).await.unwrap(); // Clone if necessary
