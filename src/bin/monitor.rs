@@ -562,6 +562,8 @@ async fn main() {
         let mut demux_buf = [0u8; 1880 * 1024];
         let mut buf_end = 0;
 
+        info!("Running Demuxer clone thread started");
+
         while running_demuxer_clone.load(Ordering::SeqCst) {
             match sync_dmrx.blocking_recv() {
                 Some(packet) => {
@@ -575,8 +577,7 @@ async fn main() {
                     demux_buf[buf_end..buf_end + packet_len].copy_from_slice(&packet);
                     buf_end += packet_len;
 
-                    /*info!("Demuxer push packet of size: {}", packet_len);
-                    let packet_arc = Arc::new(packet);
+                    /*let packet_arc = Arc::new(packet);
                     hexdump(&packet_arc, 0, packet_len);*/
                     demux.push(&mut demux_ctx, &demux_buf[0..buf_end]);
                     // Additional processing as required
@@ -591,6 +592,7 @@ async fn main() {
 
     // Initialize the mpegts demuxer thread using Tokio
     let demuxer_thread = tokio::spawn(async move {
+        info!("Base Demuxer thread started");
         loop {
             if !running_demuxer.load(Ordering::SeqCst) {
                 debug!("Demuxer thread received stop signal.");
@@ -615,6 +617,7 @@ async fn main() {
     let (dtx, mut drx) = mpsc::channel::<Vec<StreamData>>(args.decoder_channel_size);
     // Spawn a new thread for Decoder communication
     let decoder_thread = tokio::spawn(async move {
+        info!("Decoder thread started");
         loop {
             if !running_decoder.load(Ordering::SeqCst) {
                 debug!("Decoder thread received stop signal.");
@@ -630,7 +633,7 @@ async fn main() {
             // Use tokio::select to simultaneously wait for a new batch or a stop signal
             tokio::select! {
                 Some(mut batch) = drx.recv() => {
-                    debug!("Processing {} video packets in decoder thread", batch.len());
+                    //info!("Processing {} video packets in decoder thread", batch.len());
                     for stream_data in &batch {
                         // packet is a subset of the original packet, starting at the payload
                         let packet_start = stream_data.packet_start;
@@ -644,11 +647,14 @@ async fn main() {
 
                         // check if packet_start + 4 is less than packet_end
                         if packet_start + 4 >= packet_end {
+                            error!("NAL Parser: Packet size {} is less than 4 bytes. Skipping packet.",
+                                packet_end - packet_start);
                             continue;
                         }
 
                         if args.mpegts_reader {
                             // Send packet data to the synchronous processing thread
+                            //info!("Demuxer thread sending packet of size: {}", packet_end - packet_start);
                             dmtx.send(stream_data.packet[packet_start..packet_end].to_vec()).await.unwrap();
 
                             // check if we are decoding video
@@ -656,6 +662,7 @@ async fn main() {
                                 continue;
                             }
                         }
+                        //info!("Decoding packet {}-{} of size {}", packet_start, packet_end, packet_end - packet_start);
 
                         // Skip MPEG-TS header and adaptation field
                         let header_len = 4;
@@ -900,19 +907,17 @@ async fn main() {
                     hexdump(&data_msg_arc, 0, data_msg.len());
                 }
 
-                if args.mpegts_reader {
-                    // Check if Decoding or if Demuxing
-                    if args.decode_video || args.mpegts_reader {
-                        if video_batch.len() >= args.decode_video_batch_size {
-                            dtx.send(video_batch).await.unwrap(); // Clone if necessary
-                            video_batch = Vec::new();
-                        } else {
-                            let mut stream_data_clone = stream_data.clone();
-                            stream_data_clone.packet_start = stream_data.packet_start;
-                            stream_data_clone.packet_len = stream_data.packet_len;
-                            stream_data_clone.packet = Arc::new(data_msg.to_vec());
-                            video_batch.push(stream_data_clone);
-                        }
+                // Check if Decoding or if Demuxing
+                if args.decode_video || args.mpegts_reader {
+                    if video_batch.len() >= args.decode_video_batch_size {
+                        dtx.send(video_batch).await.unwrap(); // Clone if necessary
+                        video_batch = Vec::new();
+                    } else {
+                        let mut stream_data_clone = stream_data.clone();
+                        stream_data_clone.packet_start = 0;
+                        stream_data_clone.packet_len = data_msg.len();
+                        stream_data_clone.packet = Arc::new(data_msg.to_vec());
+                        video_batch.push(stream_data_clone);
                     }
                 }
 
