@@ -44,6 +44,9 @@ h264-reader = "0.7.0"
 sysinfo = "0.23.9"
 once_cell = "1.5.2"
 ahash = "0.8.7"
+mpeg2ts-reader = "0.15.0"
+scte35-reader = "0.14.0"
+hex-slice = "0.1.4"
 
 [build-dependencies]
 capnpc = "0.18.0"
