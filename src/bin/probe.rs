@@ -49,6 +49,7 @@ use h264_reader::push::NalInterest;
 use h264_reader::Context;
 //use rscap::videodecoder::VideoProcessor;
 use rscap::stream_data::{process_mpegts_packet, process_smpte2110_packet};
+use tokio::task;
 use tokio::time::Duration;
 
 // Define your custom PacketCodec
@@ -530,6 +531,10 @@ struct Args {
     #[clap(long, env = "DECODER_CHANNEL_SIZE", default_value_t = 1_000)]
     decoder_channel_size: usize,
 
+    /// Demuxer Channel size
+    #[clap(long, env = "DEMUXER_CHANNEL_SIZE", default_value_t = 1_000)]
+    demuxer_channel_size: usize,
+
     /// DPDK enable
     #[clap(long, env = "DPDK", default_value_t = false)]
     dpdk: bool,
@@ -582,6 +587,10 @@ struct Args {
     // Parse short NALs that are 0x000001
     #[clap(long, env = "PARSE_SHORT_NALS", default_value_t = false)]
     parse_short_nals: bool,
+
+    // MpegTS Reader use
+    #[clap(long, env = "MPEGTS_READER", default_value_t = false)]
+    mpegts_reader: bool,
 }
 
 // MAIN Function
@@ -680,6 +689,7 @@ async fn rscap() {
     let running = Arc::new(AtomicBool::new(true));
     let running_capture = running.clone();
     let running_decoder = running.clone();
+    let running_demuxer = running.clone();
     let running_zmq = running.clone();
 
     // Spawn a new thread for packet capture
@@ -980,10 +990,71 @@ async fn rscap() {
         NalInterest::Buffer
     });
 
+    // Setup demuxer async processing thread
+    let (dmtx, mut dmrx) = mpsc::channel::<Vec<u8>>(args.demuxer_channel_size);
+
+    // Setup asynchronous demuxer processing thread
+    let (sync_dmtx, mut sync_dmrx) = mpsc::channel::<Vec<u8>>(args.demuxer_channel_size);
+
+    // Running a synchronous task in the background
+    let running_demuxer_clone = running_demuxer.clone();
+    task::spawn_blocking(move || {
+        let mut demux_ctx = mpegts::DumpDemuxContext::new();
+        let mut demux = demultiplex::Demultiplex::new(&mut demux_ctx);
+        let mut demux_buf = [0u8; 1880 * 1024];
+        let mut buf_end = 0;
+
+        while running_demuxer_clone.load(Ordering::SeqCst) {
+            match sync_dmrx.blocking_recv() {
+                Some(packet) => {
+                    let packet_len = packet.len();
+                    let space_left = demux_buf.len() - buf_end;
+
+                    if space_left < packet_len {
+                        buf_end = 0; // Reset buffer on overflow
+                    }
+
+                    demux_buf[buf_end..buf_end + packet_len].copy_from_slice(&packet);
+                    buf_end += packet_len;
+
+                    /*info!("Demuxer push packet of size: {}", packet_len);
+                    let packet_arc = Arc::new(packet);
+                    hexdump(&packet_arc, 0, packet_len);*/
+                    demux.push(&mut demux_ctx, &demux_buf[0..buf_end]);
+                    // Additional processing as required
+                }
+                None => {
+                    // Handle error or shutdown
+                    break;
+                }
+            }
+        }
+    });
+
+    // Initialize the mpegts demuxer thread using Tokio
+    let demuxer_thread = tokio::spawn(async move {
+        loop {
+            if !running_demuxer.load(Ordering::SeqCst) {
+                debug!("Demuxer thread received stop signal.");
+                break;
+            }
+
+            if !args.mpegts_reader {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+
+            if let Some(packet) = dmrx.recv().await {
+                // Send packet data to the synchronous processing thread
+                //info!("Demuxer thread received packet of size: {}", packet.len());
+                sync_dmtx.send(packet).await.unwrap();
+            }
+        }
+    });
+
     // Initialize the video processor
     // Setup channel for passing data between threads
     let (dtx, mut drx) = mpsc::channel::<Vec<StreamData>>(decoder_channel_size);
-
     // Spawn a new thread for Decoder communication
     let decoder_thread = tokio::spawn(async move {
         loop {
@@ -992,7 +1063,7 @@ async fn rscap() {
                 break;
             }
 
-            if !decode_video {
+            if !args.mpegts_reader && !decode_video {
                 // Sleep for a short duration to prevent a tight loop
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
@@ -1015,6 +1086,15 @@ async fn rscap() {
 
                         // check if packet_start + 4 is less than packet_end
                         if packet_start + 4 >= packet_end {
+                            continue;
+                        }
+
+                        // Send packet data to the synchronous processing thread
+                        dmtx.send(stream_data.packet[packet_start..packet_end].to_vec()).await.unwrap();
+
+                        if !decode_video {
+                            // Sleep for a short duration to prevent a tight loop
+                            tokio::time::sleep(Duration::from_millis(100)).await;
                             continue;
                         }
 
@@ -1253,9 +1333,6 @@ async fn rscap() {
         packet: Vec::new(),
     };
 
-    let mut demux_ctx = mpegts::DumpDemuxContext::new();
-    let mut demux = demultiplex::Demultiplex::new(&mut demux_ctx);
-
     let mut dot_last_sent_ts = Instant::now();
     while let Some(packet) = prx.recv().await {
         if packet_count > 0 && packets_captured > packet_count {
@@ -1286,8 +1363,6 @@ async fn rscap() {
         }
 
         let chunks = if is_mpegts {
-            // Push the packet into the demuxer
-            demux.push(&mut demux_ctx, &packet);
             process_mpegts_packet(payload_offset, packet, packet_size, start_time)
         } else {
             process_smpte2110_packet(
@@ -1373,20 +1448,21 @@ async fn rscap() {
 
             // If MpegTS, Check if this is a video PID and if so parse NALS and decode video
             if is_mpegts {
-                // Check if this is a video PID
-                if pid == video_pid.unwrap_or(0xFFFF) {
-                    if decode_video && video_batch.len() >= decode_video_batch_size {
-                        dtx.send(video_batch).await.unwrap(); // Clone if necessary
-                        video_batch = Vec::new();
-                    } else if decode_video {
-                        let mut stream_data_clone = stream_data.clone();
-                        stream_data_clone.packet_start = stream_data.packet_start;
-                        stream_data_clone.packet_len = stream_data.packet_len;
-                        stream_data_clone.packet = Arc::new(stream_data.packet.to_vec());
-                        video_batch.push(stream_data_clone);
+                // Check if this is a video PID or if demuxing all PIDs
+                if pid == video_pid.unwrap_or(0xFFFF) || args.mpegts_reader {
+                    // Check if Decoding or if Demuxing
+                    if decode_video || args.mpegts_reader {
+                        if video_batch.len() >= decode_video_batch_size {
+                            dtx.send(video_batch).await.unwrap(); // Clone if necessary
+                            video_batch = Vec::new();
+                        } else {
+                            let mut stream_data_clone = stream_data.clone();
+                            stream_data_clone.packet_start = stream_data.packet_start;
+                            stream_data_clone.packet_len = stream_data.packet_len;
+                            stream_data_clone.packet = Arc::new(stream_data.packet.to_vec());
+                            video_batch.push(stream_data_clone);
+                        }
                     }
-                } else {
-                    // TODO: Add handling for other PIDs besides video only
                 }
             } else {
                 // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
@@ -1442,14 +1518,19 @@ async fn rscap() {
     drop(tx);
 
     // Send Decoder stop signal
-    dtx.send(Vec::new()).await.unwrap();
-    drop(dtx);
+    /*dtx.send(Vec::new()).await.unwrap();
+    drop(dtx);*/
+
+    // Send Demuxer stop signal
+    /*dmtx.send(Vec::new()).await.unwrap();
+    drop(dmtx);*/
 
     println!("\nWaiting for threads to finish...");
 
     // Wait for the zmq_thread to finish
     capture_task.await.unwrap();
     zmq_thread.await.unwrap();
+    demuxer_thread.await.unwrap();
     decoder_thread.await.unwrap();
 
     println!("\nThreads finished, exiting rscap probe");

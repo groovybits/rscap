@@ -12,6 +12,12 @@ use std::cmp;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+const DEBUG_PTS: bool = true;
+const DEBUG_PAYLOAD: bool = true;
+const DEBUG_PES: bool = true;
+const DEBUG_PCR: bool = true;
+const DEBUG_SCTE35: bool = true;
+
 pub struct DumpSpliceInfoProcessor {
     pub elementary_pid: Option<Pid>,
     pub last_pcr: Rc<cell::Cell<Option<packet::ClockRef>>>,
@@ -23,13 +29,15 @@ impl scte35_reader::SpliceInfoProcessor for DumpSpliceInfoProcessor {
         command: scte35_reader::SpliceCommand,
         descriptors: scte35_reader::SpliceDescriptors<'_>,
     ) {
-        if let Some(elementary_pid) = self.elementary_pid {
-            print!("{:?} ", elementary_pid);
+        if DEBUG_SCTE35 {
+            if let Some(elementary_pid) = self.elementary_pid {
+                print!("{:?} ", elementary_pid);
+            }
+            if let Some(pcr) = self.last_pcr.as_ref().get() {
+                print!("Last {:?}: ", pcr)
+            }
+            print!("{:?} {:#?}", header, command);
         }
-        if let Some(pcr) = self.last_pcr.as_ref().get() {
-            print!("Last {:?}: ", pcr)
-        }
-        print!("{:?} {:#?}", header, command);
         if let scte35_reader::SpliceCommand::SpliceInsert { splice_detail, .. } = command {
             if let scte35_reader::SpliceInsert::Insert { splice_mode, .. } = splice_detail {
                 if let scte35_reader::SpliceMode::Program(scte35_reader::SpliceTime::Timed(t)) =
@@ -42,15 +50,21 @@ impl scte35_reader::SpliceInfoProcessor for DumpSpliceInfoProcessor {
                             if diff < 0 {
                                 diff += (std::u64::MAX / 2) as i64;
                             }
-                            print!(" {}ms after most recent PCR", diff / 90);
+                            if DEBUG_SCTE35 {
+                                print!(" {}ms after last PCR", diff / 90);
+                            }
                         }
                     }
                 }
             }
         }
-        println!();
+        if DEBUG_SCTE35 {
+            println!();
+        }
         for d in &descriptors {
-            println!(" - {:#?}", d);
+            if DEBUG_SCTE35 {
+                println!(" - {:#?}", d);
+            }
         }
     }
 }
@@ -85,21 +99,27 @@ impl Scte35StreamConsumer {
         stream_info: &psi::pmt::StreamInfo<'_>,
     ) -> DumpFilterSwitch {
         if scte35_reader::is_scte35(pmt) {
-            println!(
-                "Program {:?}: Found SCTE-35 data on {:?} ({:#x})",
-                program_pid,
-                stream_info.elementary_pid(),
-                u16::from(stream_info.elementary_pid())
-            );
+            if DEBUG_SCTE35 {
+                info!(
+                    "Program {:?}: {:?} has type {:?}, but PMT has 'CUEI' registration_descriptor that would indicate SCTE-35 content",
+                    program_pid,
+                    stream_info.elementary_pid(),
+                    stream_info.stream_type()
+                );
+            }
             DumpFilterSwitch::Scte35(Scte35StreamConsumer::new(
                 stream_info.elementary_pid(),
                 last_pcr,
             ))
         } else {
-            println!("Program {:?}: {:?} has type {:?}, but PMT lacks 'CUEI' registration_descriptor that would indicate SCTE-35 content",
-                     program_pid,
-                     stream_info.elementary_pid(),
-                     stream_info.stream_type());
+            if DEBUG_SCTE35 {
+                info!(
+                    "Program {:?}: {:?} has type {:?}, but PMT lacks 'CUEI' registration_descriptor that would indicate SCTE-35 content",
+                    program_pid,
+                    stream_info.elementary_pid(),
+                    stream_info.stream_type()
+                );
+            }
             DumpFilterSwitch::Null(demultiplex::NullPacketFilter::default())
         }
     }
@@ -118,7 +138,9 @@ impl demultiplex::PacketFilter for PcrWatch {
         if let Some(af) = pk.adaptation_field() {
             if let Ok(pcr) = af.pcr() {
                 self.0.set(Some(pcr));
-                info!("Got PCR: {:?}", pcr);
+                if DEBUG_PCR {
+                    info!("Got PCR: {:?}", pcr);
+                }
             }
         }
     }
@@ -231,49 +253,61 @@ impl pes::ElementaryStreamConsumer<DumpDemuxContext> for PtsDumpElementaryStream
     fn begin_packet(&mut self, _ctx: &mut DumpDemuxContext, header: pes::PesHeader) {
         match header.contents() {
             pes::PesContents::Parsed(Some(parsed)) => {
-                match parsed.pts_dts() {
-                    Ok(pes::PtsDts::PtsOnly(Ok(pts))) => {
-                        print!("{:?}: pts {:#08x}                ", self.pid, pts.value())
+                if DEBUG_PTS {
+                    match parsed.pts_dts() {
+                        Ok(pes::PtsDts::PtsOnly(Ok(pts))) => {
+                            print!("{:?}: pts {:#08x}                ", self.pid, pts.value())
+                        }
+                        Ok(pes::PtsDts::Both {
+                            pts: Ok(pts),
+                            dts: Ok(dts),
+                        }) => print!(
+                            "{:?}: pts {:#08x} dts {:#08x} ",
+                            self.pid,
+                            pts.value(),
+                            dts.value()
+                        ),
+                        _ => (),
                     }
-                    Ok(pes::PtsDts::Both {
-                        pts: Ok(pts),
-                        dts: Ok(dts),
-                    }) => print!(
-                        "{:?}: pts {:#08x} dts {:#08x} ",
-                        self.pid,
-                        pts.value(),
-                        dts.value()
-                    ),
-                    _ => (),
                 }
                 let payload = parsed.payload();
                 self.len = Some(payload.len());
-                println!(
-                    "{:02x}",
-                    payload[..cmp::min(payload.len(), 16)].plain_hex(false)
-                )
+                if DEBUG_PAYLOAD {
+                    println!(
+                        "{:02x}",
+                        payload[..cmp::min(payload.len(), 16)].plain_hex(false)
+                    )
+                } else if DEBUG_PTS {
+                    println!()
+                }
             }
             pes::PesContents::Parsed(None) => (),
             pes::PesContents::Payload(payload) => {
                 self.len = Some(payload.len());
-                println!(
-                    "{:?}:                               {:02x}",
-                    self.pid,
-                    payload[..cmp::min(payload.len(), 16)].plain_hex(false)
-                )
+                if DEBUG_PES {
+                    println!(
+                        "{:?}:                               {:02x}",
+                        self.pid,
+                        payload[..cmp::min(payload.len(), 16)].plain_hex(false)
+                    )
+                }
             }
         }
     }
     fn continue_packet(&mut self, _ctx: &mut DumpDemuxContext, data: &[u8]) {
-        println!(
-            "{:?}:                     continues {:02x}",
-            self.pid,
-            data[..cmp::min(data.len(), 16)].plain_hex(false)
-        );
+        if DEBUG_PAYLOAD {
+            println!(
+                "{:?}:                     continues {:02x}",
+                self.pid,
+                data[..cmp::min(data.len(), 16)].plain_hex(false)
+            )
+        }
         self.len = self.len.map(|l| l + data.len());
     }
     fn end_packet(&mut self, _ctx: &mut DumpDemuxContext) {
-        println!("{:?}: end of packet length={:?}", self.pid, self.len);
+        if DEBUG_PAYLOAD {
+            println!("{:?}: end of packet length={:?}", self.pid, self.len);
+        }
     }
     fn continuity_error(&mut self, _ctx: &mut DumpDemuxContext) {}
 }
