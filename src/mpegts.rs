@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 const DEBUG_PTS: bool = true;
-const DEBUG_PAYLOAD: bool = true;
+const DEBUG_PAYLOAD: bool = false;
 const DEBUG_PES: bool = true;
 const DEBUG_PCR: bool = true;
 const DEBUG_SCTE35: bool = true;

@@ -1089,13 +1089,14 @@ async fn rscap() {
                             continue;
                         }
 
-                        // Send packet data to the synchronous processing thread
-                        dmtx.send(stream_data.packet[packet_start..packet_end].to_vec()).await.unwrap();
+                        if args.mpegts_reader {
+                            // Send packet data to the synchronous processing thread
+                            dmtx.send(stream_data.packet[packet_start..packet_end].to_vec()).await.unwrap();
 
-                        if !decode_video {
-                            // Sleep for a short duration to prevent a tight loop
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                            continue;
+                            // check if we are decoding video
+                            if !decode_video {
+                                continue;
+                            }
                         }
 
                         // Skip MPEG-TS header and adaptation field
