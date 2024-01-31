@@ -557,7 +557,7 @@ struct Args {
     no_zmq_thread: bool,
 
     /// ZMQ Batch size
-    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 7)]
+    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 100)]
     zmq_batch_size: usize,
 
     /// Decode Video
@@ -565,7 +565,7 @@ struct Args {
     decode_video: bool,
 
     /// Decode Video Batch Size
-    #[clap(long, env = "DECODE_VIDEO_BATCH_SIZE", default_value_t = 7)]
+    #[clap(long, env = "DECODE_VIDEO_BATCH_SIZE", default_value_t = 100)]
     decode_video_batch_size: usize,
 
     /// Debug SMPTE2110
