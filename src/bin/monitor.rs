@@ -633,7 +633,7 @@ async fn main() {
             // Use tokio::select to simultaneously wait for a new batch or a stop signal
             tokio::select! {
                 Some(mut batch) = drx.recv() => {
-                    //info!("Processing {} video packets in decoder thread", batch.len());
+                    debug!("Processing {} video packets in decoder thread", batch.len());
                     for stream_data in &batch {
                         // packet is a subset of the original packet, starting at the payload
                         let packet_start = stream_data.packet_start;
@@ -647,14 +647,13 @@ async fn main() {
 
                         // check if packet_start + 4 is less than packet_end
                         if packet_start + 4 >= packet_end {
-                            error!("NAL Parser: Packet size {} is less than 4 bytes. Skipping packet.",
-                                packet_end - packet_start);
+                            error!("NAL Parser: Packet size {} {} - {} is less than 4 bytes. Skipping packet.",
+                                packet_end - packet_start, packet_start, packet_end);
                             continue;
                         }
 
                         if args.mpegts_reader {
                             // Send packet data to the synchronous processing thread
-                            //info!("Demuxer thread sending packet of size: {}", packet_end - packet_start);
                             dmtx.send(stream_data.packet[packet_start..packet_end].to_vec()).await.unwrap();
 
                             // check if we are decoding video
@@ -662,7 +661,6 @@ async fn main() {
                                 continue;
                             }
                         }
-                        //info!("Decoding packet {}-{} of size {}", packet_start, packet_end, packet_end - packet_start);
 
                         // Skip MPEG-TS header and adaptation field
                         let header_len = 4;
@@ -680,9 +678,13 @@ async fn main() {
 
                         // confirm payload_start is sane
                         if payload_start >= packet_end || packet_end - payload_start < 4 {
-                            error!("NAL Parser: Payload start {} is invalid with packet_start as {} and packet_end as {}. Skipping packet.",
+                            debug!("NAL Parser: Payload start {} is invalid with packet_start as {} and packet_end as {}. Skipping packet.",
                                 payload_start, packet_start, packet_end);
+                            //hexdump(&stream_data.packet, packet_start, packet_end - packet_start);
                             continue;
+                        } else {
+                            debug!("NAL Parser: Payload start {} is valid with packet_start as {} and packet_end as {}.",
+                                payload_start, packet_start, packet_end);
                         }
 
                         // Process payload, skipping padding bytes
