@@ -7,7 +7,6 @@
  *
  */
 
-use async_zmq;
 use capnp;
 use capnp::message::{Builder, HeapAllocator};
 #[cfg(feature = "dpdk_enabled")]
@@ -48,6 +47,7 @@ use h264_reader::nal::{pps, sei, slice, sps, Nal, RefNal, UnitType};
 use h264_reader::push::NalInterest;
 use h264_reader::Context;
 //use rscap::videodecoder::VideoProcessor;
+use rand::{thread_rng, Rng};
 use rscap::stream_data::{process_mpegts_packet, process_smpte2110_packet};
 use std::thread;
 use tokio::task;
@@ -785,8 +785,8 @@ async fn rscap() {
                     // Queue is full, sleep for the backoff period
                     std::thread::sleep(std::time::Duration::from_millis(backoff));
 
-                    // Increase the backoff period, up to a maximum (e.g., 100 ms)
-                    backoff = std::cmp::min(backoff * 2, 100);
+                    // Increase the backoff period, up to a maximum (e.g., 10 ms)
+                    backoff = std::cmp::min(backoff * 2, 10);
                 }
                 backoff = 1;
                 if !running_capture_clone.load(Ordering::SeqCst) {
@@ -1232,12 +1232,20 @@ async fn rscap() {
         }
     });
 
-    // Setup channel for passing stream_data for ZMQ thread sending the stream data to monitor process
-    let (tx, mut rx) = mpsc::channel::<Vec<StreamData>>(zmq_channel_size);
+    // Assuming StreamData is the type you want to store in the queue
+    type StreamDataBatch = Vec<StreamData>;
+
+    // Initialize the shared queue
+    //let zmq_queue = Arc::new(ArrayQueue::new(zmq_channel_size));
+    // Initialize the shared queue with the type annotation
+    let zmq_queue = Arc::new(ArrayQueue::<StreamDataBatch>::new(zmq_channel_size));
+
+    // Clone the queue handle for the ZMQ thread
+    let zmq_queue_clone = zmq_queue.clone();
 
     // Spawn a new thread for ZeroMQ communication
-    let zmq_thread = tokio::spawn(async move {
-        let context = async_zmq::Context::new();
+    std::thread::spawn(move || {
+        let context = zmq::Context::new();
         let publisher = context.socket(PUSH).unwrap();
         // Determine the connection endpoint (IPC if provided, otherwise TCP)
         let endpoint = if let Some(ipc_path_copy) = args.ipc_path {
@@ -1256,10 +1264,15 @@ async fn rscap() {
             None
         };
 
+        let mut zmq_backoff = Duration::from_millis(10); // Initial backoff duration
+        let zmq_max_backoff = Duration::from_secs(1); // Maximum backoff duration
+
         let mut dot_last_sent_ts = Instant::now();
 
         while running_zmq.load(Ordering::SeqCst) {
-            while let Some(mut batch) = rx.recv().await {
+            if let Some(mut batch) = zmq_queue_clone.pop() {
+                // Reset backoff after successful pop
+                zmq_backoff = Duration::from_millis(10);
                 // Process and send messages
                 for stream_data in batch.iter() {
                     // Serialize StreamData to Cap'n Proto message
@@ -1301,6 +1314,16 @@ async fn rscap() {
                     }
                 }
                 batch.clear();
+            } else {
+                // Sleep for the current backoff period
+                std::thread::sleep(zmq_backoff);
+
+                // Exponential backoff with jitter
+                let jitter = thread_rng().gen_range(0..10);
+                zmq_backoff = std::cmp::min(
+                    zmq_backoff * 2 + Duration::from_millis(jitter),
+                    zmq_max_backoff,
+                );
             }
         }
     });
@@ -1488,8 +1511,10 @@ async fn rscap() {
                         if batch.len() >= zmq_batch_size {
                             //info!("STATUS::BATCH:SEND: {}", batch.len());
                             // Send the batch to the channel
-                            tx.send(batch).await.unwrap();
-                            // release the packet Arc so it can be reused
+                            while zmq_queue.push(batch.clone()).is_err() {
+                                // Sleep or yield the thread when the queue is full
+                                std::thread::sleep(std::time::Duration::from_millis(1));
+                            } // release the packet Arc so it can be reused
                             batch = Vec::new(); // Create a new Vec for the next batch
                         } else {
                             //info!("STATUS::BATCH:WAIT: {}", batch.len());
@@ -1508,29 +1533,14 @@ async fn rscap() {
             }
             None => {
                 // No packet available in the queue, sleep to reduce CPU usage
-                tokio::time::sleep(Duration::from_millis(1)).await;
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }
     }
 
-    println!("\nSending stop signals to threads...");
-
-    // Send ZMQ stop signal
-    tx.send(Vec::new()).await.unwrap();
-    drop(tx);
-
-    // Send Decoder stop signal
-    /*dtx.send(Vec::new()).await.unwrap();
-    drop(dtx);*/
-
-    // Send Demuxer stop signal
-    /*dmtx.send(Vec::new()).await.unwrap();
-    drop(dmtx);*/
-
     println!("\nWaiting for threads to finish...");
 
     // Wait for the zmq_thread to finish
-    zmq_thread.await.unwrap();
     demuxer_thread.await.unwrap();
     decoder_thread.await.unwrap();
 
