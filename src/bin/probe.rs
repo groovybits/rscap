@@ -556,7 +556,7 @@ struct Args {
     no_zmq_thread: bool,
 
     /// ZMQ Batch size
-    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 7)]
+    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 100)]
     zmq_batch_size: usize,
 
     /// Decode Video
@@ -564,7 +564,7 @@ struct Args {
     decode_video: bool,
 
     /// Decode Video Batch Size
-    #[clap(long, env = "DECODE_VIDEO_BATCH_SIZE", default_value_t = 7)]
+    #[clap(long, env = "DECODE_VIDEO_BATCH_SIZE", default_value_t = 100)]
     decode_video_batch_size: usize,
 
     /// Debug SMPTE2110
@@ -1086,6 +1086,8 @@ async fn rscap() {
 
                         // check if packet_start + 4 is less than packet_end
                         if packet_start + 4 >= packet_end {
+                            error!("NAL Parser: Packet size {} {} - {} is less than 4 bytes. Skipping packet.",
+                                packet_end - packet_start, packet_start, packet_end);
                             continue;
                         }
 
@@ -1118,6 +1120,9 @@ async fn rscap() {
                             error!("NAL Parser: Payload start {} is invalid with packet_start as {} and packet_end as {}. Skipping packet.",
                                 payload_start, packet_start, packet_end);
                             continue;
+                        } else {
+                            debug!("NAL Parser: Payload start {} is valid with packet_start as {} and packet_end as {}.",
+                                payload_start, packet_start, packet_end);
                         }
 
                         // Process payload, skipping padding bytes
