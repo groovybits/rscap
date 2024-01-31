@@ -1121,7 +1121,7 @@ async fn rscap() {
                                 payload_start, packet_start, packet_end);
                             continue;
                         } else {
-                            info!("NAL Parser: Payload start {} is valid with packet_start as {} and packet_end as {}.",
+                            debug!("NAL Parser: Payload start {} is valid with packet_start as {} and packet_end as {}.",
                                 payload_start, packet_start, packet_end);
                         }
 
