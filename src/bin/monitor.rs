@@ -311,7 +311,7 @@ struct Args {
     decode_video: bool,
 
     /// Decode Video Batch Size
-    #[clap(long, env = "DECODE_VIDEO_BATCH_SIZE", default_value_t = 7)]
+    #[clap(long, env = "DECODE_VIDEO_BATCH_SIZE", default_value_t = 100)]
     decode_video_batch_size: usize,
 
     /// Debug NALs
