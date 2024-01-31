@@ -3,7 +3,7 @@
  *
  * Written in 2024 by Chris Kennedy (C) LTN Global
  *
- * License: LGPL v2.1
+ * License: MIT
  *
  */
 
@@ -18,18 +18,16 @@ use capsule::dpdk;
 use capsule::prelude::*;
 use clap::Parser;
 use futures::stream::StreamExt;
-use lazy_static::lazy_static;
 use log::{debug, error, info};
+use mpeg2ts_reader::demultiplex;
 use pcap::{Active, Capture, Device, PacketCodec};
+use rscap::mpegts;
 use rscap::stream_data::{
-    extract_pid, identify_video_pid, parse_and_store_pat, parse_pat, parse_pmt, tr101290_p1_check,
-    tr101290_p2_check, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID, TS_PACKET_SIZE,
+    identify_video_pid, is_mpegts_or_smpte2110, parse_and_store_pat, process_packet,
+    update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
 };
 use rscap::{current_unix_timestamp_ms, hexdump};
-use rtp::RtpReader;
-use rtp_rs as rtp;
 use std::{
-    collections::HashMap,
     error::Error as StdError,
     fmt,
     fs::File,
@@ -38,7 +36,6 @@ use std::{
     net::{IpAddr, Ipv4Addr, UdpSocket},
     sync::atomic::{AtomicBool, Ordering},
     sync::Arc,
-    sync::Mutex,
     time::Instant,
 };
 use tokio::sync::mpsc::{self};
@@ -52,7 +49,13 @@ mod stream_data_proto; // The generated module
 include!("../stream_data_capnp.rs");
 
 // Video Processor Decoder
-use rscap::videodecoder::VideoProcessor;
+use h264_reader::annexb::AnnexBReader;
+use h264_reader::nal::{pps, sei, slice, sps, Nal, RefNal, UnitType};
+use h264_reader::push::NalInterest;
+use h264_reader::Context;
+//use rscap::videodecoder::VideoProcessor;
+use rscap::stream_data::{process_mpegts_packet, process_smpte2110_packet};
+use tokio::task;
 use tokio::time::Duration;
 
 // Define your custom PacketCodec
@@ -66,9 +69,92 @@ impl PacketCodec for BoxCodec {
     }
 }
 
-// global variable to store the MpegTS PID Map (initially empty)
-lazy_static! {
-    static ref PID_MAP: Mutex<HashMap<u16, Arc<StreamData>>> = Mutex::new(HashMap::new());
+fn is_cea_608(itu_t_t35_data: &sei::user_data_registered_itu_t_t35::ItuTT35) -> bool {
+    // In this example, we check if the ITU-T T.35 data matches the known format for CEA-608.
+    // This is a simplified example and might need adjustment based on the actual data format.
+    match itu_t_t35_data {
+        sei::user_data_registered_itu_t_t35::ItuTT35::UnitedStates => true,
+        _ => false,
+    }
+}
+
+// This function checks if the byte is a standard ASCII character
+fn is_standard_ascii(byte: u8) -> bool {
+    byte >= 0x20 && byte <= 0x7F
+}
+
+// Function to check if the byte pair represents XDS data
+fn is_xds(byte1: u8, byte2: u8) -> bool {
+    // Implement logic to identify XDS data
+    // Placeholder logic: Example only
+    byte1 == 0x01 && byte2 >= 0x20 && byte2 <= 0x7F
+}
+
+// Function to decode CEA-608 CC1/CC2
+fn decode_cea_608_cc1_cc2(byte1: u8, byte2: u8) -> Option<String> {
+    decode_character(byte1, byte2)
+    // The above line replaces the previous implementation and uses decode_character
+    // to handle both ASCII and control codes.
+}
+
+fn decode_cea_608_xds(byte1: u8, byte2: u8) -> Option<String> {
+    if is_xds(byte1, byte2) {
+        Some(format!("XDS: {:02X} {:02X}", byte1, byte2))
+    } else {
+        None
+    }
+}
+
+// Decode CEA-608 characters, including control codes
+fn decode_character(byte1: u8, byte2: u8) -> Option<String> {
+    debug!("Decoding: {:02X} {:02X}", byte1, byte2); // Debugging
+
+    // Handle standard ASCII characters
+    if is_standard_ascii(byte1) && is_standard_ascii(byte2) {
+        return Some(format!("{}{}", byte1 as char, byte2 as char));
+    }
+
+    // Handle special control characters (Example)
+    // This is a simplified version, actual implementation may vary based on control characters
+    match (byte1, byte2) {
+        (0x14, 0x2C) => Some(String::from("[Clear Caption]")),
+        (0x14, 0x20) => Some(String::from("[Roll-Up Caption]")),
+        // Add more control character handling here
+        _ => {
+            error!("Unhandled control character: {:02X} {:02X}", byte1, byte2); // Debugging
+            None
+        }
+    }
+}
+
+// Simplified CEA-608 decoding function
+// Main CEA-608 decoding function
+fn decode_cea_608(data: &[u8]) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let mut captions_cc1 = Vec::new();
+    let mut captions_cc2 = Vec::new();
+    let mut xds_data = Vec::new();
+
+    for chunk in data.chunks(3) {
+        if chunk.len() == 3 {
+            match chunk[0] {
+                0x04 => {
+                    if let Some(decoded) = decode_cea_608_cc1_cc2(chunk[1], chunk[2]) {
+                        captions_cc1.push(decoded);
+                    } else if let Some(decoded) = decode_cea_608_xds(chunk[1], chunk[2]) {
+                        xds_data.push(decoded);
+                    }
+                }
+                0x05 => {
+                    if let Some(decoded) = decode_cea_608_cc1_cc2(chunk[1], chunk[2]) {
+                        captions_cc2.push(decoded);
+                    }
+                }
+                _ => debug!("Unknown caption channel: {:02X}", chunk[0]),
+            }
+        }
+    }
+
+    (captions_cc1, captions_cc2, xds_data)
 }
 
 // convert stream data sructure to capnp message
@@ -114,212 +200,6 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
     }
 
     Ok(message)
-}
-
-// Invoke this function for each MPEG-TS packet
-fn process_packet(
-    stream_data_packet: &mut StreamData,
-    errors: &mut Tr101290Errors,
-    is_mpegts: bool,
-    pmt_pid: u16,
-) {
-    let packet: &[u8] = &stream_data_packet.packet[stream_data_packet.packet_start
-        ..stream_data_packet.packet_start + stream_data_packet.packet_len];
-    tr101290_p1_check(packet, errors);
-    tr101290_p2_check(packet, errors);
-
-    let pid = stream_data_packet.pid;
-    let arrival_time = current_unix_timestamp_ms().unwrap_or(0);
-
-    let mut pid_map = PID_MAP.lock().unwrap();
-
-    // TODO: high debug level output, may need a flag specific to this dump
-    //info!("PID Map Contents: {:#?}", pid_map);
-
-    // Check if the PID map already has an entry for this PID
-    match pid_map.get_mut(&pid) {
-        Some(stream_data_arc) => {
-            // Existing StreamData instance found, update it
-            let mut stream_data = Arc::clone(stream_data_arc);
-            Arc::make_mut(&mut stream_data).update_stats(packet.len(), arrival_time);
-            Arc::make_mut(&mut stream_data).increment_count(1);
-            if stream_data.pid != 0x1FFF && is_mpegts {
-                Arc::make_mut(&mut stream_data)
-                    .set_continuity_counter(stream_data_packet.continuity_counter);
-            }
-            let uptime = arrival_time - stream_data.start_time;
-
-            // print out each field of structure
-            debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, uptime);
-
-            stream_data_packet.bitrate = stream_data.bitrate;
-            stream_data_packet.bitrate_avg = stream_data.bitrate_avg;
-            stream_data_packet.bitrate_max = stream_data.bitrate_max;
-            stream_data_packet.bitrate_min = stream_data.bitrate_min;
-            stream_data_packet.iat = stream_data.iat;
-            stream_data_packet.iat_avg = stream_data.iat_avg;
-            stream_data_packet.iat_max = stream_data.iat_max;
-            stream_data_packet.iat_min = stream_data.iat_min;
-            stream_data_packet.stream_type = stream_data.stream_type.clone();
-            stream_data_packet.start_time = stream_data.start_time;
-            stream_data_packet.error_count = stream_data.error_count;
-            stream_data_packet.last_arrival_time = stream_data.last_arrival_time;
-            stream_data_packet.total_bits = stream_data.total_bits;
-            stream_data_packet.count = stream_data.count;
-
-            // write the stream_data back to the pid_map with modified values
-            pid_map.insert(pid, stream_data);
-        }
-        None => {
-            // No StreamData instance found for this PID, possibly no PMT yet
-            if pmt_pid != 0xFFFF {
-                debug!("ProcessPacket: New PID {} Found, adding to PID map.", pid);
-            } else {
-                // PMT packet not found yet, add the stream_data_packet to the pid_map
-                let mut stream_data = Arc::new(StreamData::new(
-                    Arc::new(Vec::new()), // Ensure packet_data is Arc<Vec<u8>>
-                    0,
-                    0,
-                    stream_data_packet.pid,
-                    stream_data_packet.stream_type.clone(),
-                    stream_data_packet.start_time,
-                    stream_data_packet.timestamp,
-                    stream_data_packet.continuity_counter,
-                ));
-                Arc::make_mut(&mut stream_data).update_stats(packet.len(), arrival_time);
-
-                // print out each field of structure
-                info!("STATUS::PACKET:ADD[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
-
-                pid_map.insert(pid, stream_data);
-            }
-        }
-    }
-}
-
-// Use the stored PAT packet
-fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8]) {
-    let mut pid_map = PID_MAP.lock().unwrap();
-
-    // Process the stored PAT packet to find program numbers and corresponding PMT PIDs
-    let program_pids = last_pat_packet
-        .chunks_exact(TS_PACKET_SIZE)
-        .flat_map(parse_pat)
-        .collect::<Vec<_>>();
-
-    for pat_entry in program_pids.iter() {
-        let program_number = pat_entry.program_number;
-        let pmt_pid = pat_entry.pmt_pid;
-
-        // Log for debugging
-        debug!(
-            "UpdatePIDmap: Processing Program Number: {}, PMT PID: {}",
-            program_number, pmt_pid
-        );
-
-        // Ensure the current PMT packet matches the PMT PID from the PAT
-        if extract_pid(pmt_packet) == pmt_pid {
-            let pmt = parse_pmt(pmt_packet);
-
-            for pmt_entry in pmt.entries.iter() {
-                debug!(
-                    "UpdatePIDmap: Processing PMT PID: {} for Stream PID: {} Type {}",
-                    pmt_pid, pmt_entry.stream_pid, pmt_entry.stream_type
-                );
-
-                let stream_pid = pmt_entry.stream_pid;
-                let stream_type = match pmt_entry.stream_type {
-                    0x00 => "Reserved",
-                    0x01 => "ISO/IEC 11172 MPEG-1 Video",
-                    0x02 => "ISO/IEC 13818-2 MPEG-2 Video",
-                    0x03 => "ISO/IEC 11172 MPEG-1 Audio",
-                    0x04 => "ISO/IEC 13818-3 MPEG-2 Audio",
-                    0x05 => "ISO/IEC 13818-1 Private Section",
-                    0x06 => "ISO/IEC 13818-1 Private PES data packets",
-                    0x07 => "ISO/IEC 13522 MHEG",
-                    0x08 => "ISO/IEC 13818-1 Annex A DSM CC",
-                    0x09 => "H222.1",
-                    0x0A => "ISO/IEC 13818-6 type A",
-                    0x0B => "ISO/IEC 13818-6 type B",
-                    0x0C => "ISO/IEC 13818-6 type C",
-                    0x0D => "ISO/IEC 13818-6 type D",
-                    0x0E => "ISO/IEC 13818-1 auxillary",
-                    0x0F => "13818-7 AAC Audio with ADTS transport syntax",
-                    0x10 => "14496-2 Visual (MPEG-4 part 2 video)",
-                    0x11 => "14496-3 MPEG-4 Audio with LATM transport syntax (14496-3/AMD 1)",
-                    0x12 => "14496-1 SL-packetized or FlexMux stream in PES packets",
-                    0x13 => "14496-1 SL-packetized or FlexMux stream in 14496 sections",
-                    0x14 => "ISO/IEC 13818-6 Synchronized Download Protocol",
-                    0x15 => "Metadata in PES packets",
-                    0x16 => "Metadata in metadata_sections",
-                    0x17 => "Metadata in 13818-6 Data Carousel",
-                    0x18 => "Metadata in 13818-6 Object Carousel",
-                    0x19 => "Metadata in 13818-6 Synchronized Download Protocol",
-                    0x1A => "13818-11 MPEG-2 IPMP stream",
-                    0x1B => "H.264/14496-10 video (MPEG-4/AVC)",
-                    0x24 => "H.265 video (MPEG-H/HEVC)",
-                    0x42 => "AVS Video",
-                    0x7F => "IPMP stream",
-                    0x81 => "ATSC A/52 AC-3",
-                    0x86 => "SCTE 35 Splice Information Table",
-                    0x87 => "ATSC A/52e AC-3",
-                    _ if pmt_entry.stream_type < 0x80 => "ISO/IEC 13818-1 reserved",
-                    _ => "User Private",
-                };
-
-                let timestamp = current_unix_timestamp_ms().unwrap_or(0);
-
-                if !pid_map.contains_key(&stream_pid) {
-                    let mut stream_data = Arc::new(StreamData::new(
-                        Arc::new(Vec::new()), // Ensure packet_data is Arc<Vec<u8>>
-                        0,
-                        0,
-                        stream_pid,
-                        stream_type.to_string(),
-                        timestamp,
-                        timestamp,
-                        0,
-                    ));
-                    // update stream_data stats
-                    Arc::make_mut(&mut stream_data).update_stats(pmt_packet.len(), timestamp);
-
-                    // print out each field of structure
-                    info!("STATUS::STREAM:CREATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
-
-                    pid_map.insert(stream_pid, stream_data);
-                } else {
-                    // get the stream data so we can update it
-                    let stream_data_arc = pid_map.get_mut(&stream_pid).unwrap();
-                    let mut stream_data = Arc::clone(stream_data_arc);
-
-                    // update the stream type
-                    Arc::make_mut(&mut stream_data).update_stream_type(stream_type.to_string());
-
-                    // print out each field of structure
-                    debug!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
-
-                    // write the stream_data back to the pid_map with modified values
-                    pid_map.insert(stream_pid, stream_data);
-                }
-            }
-        } else {
-            error!("UpdatePIDmap: Skipping PMT PID: {} as it does not match with current PMT packet PID", pmt_pid);
-        }
-    }
-}
-
-fn determine_stream_type(pid: u16) -> String {
-    let pid_map = PID_MAP.lock().unwrap();
-
-    // check if pid already is mapped, if so return the stream type already stored
-    if let Some(stream_data) = pid_map.get(&pid) {
-        return stream_data.stream_type.clone();
-    }
-
-    pid_map
-        .get(&pid)
-        .map(|stream_data| stream_data.stream_type.clone())
-        .unwrap_or_else(|| "unknown".to_string())
 }
 
 // Define a custom error for when the target device is not found
@@ -549,7 +429,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "1.1",
+    version = "1.2",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {
@@ -657,6 +537,10 @@ struct Args {
     #[clap(long, env = "DECODER_CHANNEL_SIZE", default_value_t = 1_000)]
     decoder_channel_size: usize,
 
+    /// Demuxer Channel size
+    #[clap(long, env = "DEMUXER_CHANNEL_SIZE", default_value_t = 1_000)]
+    demuxer_channel_size: usize,
+
     /// DPDK enable
     #[clap(long, env = "DPDK", default_value_t = false)]
     dpdk: bool,
@@ -678,7 +562,7 @@ struct Args {
     no_zmq_thread: bool,
 
     /// ZMQ Batch size
-    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 7)]
+    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 100)]
     zmq_batch_size: usize,
 
     /// Decode Video
@@ -686,12 +570,33 @@ struct Args {
     decode_video: bool,
 
     /// Decode Video Batch Size
-    #[clap(long, env = "DECODE_VIDEO_BATCH_SIZE", default_value_t = 7)]
+    #[clap(long, env = "DECODE_VIDEO_BATCH_SIZE", default_value_t = 100)]
     decode_video_batch_size: usize,
 
     /// Debug SMPTE2110
     #[clap(long, env = "DEBUG_SMPTE2110", default_value_t = false)]
     debug_smpte2110: bool,
+
+    /// Debug NALs
+    #[clap(long, env = "DEBUG_NALS", default_value_t = false)]
+    debug_nals: bool,
+
+    /// List of NAL types to debug, comma separated: all, sps, pps, pic_timing, sei, slice, user_data_registered_itu_tt35, user_data_unregistered, buffering_period, unknown
+    #[clap(
+        long,
+        env = "DEBUG_NAL_TYPES",
+        default_value = "",
+        help = "List of NAL types to debug, comma separated: all, sps, pps, pic_timing, sei, slice, user_data_registered_itu_tt35, user_data_unregistered, buffering_period, unknown"
+    )]
+    debug_nal_types: String,
+
+    // Parse short NALs that are 0x000001
+    #[clap(long, env = "PARSE_SHORT_NALS", default_value_t = false)]
+    parse_short_nals: bool,
+
+    // MpegTS Reader use
+    #[clap(long, env = "MPEGTS_READER", default_value_t = false)]
+    mpegts_reader: bool,
 }
 
 // MAIN Function
@@ -711,8 +616,6 @@ async fn main() {
 
 // RsCap Function
 async fn rscap() {
-    println!("RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap.");
-
     dotenv::dotenv().ok(); // read .env file
 
     let args = Args::parse();
@@ -751,6 +654,15 @@ async fn rscap() {
     let debug_smpte2110 = args.debug_smpte2110;
     let decode_video = args.decode_video;
     let mut decode_video_batch_size = args.decode_video_batch_size;
+    let debug_nals = args.debug_nals;
+    let debug_nal_types = args.debug_nal_types;
+    let parse_short_nals = args.parse_short_nals;
+
+    println!("Starting RsCap Probe...");
+
+    // turn debug_nal_types into a vector
+    // Assuming debug_nal_types is a String
+    let debug_nal_types: Vec<String> = debug_nal_types.split(',').map(|s| s.to_string()).collect();
 
     // SMPTE2110 specific settings
     if args.smpte2110 {
@@ -783,6 +695,7 @@ async fn rscap() {
     let running = Arc::new(AtomicBool::new(true));
     let running_capture = running.clone();
     let running_decoder = running.clone();
+    let running_demuxer = running.clone();
     let running_zmq = running.clone();
 
     // Spawn a new thread for packet capture
@@ -918,16 +831,236 @@ async fn rscap() {
         })
     };
 
+    let mut ctx = Context::default();
+    let mut scratch = Vec::new();
+    // Use the `move` keyword to move ownership of `ctx` and `scratch` into the closure
+    let mut annexb_reader = AnnexBReader::accumulate(move |nal: RefNal<'_>| {
+        if !nal.is_complete() {
+            return NalInterest::Buffer;
+        }
+        let hdr = match nal.header() {
+            Ok(h) => h,
+            Err(e) => {
+                // check if we are in debug mode for nals, else check if this is a ForbiddenZeroBit error, which we ignore
+                let e_str = format!("{:?}", e);
+                if !debug_nals && e_str == "ForbiddenZeroBit" {
+                    // ignore forbidden zero bit error unless we are in debug mode
+                } else {
+                    // show nal contents
+                    debug!("---\n{:?}\n---", nal);
+                    error!("Failed to parse NAL header: {:?}", e);
+                }
+                return NalInterest::Buffer;
+            }
+        };
+        match hdr.nal_unit_type() {
+            UnitType::SeqParameterSet => {
+                if let Ok(sps) = sps::SeqParameterSet::from_bits(nal.rbsp_bits()) {
+                    // check if debug_nal_types has sps
+                    if debug_nal_types.contains(&"sps".to_string())
+                        || debug_nal_types.contains(&"all".to_string())
+                    {
+                        println!("Found SPS: {:?}", sps);
+                    }
+                    ctx.put_seq_param_set(sps);
+                }
+            }
+            UnitType::PicParameterSet => {
+                if let Ok(pps) = pps::PicParameterSet::from_bits(&ctx, nal.rbsp_bits()) {
+                    // check if debug_nal_types has pps
+                    if debug_nal_types.contains(&"pps".to_string())
+                        || debug_nal_types.contains(&"all".to_string())
+                    {
+                        println!("Found PPS: {:?}", pps);
+                    }
+                    ctx.put_pic_param_set(pps);
+                }
+            }
+            UnitType::SEI => {
+                let mut r = sei::SeiReader::from_rbsp_bytes(nal.rbsp_bytes(), &mut scratch);
+                while let Ok(Some(msg)) = r.next() {
+                    match msg.payload_type {
+                        sei::HeaderType::PicTiming => {
+                            let sps = match ctx.sps().next() {
+                                Some(s) => s,
+                                None => continue,
+                            };
+                            let pic_timing = sei::pic_timing::PicTiming::read(sps, &msg);
+                            match pic_timing {
+                                Ok(pic_timing_data) => {
+                                    // Check if debug_nal_types has pic_timing or all
+                                    if debug_nal_types.contains(&"pic_timing".to_string())
+                                        || debug_nal_types.contains(&"all".to_string())
+                                    {
+                                        println!("Found PicTiming: {:?}", pic_timing_data);
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Error parsing PicTiming SEI: {:?}", e);
+                                }
+                            }
+                        }
+                        h264_reader::nal::sei::HeaderType::BufferingPeriod => {
+                            let sps = match ctx.sps().next() {
+                                Some(s) => s,
+                                None => continue,
+                            };
+                            let buffering_period =
+                                sei::buffering_period::BufferingPeriod::read(&ctx, &msg);
+                            // check if debug_nal_types has buffering_period
+                            if debug_nal_types.contains(&"buffering_period".to_string())
+                                || debug_nal_types.contains(&"all".to_string())
+                            {
+                                println!(
+                                    "Found BufferingPeriod: {:?} Payload: [{:?}] - {:?}",
+                                    buffering_period, msg.payload, sps
+                                );
+                            }
+                        }
+                        h264_reader::nal::sei::HeaderType::UserDataRegisteredItuTT35 => {
+                            match sei::user_data_registered_itu_t_t35::ItuTT35::read(&msg) {
+                                Ok((itu_t_t35_data, remaining_data)) => {
+                                    if debug_nal_types
+                                        .contains(&"user_data_registered_itu_tt35".to_string())
+                                        || debug_nal_types.contains(&"all".to_string())
+                                    {
+                                        println!("Found UserDataRegisteredItuTT35: {:?}, Remaining Data: {:?}", itu_t_t35_data, remaining_data);
+                                    }
+                                    if is_cea_608(&itu_t_t35_data) {
+                                        let (captions_cc1, captions_cc2, xds_data) =
+                                            decode_cea_608(remaining_data);
+                                        debug!(
+                                            "CEA-608 Data: {:?} cc1: {:?} cc2: {:?} xds: {:?}",
+                                            itu_t_t35_data, captions_cc1, captions_cc2, xds_data
+                                        );
+                                        if !captions_cc1.is_empty() {
+                                            debug!("CEA-608 CC1 Captions: {:?}", captions_cc1);
+                                        }
+                                        if !captions_cc2.is_empty() {
+                                            debug!("CEA-608 CC2 Captions: {:?}", captions_cc2);
+                                        }
+                                        if !xds_data.is_empty() {
+                                            debug!("CEA-608 XDS Data: {:?}", xds_data);
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("Error parsing ITU T.35 data: {:?}", e);
+                                }
+                            }
+                        }
+                        h264_reader::nal::sei::HeaderType::UserDataUnregistered => {
+                            // Check if debug_nal_types has user_data_unregistered or all
+                            if debug_nal_types.contains(&"user_data_unregistered".to_string())
+                                || debug_nal_types.contains(&"all".to_string())
+                            {
+                                println!(
+                                    "Found SEI type UserDataUnregistered {:?} payload: [{:?}]",
+                                    msg.payload_type, msg.payload
+                                );
+                            }
+                        }
+                        _ => {
+                            // check if debug_nal_types has sei
+                            if debug_nal_types.contains(&"sei".to_string())
+                                || debug_nal_types.contains(&"all".to_string())
+                            {
+                                println!(
+                                    "Unknown Found SEI type {:?} payload: [{:?}]",
+                                    msg.payload_type, msg.payload
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            UnitType::SliceLayerWithoutPartitioningIdr
+            | UnitType::SliceLayerWithoutPartitioningNonIdr => {
+                let msg = slice::SliceHeader::from_bits(&ctx, &mut nal.rbsp_bits(), hdr);
+                // check if debug_nal_types has slice
+                if debug_nal_types.contains(&"slice".to_string())
+                    || debug_nal_types.contains(&"all".to_string())
+                {
+                    println!("Found NAL Slice: {:?}", msg);
+                }
+            }
+            _ => {
+                // check if debug_nal_types has nal
+                if debug_nal_types.contains(&"unknown".to_string())
+                    || debug_nal_types.contains(&"all".to_string())
+                {
+                    println!("Found Unknown NAL: {:?}", nal);
+                }
+            }
+        }
+        NalInterest::Buffer
+    });
+
+    // Setup demuxer async processing thread
+    let (dmtx, mut dmrx) = mpsc::channel::<Vec<u8>>(args.demuxer_channel_size);
+
+    // Setup asynchronous demuxer processing thread
+    let (sync_dmtx, mut sync_dmrx) = mpsc::channel::<Vec<u8>>(args.demuxer_channel_size);
+
+    // Running a synchronous task in the background
+    let running_demuxer_clone = running_demuxer.clone();
+    task::spawn_blocking(move || {
+        let mut demux_ctx = mpegts::DumpDemuxContext::new();
+        let mut demux = demultiplex::Demultiplex::new(&mut demux_ctx);
+        let mut demux_buf = [0u8; 1880 * 1024];
+        let mut buf_end = 0;
+
+        while running_demuxer_clone.load(Ordering::SeqCst) {
+            match sync_dmrx.blocking_recv() {
+                Some(packet) => {
+                    let packet_len = packet.len();
+                    let space_left = demux_buf.len() - buf_end;
+
+                    if space_left < packet_len {
+                        buf_end = 0; // Reset buffer on overflow
+                    }
+
+                    demux_buf[buf_end..buf_end + packet_len].copy_from_slice(&packet);
+                    buf_end += packet_len;
+
+                    /*info!("Demuxer push packet of size: {}", packet_len);
+                    let packet_arc = Arc::new(packet);
+                    hexdump(&packet_arc, 0, packet_len);*/
+                    demux.push(&mut demux_ctx, &demux_buf[0..buf_end]);
+                    // Additional processing as required
+                }
+                None => {
+                    // Handle error or shutdown
+                    break;
+                }
+            }
+        }
+    });
+
+    // Initialize the mpegts demuxer thread using Tokio
+    let demuxer_thread = tokio::spawn(async move {
+        loop {
+            if !running_demuxer.load(Ordering::SeqCst) {
+                debug!("Demuxer thread received stop signal.");
+                break;
+            }
+
+            if !args.mpegts_reader {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+
+            if let Some(packet) = dmrx.recv().await {
+                // Send packet data to the synchronous processing thread
+                //info!("Demuxer thread received packet of size: {}", packet.len());
+                sync_dmtx.send(packet).await.unwrap();
+            }
+        }
+    });
+
     // Initialize the video processor
     // Setup channel for passing data between threads
     let (dtx, mut drx) = mpsc::channel::<Vec<StreamData>>(decoder_channel_size);
-
-    // Initialize the video processor
-    let processor = VideoProcessor::initialize().expect("Failed to initialize video processor");
-
-    // Clone the Arc to pass into the spawned task
-    let processor_clone = processor.decoder.clone();
-
     // Spawn a new thread for Decoder communication
     let decoder_thread = tokio::spawn(async move {
         loop {
@@ -936,7 +1069,7 @@ async fn rscap() {
                 break;
             }
 
-            if !decode_video {
+            if !args.mpegts_reader && !decode_video {
                 // Sleep for a short duration to prevent a tight loop
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
@@ -947,18 +1080,174 @@ async fn rscap() {
                 Some(mut batch) = drx.recv() => {
                     debug!("Processing {} video packets in decoder thread", batch.len());
                     for stream_data in &batch {
-                        let mut locked_processor = processor_clone.lock().unwrap();
-                        locked_processor
-                            .process_packet(&stream_data.packet)
-                            .expect("Failed to process packet");
-                        // MutexGuard is automatically dropped here
+                        // packet is a subset of the original packet, starting at the payload
+                        let packet_start = stream_data.packet_start;
+                        let packet_end = stream_data.packet_start + stream_data.packet_len;
+
+                        if packet_end - packet_start > packet_size {
+                            error!("NAL Parser: Packet size {} is larger than packet buffer size {}. Skipping packet.",
+                                packet_end - packet_start, packet_size);
+                            continue;
+                        }
+
+                        // check if packet_start + 4 is less than packet_end
+                        if packet_start + 4 >= packet_end {
+                            error!("NAL Parser: Packet size {} {} - {} is less than 4 bytes. Skipping packet.",
+                                packet_end - packet_start, packet_start, packet_end);
+                            continue;
+                        }
+
+                        if args.mpegts_reader {
+                            // Send packet data to the synchronous processing thread
+                            dmtx.send(stream_data.packet[packet_start..packet_end].to_vec()).await.unwrap();
+
+                            // check if we are decoding video
+                            if !decode_video {
+                                continue;
+                            }
+                        }
+
+                        // Skip MPEG-TS header and adaptation field
+                        let header_len = 4;
+                        let adaptation_field_control = (stream_data.packet[packet_start + 3] & 0b00110000) >> 4;
+
+                        if adaptation_field_control == 0b10 {
+                            continue; // Skip packets with only adaptation field (no payload)
+                        }
+
+                        let payload_start = if adaptation_field_control != 0b01 {
+                            header_len + 1 + stream_data.packet[packet_start + 4] as usize
+                        } else {
+                            header_len
+                        };
+
+                        // confirm payload_start is sane
+                        if payload_start >= packet_end || packet_end - payload_start < 4 {
+                            error!("NAL Parser: Payload start {} is invalid with packet_start as {} and packet_end as {}. Skipping packet.",
+                                payload_start, packet_start, packet_end);
+                            continue;
+                        } else {
+                            debug!("NAL Parser: Payload start {} is valid with packet_start as {} and packet_end as {}.",
+                                payload_start, packet_start, packet_end);
+                        }
+
+                        // Process payload, skipping padding bytes
+                        let mut pos = payload_start;
+                        while pos + 4 < packet_end {
+                            if parse_short_nals && stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x01] {
+                                let nal_start = pos;
+                                pos += 3; // Move past the short start code
+
+                                // Search for the next start code
+                                while pos + 4 <= packet_end &&
+                                      stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
+                                    // Check for short start code, 0xff padding, or 0x00000000 sequence
+                                    if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x01] && pos > nal_start + 3 {
+                                        // Found a short start code, so back up and process the NAL unit
+                                        break;
+                                    } else if stream_data.packet[pos + 1] == 0xff && pos > nal_start + 3 {
+                                        // check for 0xff padding and that we are at least 2 bytes into the nal
+                                        break;
+                                    } else if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x00] && pos > nal_start + 3 {
+                                        // check for 0x00 0x00 0x00 0x00 sequence to stop at
+                                        break;
+                                    }
+                                    pos += 1;
+                                }
+
+                                // check if we only have 4 bytes left in the packet, if so then collect them too
+                                if pos + 4 >= packet_end {
+                                    while pos < packet_end {
+                                        if stream_data.packet[pos..pos + 1] == [0xff] {
+                                            // check for 0xff padding and that we are at least 2 bytes into the nal
+                                            break;
+                                        } else if pos + 2 < packet_end && stream_data.packet[pos..pos + 2] == [0x00, 0x00] {
+                                            // check for 0x00 0x00 sequence to stop at
+                                            break;
+                                        }
+                                        pos += 1;
+                                    }
+                                }
+
+                                let nal_end = pos; // End of NAL unit found or end of packet
+                                if nal_end - nal_start > 3 { // Threshold for significant NAL unit size
+                                    let nal_unit = &stream_data.packet[nal_start..nal_end];
+
+                                    // Debug print the NAL unit
+                                    if debug_nals {
+                                        let packet_len = nal_end - nal_start;
+                                        info!("Extracted {} byte Short NAL Unit from packet range {}-{}:", packet_len, nal_start, nal_end);
+                                        let nal_unit_arc = Arc::new(nal_unit.to_vec());
+                                        hexdump(&nal_unit_arc, 0, packet_len);
+                                    }
+
+                                    // Process the NAL unit
+                                    annexb_reader.push(nal_unit);
+                                    annexb_reader.reset();
+                                }
+                            } else if pos + 4 < packet_end && stream_data.packet[pos..pos + 4] == [0x00, 0x00, 0x00, 0x01] {
+                                let nal_start = pos;
+                                pos += 4; // Move past the long start code
+
+                                // Search for the next start code
+                                while pos + 4 <= packet_end &&
+                                      stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
+                                    // Check for short start code
+                                    if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x01] && pos > nal_start + 3 {
+                                        // Found a short start code, so back up and process the NAL unit
+                                        break;
+                                    } else if stream_data.packet[pos + 1] == 0xff && pos > nal_start + 3 {
+                                        // check for 0xff padding and that we are at least 2 bytes into the nal
+                                        break;
+                                    } else if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x00] && pos > nal_start + 3 {
+                                        // check for 0x00 0x00 0x00 0x00 sequence to stop at
+                                        break;
+                                    }
+                                    pos += 1;
+                                }
+
+                                // check if we only have 4 bytes left in the packet, if so then collect them too
+                                if pos + 4 >= packet_end {
+                                    while pos < packet_end {
+                                        if stream_data.packet[pos..pos + 1] == [0xff] {
+                                            // check for 0xff padding and that we are at least 2 bytes into the nal
+                                            break;
+                                        } else if pos + 2 < packet_end && stream_data.packet[pos..pos + 2] == [0x00, 0x00] {
+                                            // check for 0x00 0x00 sequence to stop at
+                                            break;
+                                        }
+                                        pos += 1;
+                                    }
+                                }
+
+                                let nal_end = pos; // End of NAL unit found or end of packet
+                                if nal_end - nal_start > 3 { // Threshold for significant NAL unit size
+                                    let nal_unit = &stream_data.packet[nal_start..nal_end];
+
+                                    // Debug print the NAL unit
+                                    if debug_nals {
+                                        let packet_len = nal_end - nal_start;
+                                        let nal_unit_arc = Arc::new(nal_unit.to_vec());
+                                        hexdump(&nal_unit_arc, 0, packet_len);
+                                        info!("Extracted {} byte Long NAL Unit from packet range {}-{}:", packet_len, nal_start, nal_end);
+                                    }
+
+                                    // Process the NAL unit
+                                    annexb_reader.push(nal_unit);
+                                    annexb_reader.reset();
+                                }
+                            } else {
+                                pos += 1; // Move to the next byte if no start code found
+                            }
+                        }
                     }
                     // Clear the batch after processing
                     batch.clear();
                 }
-                _ = tokio::time::sleep(Duration::from_millis(100)), if !running_decoder.load(Ordering::SeqCst) => {
+                _ = tokio::time::sleep(Duration::from_millis(10)), if !running_decoder.load(Ordering::SeqCst) => {
                     // This branch allows checking the running flag regularly
-                    continue;
+                    info!("Decoder thread received stop signal.");
+                    break;
                 }
             }
         }
@@ -1079,8 +1368,8 @@ async fn rscap() {
         let chunk_type = is_mpegts_or_smpte2110(&packet[payload_offset..]);
         if chunk_type != 1 {
             if chunk_type == 0 {
-                error!("Not MPEG-TS or SMPTE 2110");
                 hexdump(&packet, 0, packet.len());
+                error!("Not MPEG-TS or SMPTE 2110");
             }
             is_mpegts = false;
         }
@@ -1169,6 +1458,28 @@ async fn rscap() {
                 pmt_info.pid,
             );
 
+            // If MpegTS, Check if this is a video PID and if so parse NALS and decode video
+            if is_mpegts {
+                // Check if this is a video PID or if demuxing all PIDs
+                if pid == video_pid.unwrap_or(0xFFFF) || args.mpegts_reader {
+                    // Check if Decoding or if Demuxing
+                    if decode_video || args.mpegts_reader {
+                        if video_batch.len() >= decode_video_batch_size {
+                            dtx.send(video_batch).await.unwrap(); // Clone if necessary
+                            video_batch = Vec::new();
+                        } else {
+                            let mut stream_data_clone = stream_data.clone();
+                            stream_data_clone.packet_start = stream_data.packet_start;
+                            stream_data_clone.packet_len = stream_data.packet_len;
+                            stream_data_clone.packet = Arc::new(stream_data.packet.to_vec());
+                            video_batch.push(stream_data_clone);
+                        }
+                    }
+                }
+            } else {
+                // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
+            }
+
             // release the packet Arc so it can be reused
             if !send_raw_stream && stream_data.packet_len > 0 {
                 stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
@@ -1185,22 +1496,6 @@ async fn rscap() {
                     continue;
                 }
             }
-
-            // Check if this is a video PID
-            if decode_video
-                && video_batch.len() >= decode_video_batch_size
-                && pid == video_pid.unwrap_or(0xFFFF)
-            {
-                dtx.send(video_batch.clone()).await.unwrap(); // Clone if necessary
-                video_batch = Vec::new();
-            } else if decode_video {
-                let mut stream_data_clone = stream_data.clone();
-                stream_data_clone.packet_start = stream_data.packet_start;
-                stream_data_clone.packet_len = stream_data.packet_len;
-                stream_data_clone.packet = Arc::new(stream_data.packet.to_vec());
-                video_batch.push(stream_data_clone);
-            }
-
             batch.push(stream_data);
 
             //info!("STATUS::PACKETS:CAPTURED: {}", packets_captured);
@@ -1235,209 +1530,20 @@ async fn rscap() {
     drop(tx);
 
     // Send Decoder stop signal
-    dtx.send(Vec::new()).await.unwrap();
-    drop(dtx);
+    /*dtx.send(Vec::new()).await.unwrap();
+    drop(dtx);*/
+
+    // Send Demuxer stop signal
+    /*dmtx.send(Vec::new()).await.unwrap();
+    drop(dmtx);*/
 
     println!("\nWaiting for threads to finish...");
 
     // Wait for the zmq_thread to finish
     capture_task.await.unwrap();
     zmq_thread.await.unwrap();
+    demuxer_thread.await.unwrap();
     decoder_thread.await.unwrap();
 
     println!("\nThreads finished, exiting rscap probe");
-}
-
-// Check if the packet is MPEG-TS or SMPTE 2110
-fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
-    // Check for MPEG-TS (starts with 0x47 sync byte)
-    if packet.starts_with(&[0x47]) {
-        return 1;
-    }
-
-    // Basic check for RTP (which SMPTE ST 2110 uses)
-    // This checks if the first byte is 0x80 or 0x81
-    // This might need more robust checks based on requirements
-    if packet.len() > 12 && (packet[0] == 0x80 || packet[0] == 0x81) {
-        // TODO: Check payload type or other RTP header fields here if necessary
-        return 2; // Assuming it's SMPTE ST 2110 for now
-    }
-
-    0 // Not MPEG-TS or SMPTE 2110
-}
-
-// ## RFC 4175 SMPTE2110 header functions ##
-/*const RFC_4175_EXT_SEQ_NUM_LEN: usize = 2;
-const RFC_4175_HEADER_LEN: usize = 6; // Note: extended sequence number not included*/ // TODO: implement RFC 4175 SMPTE2110 header functions
-
-fn get_extended_sequence_number(buf: &[u8]) -> u16 {
-    ((buf[0] as u16) << 8) | buf[1] as u16
-}
-
-fn get_line_length(buf: &[u8]) -> u16 {
-    ((buf[0] as u16) << 8) | buf[1] as u16
-}
-
-fn get_line_field_id(buf: &[u8]) -> u8 {
-    buf[2] >> 7
-}
-
-fn get_line_number(buf: &[u8]) -> u16 {
-    ((buf[2] as u16 & 0x7f) << 8) | buf[3] as u16
-}
-
-fn get_line_continuation(buf: &[u8]) -> u8 {
-    buf[4] >> 7
-}
-
-fn get_line_offset(buf: &[u8]) -> u16 {
-    ((buf[4] as u16 & 0x7f) << 8) | buf[5] as u16
-}
-// ## End of RFC 4175 SMPTE2110 header functions ##
-
-// Process the packet and return a vector of SMPTE ST 2110 packets
-fn process_smpte2110_packet(
-    payload_offset: usize,
-    packet: Arc<Vec<u8>>,
-    packet_size: usize,
-    start_time: u64,
-    debug: bool,
-) -> Vec<StreamData> {
-    let mut streams = Vec::new();
-    let mut offset = payload_offset;
-
-    let len = packet.len();
-
-    // Check if the packet is large enough to contain an RTP header
-    while offset + 12 <= len {
-        // Check for RTP header marker
-        let packet_arc = Arc::clone(&packet);
-        if packet_arc[offset] == 0x80 || packet_arc[offset] == 0x81 {
-            let rtp_packet = &packet[offset..];
-
-            // Create an RtpReader
-            if let Ok(rtp) = RtpReader::new(rtp_packet) {
-                // Extract the timestamp and payload type
-                let timestamp = rtp.timestamp();
-                let payload_type = rtp.payload_type();
-                let rtp_payload = rtp.payload();
-                let rtp_payload_offset = rtp.payload_offset();
-
-                // Extract SMPTE 2110 specific fields
-                let line_length = get_line_length(rtp_packet);
-                let rtp_packet_size = line_length as usize;
-                let line_number = get_line_number(rtp_packet);
-                let extended_sequence_number = get_extended_sequence_number(rtp_packet);
-                let line_offset = get_line_offset(rtp_packet);
-                let field_id = get_line_field_id(rtp_packet);
-                let line_continuation = get_line_continuation(rtp_packet);
-
-                // Calculate the length of the RTP payload
-                let rtp_payload_length = rtp_payload.len();
-
-                // Use payload type as PID (for the purpose of this example)
-                let pid = payload_type as u16;
-                let stream_type = payload_type.to_string();
-
-                // Create new StreamData instance
-                let mut stream_data = StreamData::new(
-                    packet_arc,
-                    rtp_payload_offset,
-                    rtp_payload_length,
-                    pid,
-                    stream_type,
-                    start_time,
-                    timestamp as u64,
-                    0,
-                );
-
-                // Update StreamData stats and RTP fields
-                stream_data
-                    .update_stats(rtp_payload_length, current_unix_timestamp_ms().unwrap_or(0));
-                stream_data.set_rtp_fields(
-                    timestamp,
-                    payload_type,
-                    payload_type.to_string(),
-                    line_number,
-                    line_offset,
-                    line_length,
-                    field_id,
-                    line_continuation,
-                    extended_sequence_number,
-                );
-                if debug {
-                    info!(
-                        "SMPTE ST 2110 packet: offset: {} size: {} timestamp: {}, payload_type: {}, line_number: {}, line_offset: {}, line_length: {}, field_id: {}, line_continuation: {}, extended_sequence_number: {}",
-                        rtp_payload_offset, rtp_payload_length, timestamp, payload_type, line_number, line_offset, line_length, field_id, line_continuation, extended_sequence_number
-                    );
-                }
-
-                // Add the StreamData to the stream list
-                streams.push(stream_data);
-
-                // Move to the next RTP packet
-                offset += rtp_packet_size;
-            } else {
-                hexdump(&packet, 0, packet_size);
-                error!("Error parsing RTP header, not SMPTE ST 2110");
-            }
-        } else {
-            hexdump(&packet, 0, packet_size);
-            error!("No RTP header detected, not SMPTE ST 2110");
-        }
-    }
-
-    streams
-}
-
-// Process the packet and return a vector of MPEG-TS packets
-fn process_mpegts_packet(
-    payload_offset: usize,
-    packet: Arc<Vec<u8>>,
-    packet_size: usize,
-    start_time: u64,
-) -> Vec<StreamData> {
-    let mut start = payload_offset;
-    let mut read_size = packet_size;
-    let mut streams = Vec::new();
-
-    let len = packet.len();
-
-    while start + read_size <= len {
-        let chunk = &packet[start..start + read_size];
-        if chunk[0] == 0x47 {
-            // Check for MPEG-TS sync byte
-            read_size = packet_size; // reset read_size
-
-            let pid = extract_pid(chunk);
-
-            let stream_type = determine_stream_type(pid); // Implement this function based on PAT/PMT parsing
-            let timestamp = ((chunk[4] as u64) << 25)
-                | ((chunk[5] as u64) << 17)
-                | ((chunk[6] as u64) << 9)
-                | ((chunk[7] as u64) << 1)
-                | ((chunk[8] as u64) >> 7);
-            let continuity_counter = chunk[3] & 0x0F;
-
-            let mut stream_data = StreamData::new(
-                Arc::clone(&packet),
-                start,
-                packet_size,
-                pid,
-                stream_type,
-                start_time,
-                timestamp,
-                continuity_counter,
-            );
-            stream_data.update_stats(packet_size, current_unix_timestamp_ms().unwrap_or(0));
-            streams.push(stream_data);
-        } else {
-            error!("ProcessPacket: Not MPEG-TS");
-            hexdump(&packet, start, packet_size);
-            read_size = 1; // Skip to the next byte
-        }
-        start += read_size;
-    }
-
-    streams
 }

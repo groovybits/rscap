@@ -1,6 +1,6 @@
 // app.js
 
-const ws = new WebSocket('ws://127.0.0.1:3001');
+const ws = new WebSocket('ws://0.0.0.0:3001');
 
 const mbpsChartCtx = document.getElementById('mbpsChart').getContext('2d');
 const iatChartCtx = document.getElementById('iatChart').getContext('2d');
