@@ -765,6 +765,9 @@ async fn rscap() {
 
             while running_capture.load(Ordering::SeqCst) {
                 while let Some(packet) = stream.next().await {
+                    if !running_capture.load(Ordering::SeqCst) {
+                        break;
+                    }
                     match packet {
                         Ok(data) => {
                             count += 1;
