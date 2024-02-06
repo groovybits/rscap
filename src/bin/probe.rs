@@ -1,7 +1,7 @@
 /*
  * rscap: probe.rs - Rust Stream Capture with pcap, output serialized stats to ZeroMQ
  *
- * Written in 2024 by Chris Kennedy (C) LTN Global
+ * Written in 2024 by Chris Kennedy (C)
  *
  * License: MIT
  *

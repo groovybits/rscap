@@ -266,7 +266,6 @@ Running VTune [scripts/vtune.sh](scripts/vtune.sh)
 - (WIP) FFmpeg libzmq protocol compatibility to allow branching off into libav easily.
 - (WIP) General network analyzer view of network around the streams we know/care about.
 - Have multiple client modes to distribute processing of the stream on the zmq endpoints.
-- Wrap [ltntstools](https://github.com/LTNGlobal-opensource/libltntstools) lib functionality into Rust through C bindings (If possible).
 - Improve NAL parsing and various aspects of MpegTS and VANC ancillary data from SMPTE2110.
 - Logging to file/sqliteDB with stats for simple basic graphing using gnuplot.
 - Use [OpenCV img_hash fingerprinting](https://docs.opencv.org/3.4/d4/d93/group__img__hash.html#ga5eeee1e27bc45caffe3b529ab42568e3) to perceptually align and compare video streams frames.

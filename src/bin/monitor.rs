@@ -6,7 +6,7 @@
  * structured packets with potentially raw MPEG-TS chunks from the rscap
  * probe and writes them to a file.
  *
- * Author: Chris Kennedy (C) 2024 LTN Global
+ * Author: Chris Kennedy (C) 2024
  *
  * License: MIT
  *
