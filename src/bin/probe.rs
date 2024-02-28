@@ -40,8 +40,14 @@ use std::{
 };
 use tokio::sync::mpsc::{self};
 use zmq::PUSH;
+
+// Protobufs
+mod stream_data_proto; // The generated module
+                       //use stream_data_proto::StreamDataProto;
+                       //
 // Include the generated paths for the Cap'n Proto schema
 include!("../stream_data_capnp.rs");
+
 // Video Processor Decoder
 use h264_reader::annexb::AnnexBReader;
 use h264_reader::nal::{pps, sei, slice, sps, Nal, RefNal, UnitType};
