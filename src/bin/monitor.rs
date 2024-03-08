@@ -240,11 +240,11 @@ async fn produce_message(
 )]
 struct Args {
     /// Sets the target port
-    #[clap(long, env = "TARGET_PORT", default_value_t = 5556)]
+    #[clap(long, env = "SOURCE_PORT", default_value_t = 5556)]
     source_port: i32,
 
     /// Sets the target IP
-    #[clap(long, env = "TARGET_IP", default_value = "127.0.0.1")]
+    #[clap(long, env = "SOURCE_IP", default_value = "127.0.0.1")]
     source_ip: String,
 
     /// Sets the packet size
