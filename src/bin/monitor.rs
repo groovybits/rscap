@@ -875,7 +875,7 @@ async fn main() {
 
                     // Send serialized data to Kafka
                     match produce_message(serialized_data, topic, brokers, kafka_timeout, kafka_key.clone()).await {
-                        Ok(_) => info!("Sent message to Kafka"),
+                        Ok(_) => debug!("Sent message to Kafka"),
                         Err(e) => error!("Error sending message to Kafka: {:?}", e),
                     }
                 }
