@@ -195,6 +195,7 @@ async fn produce_message(
     topic: String,
     brokers: Vec<String>,
     kafka_timeout: u64,
+    key: String,
 ) -> Result<(), KafkaError> {
     let kafka_operation_timeout = Duration::from_secs(kafka_timeout);
 
@@ -209,7 +210,7 @@ async fn produce_message(
             producer.send(&Record {
                 topic: &topic,
                 partition: -1,
-                key: (),
+                key: key,
                 value: data, // Pass Vec<u8> directly
             })?;
 
@@ -287,8 +288,12 @@ struct Args {
     send_to_kafka: bool,
 
     /// Kafka timeout to drop packets
-    #[clap(long, env = "KAFKA_TIMEOUT", default_value_t = 0)]
+    #[clap(long, env = "KAFKA_TIMEOUT", default_value_t = 10)]
     kafka_timeout: u64,
+
+    /// Kafka Key
+    #[clap(long, env = "KAFKA_KEY", default_value = "")]
+    kafka_key: String,
 
     /// IPC Path for ZeroMQ
     #[clap(long, env = "IPC_PATH")]
@@ -357,6 +362,7 @@ async fn main() {
     let kafka_timeout = args.kafka_timeout;
     let ipc_path = args.ipc_path;
     let show_os_stats = args.show_os_stats;
+    let kafka_key = args.kafka_key;
 
     let running = Arc::new(AtomicBool::new(true));
     let running_decoder = running.clone();
@@ -868,7 +874,7 @@ async fn main() {
                     let topic = kafka_topic.clone();
 
                     // Send serialized data to Kafka
-                    match produce_message(serialized_data, topic, brokers, kafka_timeout).await {
+                    match produce_message(serialized_data, topic, brokers, kafka_timeout, kafka_key.clone()).await {
                         Ok(_) => info!("Sent message to Kafka"),
                         Err(e) => error!("Error sending message to Kafka: {:?}", e),
                     }
