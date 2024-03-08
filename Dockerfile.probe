@@ -7,8 +7,9 @@ RUN cargo install --path .
 
 ARG SOURCE_DEVICE
 ARG TARGET_IP
+ARG TARGET_PORT
 
 FROM cgr.dev/chainguard/wolfi-base AS binary
 COPY --from=builder /usr/local/cargo/bin/monitor /usr/local/bin/monitor
-RUN apk update && apk add --no-cache --update-cache zlib libgcc libpcap
-ENTRYPOINT ["probe", "--silent", "--source-device", "$SOURCE_DEVICE", "--target-ip", "$TARGET_IP"]
+RUN apk update && apk add --no-cache --update-cache zlib libgcc libpcap libstdc++
+ENTRYPOINT ["probe", "--silent", "--source-device", "$SOURCE_DEVICE", "--target-ip", "$TARGET_IP", "--target-port", "$TARGET_PORT"]
