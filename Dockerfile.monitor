@@ -8,10 +8,10 @@ RUN cargo install --path .
 ARG KAFKA_KEY
 ARG KAFKA_TOPIC
 ARG KAFKA_BROKER
-ARG TARGET_PORT
-ARG TARGET_IP
+ARG SOURCE_PORT
+ARG SOURCE_IP
 
 FROM cgr.dev/chainguard/wolfi-base AS binary
 COPY --from=builder /usr/local/cargo/bin/monitor /usr/local/bin/monitor
 RUN apk update && apk add --no-cache --update-cache zlib libgcc libpcap libstdc++
-ENTRYPOINT ["monitor", "--silent", "--send-to-kafka", "--kafka-topic", "$KAFKA_TOPIC", "--kafka-broker", "$KAFKA_BROKER", "--kafka-key", "$KAFKA_KEY", "--target-port", "$TARGET_PORT", "--target-ip", "$TARGET_IP"]
+ENTRYPOINT ["monitor", "--silent", "--send-to-kafka", "--kafka-topic", "$KAFKA_TOPIC", "--kafka-broker", "$KAFKA_BROKER", "--kafka-key", "$KAFKA_KEY", "--source-port", "$TARGET_PORT", "--source-ip", "$TARGET_IP"]
