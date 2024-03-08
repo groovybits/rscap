@@ -20,5 +20,6 @@ ENV KAFKA_TOPIC=${KAFKA_TOPIC}
 ENV KAFKA_BROKER=${KAFKA_BROKER}
 ENV SOURCE_PORT=${SOURCE_PORT}
 ENV SOURCE_IP=${SOURCE_IP}
+ENV RUST_LOG="info"
 
-ENTRYPOINT ["monitor", "--silent", "--send-to-kafka"]
+ENTRYPOINT ["monitor", "--send-to-kafka"]
