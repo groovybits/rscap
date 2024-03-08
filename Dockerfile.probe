@@ -9,9 +9,9 @@ FROM cgr.dev/chainguard/wolfi-base AS binary
 COPY --from=builder /usr/local/cargo/bin/monitor /usr/local/bin/monitor
 RUN apk update && apk add --no-cache --update-cache zlib libgcc libpcap libstdc++
 
-ARG SOURCE_DEVICE="eth0"
-ARG TARGET_IP="127.0.0.1"
-ARG TARGET_PORT="5556"
+ARG SOURCE_DEVICE=eth0
+ARG TARGET_IP=127.0.0.1
+ARG TARGET_PORT=5556
 
 ENV SOURCE_DEVICE=${SOURCE_DEVICE}
 ENV TARGET_IP=${TARGET_IP}
