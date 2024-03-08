@@ -1,0 +1,21 @@
+FROM rust:1.75.0 as builder
+RUN apt-get update && apt-get install -y cmake capnproto libpcap-dev
+
+WORKDIR /app
+COPY . .
+RUN cargo install --path .
+
+FROM cgr.dev/chainguard/wolfi-base AS binary
+COPY --from=builder /usr/local/cargo/bin/monitor /usr/local/bin/monitor
+RUN apk update && apk add --no-cache --update-cache zlib libgcc libpcap libstdc++
+
+ARG SOURCE_DEVICE=eth0
+ARG TARGET_IP=127.0.0.1
+ARG TARGET_PORT=5556
+
+ENV SOURCE_DEVICE=${SOURCE_DEVICE}
+ENV TARGET_IP=${TARGET_IP}
+ENV TARGET_PORT=${TARGET_PORT}
+ENV RUST_LOG="info"
+
+ENTRYPOINT ["probe", "--pcap-stats"]
