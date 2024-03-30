@@ -889,6 +889,14 @@ async fn main() {
                 let mut value: serde_json::Value =
                     serde_json::from_slice(&serialized_data).expect("Failed to parse JSON");
 
+                // Update the timestamp field in the JSON value
+                if let Some(last_arrival_time) = value.get("last_arrival_time") {
+                    if let Some(last_arrival_time) = last_arrival_time.as_i64() {
+                        let kafka_timestamp = convert_to_kafka_timestamp(last_arrival_time);
+                        value["timestamp"] = serde_json::json!(kafka_timestamp);
+                    }
+                }
+
                 // Convert the last_arrival_time to an ISO 8601 formatted timestamp
                 if let Some(last_arrival_time) = value.get("last_arrival_time") {
                     if let Some(last_arrival_time) = last_arrival_time.as_u64() {
@@ -963,14 +971,6 @@ async fn main() {
                     *bitrate_avg = serde_json::json!(
                         (bitrate_avg.as_f64().unwrap_or(0.0) / 1_000.0).round() / 1000.0
                     );
-                }
-
-                // Update the timestamp field in the JSON value
-                if let Some(last_arrival_time) = value.get("last_arrival_time") {
-                    if let Some(last_arrival_time) = last_arrival_time.as_i64() {
-                        let kafka_timestamp = convert_to_kafka_timestamp(last_arrival_time);
-                        value["timestamp"] = serde_json::json!(kafka_timestamp);
-                    }
                 }
 
                 // Convert the modified JSON value back to bytes
