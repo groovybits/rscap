@@ -247,15 +247,17 @@ impl StreamData {
         let run_time_ms = arrival_time.checked_sub(self.start_time).unwrap_or(0);
 
         // Store bitrate values for each packet with 1 second interval
-        let bitrate = if run_time_ms >= 1000 {
-            if elapsed_time_ms >= 1000 {
-                self.last_sample_time = current_unix_timestamp_ms().unwrap_or(0);
-                let elapsed_time_sec = elapsed_time_ms as f64 / 1000.0;
-                let new_bitrate = (self.total_bits as f64 / elapsed_time_sec) as u32;
-                new_bitrate
-            } else {
-                self.bitrate
-            }
+        let bitrate = if run_time_ms >= 1000 && elapsed_time_ms >= 1000 {
+            self.last_sample_time = current_unix_timestamp_ms().unwrap_or(0);
+            let run_time_sec = run_time_ms as f64 / 1000.0;
+            let new_bitrate = (self.total_bits as f64 / run_time_sec) as u32;
+
+            // Update bitrate avg using a moving average
+            self.bitrate_avg = ((self.bitrate_avg as u64 * self.count as u64) + new_bitrate as u64)
+                as u32
+                / (self.count + 1);
+
+            new_bitrate
         } else {
             self.bitrate
         };
@@ -274,10 +276,6 @@ impl StreamData {
             self.bitrate_min = bitrate;
         }
 
-        // Update bitrate avg using a moving average
-        self.bitrate_avg = ((self.bitrate_avg as u64 * self.count as u64) + bitrate as u64) as u32
-            / (self.count + 1);
-
         // IAT calculation
         let iat = if self.count > 0 {
             arrival_time
@@ -289,17 +287,17 @@ impl StreamData {
         self.iat = iat;
 
         // Update IAT max and min after a certain time interval (e.g., 10 ms)
-        if run_time_ms >= 10 {
+        if run_time_ms >= 1000 {
             if iat > self.iat_max {
                 self.iat_max = iat;
             }
             if iat < self.iat_min || self.iat_min == 0 {
                 self.iat_min = iat;
             }
+            // Update IAT avg using a moving average
+            self.iat_avg =
+                ((self.iat_avg as u64 * self.count as u64) + iat) / (self.count as u64 + 1);
         }
-
-        // Update IAT avg using a moving average
-        self.iat_avg = ((self.iat_avg as u64 * self.count as u64) + iat) / (self.count as u64 + 1);
 
         // Total bits
         self.total_bits += bits; // Accumulate total bits
