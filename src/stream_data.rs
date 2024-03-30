@@ -573,10 +573,10 @@ pub fn process_packet(
             let mut stream_data = Arc::clone(stream_data_arc);
             Arc::make_mut(&mut stream_data).update_stats(packet.len(), arrival_time);
             Arc::make_mut(&mut stream_data).increment_count(1);
-            if stream_data.pid != 0x1FFF && is_mpegts {
-                Arc::make_mut(&mut stream_data)
-                    .set_continuity_counter(stream_data_packet.continuity_counter);
-            }
+            //if stream_data.pid != 0x1FFF && is_mpegts {
+            Arc::make_mut(&mut stream_data)
+                .set_continuity_counter(stream_data_packet.continuity_counter);
+            //}
             let uptime = arrival_time - stream_data.start_time;
 
             // print out each field of structure
@@ -601,7 +601,7 @@ pub fn process_packet(
             stream_data_packet.count = stream_data.count;
             stream_data_packet.pmt_pid = pmt_pid;
             stream_data_packet.program_number = stream_data.program_number;
-            stream_data_packet.stream_type_number = stream_data.stream_type_number.clone();
+            stream_data_packet.stream_type_number = stream_data.stream_type_number;
 
             // write the stream_data back to the pid_map with modified values
             pid_map.insert(pid, stream_data);
