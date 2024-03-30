@@ -240,72 +240,64 @@ impl StreamData {
         self.continuity_counter = continuity_counter;
     }
     pub fn update_stats(&mut self, packet_size: usize, arrival_time: u64) {
-        let bits = packet_size as u64 * 8; // Convert bytes to bits
+        let bits = packet_size as u64 * 8; // Convert packet size from bytes to bits
+        self.total_bits += bits;
 
-        // Elapsed time in milliseconds
-        let elapsed_time_ms = arrival_time.checked_sub(self.last_sample_time).unwrap_or(0);
-        let run_time_ms = arrival_time.checked_sub(self.start_time).unwrap_or(0);
+        // Calculate elapsed time since the last sample and the start of the stream
+        let elapsed_time_ms = arrival_time
+            .checked_sub(self.last_sample_time)
+            .unwrap_or_default();
+        let run_time_ms = arrival_time
+            .checked_sub(self.start_time)
+            .unwrap_or_default();
 
-        // Store bitrate values for each packet with 1 second interval
-        let bitrate = if run_time_ms >= 1000 && elapsed_time_ms >= 1000 {
-            self.last_sample_time = current_unix_timestamp_ms().unwrap_or(0);
+        if elapsed_time_ms >= 1000 {
+            // Calculate new bitrate for the interval
             let run_time_sec = run_time_ms as f64 / 1000.0;
             let new_bitrate = (self.total_bits as f64 / run_time_sec) as u32;
 
-            // Update bitrate avg using a moving average
-            self.bitrate_avg = ((self.bitrate_avg as u64 * self.count as u64) + new_bitrate as u64)
-                as u32
-                / (self.count + 1);
+            // Update moving average
+            self.bitrate_avg = (((self.bitrate_avg as u64 * self.count as u64)
+                + new_bitrate as u64)
+                / (self.count as u64 + 1)) as u32;
 
-            new_bitrate
-        } else {
-            self.bitrate
-        };
-        self.bitrate = bitrate;
-
-        // Update bitrate max and min
-        if self.count > 0 {
-            if bitrate > self.bitrate_max {
-                self.bitrate_max = bitrate;
-            }
-            if bitrate < self.bitrate_min || self.bitrate_min == 0 {
-                self.bitrate_min = bitrate;
-            }
-        } else {
-            self.bitrate_max = bitrate;
-            self.bitrate_min = bitrate;
+            self.bitrate = new_bitrate;
+            // Reset total bits after updating to start counting for the next interval
+            self.total_bits = 0;
+            self.last_sample_time = arrival_time;
         }
 
-        // IAT calculation
+        // Update max and min bitrate values
+        if self.bitrate > self.bitrate_max {
+            self.bitrate_max = self.bitrate;
+        }
+        if self.bitrate < self.bitrate_min || self.bitrate_min == 0 {
+            self.bitrate_min = self.bitrate;
+        }
+
+        // Calculate inter-arrival time (IAT) and update statistics
         let iat = if self.count > 0 {
             arrival_time
                 .checked_sub(self.last_arrival_time)
-                .unwrap_or(0)
+                .unwrap_or_default()
         } else {
             0
         };
         self.iat = iat;
 
-        // Update IAT max and min after a certain time interval (e.g., 10 ms)
-        if run_time_ms >= 1000 {
-            if iat > self.iat_max {
-                self.iat_max = iat;
-            }
-            if iat < self.iat_min || self.iat_min == 0 {
-                self.iat_min = iat;
-            }
-            // Update IAT avg using a moving average
-            self.iat_avg =
-                ((self.iat_avg as u64 * self.count as u64) + iat) / (self.count as u64 + 1);
+        if iat > self.iat_max {
+            self.iat_max = iat;
+        }
+        if iat < self.iat_min || self.iat_min == 0 {
+            self.iat_min = iat;
         }
 
-        // Total bits
-        self.total_bits += bits; // Accumulate total bits
+        // Update IAT average
+        self.iat_avg =
+            (((self.iat_avg as u64 * self.count as u64) + iat) / (self.count as u64 + 1)) as u64;
 
-        // Update last arrival time
+        // Increment counters and update last arrival time
         self.last_arrival_time = arrival_time;
-
-        // Increment packet count
         self.count += 1;
     }
 }
