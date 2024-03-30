@@ -200,7 +200,7 @@ async fn delivery_report(
     result: Result<(i32, i64), (rdkafka::error::KafkaError, rdkafka::message::OwnedMessage)>,
 ) {
     match result {
-        Ok((partition, offset)) => println!(
+        Ok((partition, offset)) => debug!(
             "Message delivered to partition {} at offset {}",
             partition, offset
         ),
