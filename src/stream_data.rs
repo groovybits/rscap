@@ -575,6 +575,7 @@ pub fn process_packet(
             stream_data_packet.start_time = stream_data.start_time;
             stream_data_packet.error_count = stream_data.error_count;
             stream_data_packet.last_arrival_time = stream_data.last_arrival_time;
+            stream_data_packet.last_sample_time = stream_data.last_sample_time;
             stream_data_packet.total_bits = stream_data.total_bits;
             stream_data_packet.count = stream_data.count;
 
