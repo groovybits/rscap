@@ -147,6 +147,7 @@ impl StreamData {
         pid: u16,
         stream_type: String,
         stream_type_number: u8,
+        program_number: u16,
         start_time: u64,
         timestamp: u64,
         continuity_counter: u8,
@@ -155,7 +156,7 @@ impl StreamData {
         StreamData {
             pid,
             pmt_pid: 0xFFFF,
-            program_number: 0,
+            program_number,
             stream_type,
             continuity_counter,
             timestamp,
@@ -621,6 +622,7 @@ pub fn process_packet(
                     stream_data_packet.pid,
                     stream_data_packet.stream_type.clone(),
                     stream_data_packet.stream_type_number.clone(),
+                    stream_data_packet.program_number,
                     stream_data_packet.start_time,
                     stream_data_packet.timestamp,
                     stream_data_packet.continuity_counter,
@@ -716,6 +718,7 @@ pub fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8]) {
                         stream_pid,
                         stream_type.to_string(),
                         pmt_entry.stream_type,
+                        pmt_entry.program_number,
                         timestamp,
                         timestamp,
                         0,
@@ -773,6 +776,20 @@ pub fn determine_stream_type_number(pid: u16) -> u8 {
     pid_map
         .get(&pid)
         .map(|stream_data| stream_data.stream_type_number.clone())
+        .unwrap_or_else(|| 0)
+}
+
+pub fn determine_stream_program_number(pid: u16) -> u16 {
+    let pid_map = PID_MAP.lock().unwrap();
+
+    // check if pid already is mapped, if so return the stream type already stored
+    if let Some(stream_data) = pid_map.get(&pid) {
+        return stream_data.program_number.clone();
+    }
+
+    pid_map
+        .get(&pid)
+        .map(|stream_data| stream_data.program_number.clone())
         .unwrap_or_else(|| 0)
 }
 
@@ -889,6 +906,7 @@ pub fn process_smpte2110_packet(
                     pid,
                     stream_type,
                     payload_type,
+                    0,
                     start_time,
                     timestamp as u64,
                     0,
@@ -954,6 +972,7 @@ pub fn process_mpegts_packet(
 
             let stream_type = determine_stream_type(pid);
             let stream_type_number = determine_stream_type_number(pid);
+            let stream_program_number = determine_stream_program_number(pid);
             let timestamp = ((chunk[4] as u64) << 25)
                 | ((chunk[5] as u64) << 17)
                 | ((chunk[6] as u64) << 9)
@@ -968,6 +987,7 @@ pub fn process_mpegts_packet(
                 pid,
                 stream_type,
                 stream_type_number,
+                stream_program_number,
                 start_time,
                 timestamp,
                 continuity_counter,

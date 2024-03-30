@@ -13,7 +13,7 @@
  */
 
 use async_zmq;
-use chrono::TimeZone;
+//use chrono::TimeZone;
 use clap::Parser;
 use log::{debug, error, info};
 use rdkafka::admin::{AdminClient, AdminOptions, NewTopic};
@@ -895,7 +895,7 @@ async fn main() {
         // Deserialize the received message into StreamData
         match capnp_to_stream_data(&header_msg) {
             Ok(stream_data) => {
-                let mut serialized_data = serde_json::to_vec(&stream_data)
+                let /*mut*/ serialized_data = serde_json::to_vec(&stream_data)
                     .expect("Failed to serialize StreamData to JSON");
 
                 let kafka_timestamp = stream_data.last_arrival_time as i64;
