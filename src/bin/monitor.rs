@@ -1005,12 +1005,13 @@ async fn main() {
                 serialized_data = serde_json::to_vec(&value).expect("Failed to serialize JSON");
                 */
 
-                // Update stream groupings
                 let pid = stream_data.pid;
                 {
                     let mut stream_groupings = STREAM_GROUPINGS.write().unwrap();
                     if let Some(grouping) = stream_groupings.get_mut(&pid) {
-                        grouping.stream_data_list.push(stream_data.clone());
+                        // Update the existing StreamData instance in the grouping
+                        let last_stream_data = grouping.stream_data_list.last_mut().unwrap();
+                        *last_stream_data = stream_data.clone();
                     } else {
                         let new_grouping = StreamGrouping {
                             stream_data_list: vec![stream_data.clone()],
