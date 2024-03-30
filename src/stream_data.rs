@@ -243,31 +243,36 @@ impl StreamData {
         let bits = packet_size as u64 * 8; // Convert packet size from bytes to bits
         self.total_bits += bits;
 
-        // Calculate elapsed time since the last sample and the start of the stream
-        let elapsed_time_ms = arrival_time
-            .checked_sub(self.last_sample_time)
-            .unwrap_or_default();
+        // Calculate elapsed time since the start of streaming and since the last sample
         let run_time_ms = arrival_time
             .checked_sub(self.start_time)
             .unwrap_or_default();
+        let elapsed_time_ms = arrival_time
+            .checked_sub(self.last_sample_time)
+            .unwrap_or_default();
 
-        if elapsed_time_ms >= 1000 {
-            // Calculate new bitrate for the interval
-            let run_time_sec = run_time_ms as f64 / 1000.0;
-            let new_bitrate = (self.total_bits as f64 / run_time_sec) as u32;
+        // Ensure we start calculations after a certain run time is reached, if applicable
+        if run_time_ms >= 1000 {
+            if elapsed_time_ms >= 1000 {
+                // Calculate bitrate for the past second
+                let bitrate = (self.total_bits * 1000) / elapsed_time_ms;
 
-            // Update moving average
-            self.bitrate_avg = (((self.bitrate_avg as u64 * self.count as u64)
-                + new_bitrate as u64)
-                / (self.count as u64 + 1)) as u32;
+                // Update average bitrate
+                self.bitrate_avg = if self.count > 0 {
+                    (((self.bitrate_avg as u64 * self.count as u64) + bitrate)
+                        / (self.count as u64 + 1)) as u32
+                } else {
+                    bitrate as u32
+                };
 
-            self.bitrate = new_bitrate;
-            // Reset total bits after updating to start counting for the next interval
-            self.total_bits = 0;
-            self.last_sample_time = arrival_time;
+                // Update the bitrate and reset total bits for the next calculation period
+                self.bitrate = bitrate as u32;
+                self.total_bits = 0;
+                self.last_sample_time = arrival_time;
+            }
         }
 
-        // Update max and min bitrate values
+        // Update max and min bitrate
         if self.bitrate > self.bitrate_max {
             self.bitrate_max = self.bitrate;
         }
@@ -275,30 +280,34 @@ impl StreamData {
             self.bitrate_min = self.bitrate;
         }
 
-        // Calculate inter-arrival time (IAT) and update statistics
-        let iat = if self.count > 0 {
-            arrival_time
+        // Calculate and update Inter-Arrival Time (IAT)
+        let iat = if self.count > 0 && run_time_ms >= 1000 {
+            let iat_value = arrival_time
                 .checked_sub(self.last_arrival_time)
-                .unwrap_or_default()
+                .unwrap_or_default();
+            if iat_value > self.iat_max {
+                self.iat_max = iat_value;
+            }
+            if self.iat_min == 0 || (iat_value < self.iat_min && iat_value != 0) {
+                self.iat_min = iat_value;
+            }
+            iat_value
         } else {
             0
         };
-        self.iat = iat;
 
-        if iat > self.iat_max {
-            self.iat_max = iat;
+        if self.count > 0 {
+            self.iat_avg = (((self.iat_avg as u64 * self.count as u64) + iat)
+                / (self.count as u64 + 1)) as u64;
+        } else {
+            self.iat_avg = iat;
         }
-        if iat < self.iat_min || self.iat_min == 0 {
-            self.iat_min = iat;
+
+        // Update last arrival time and packet count, conditional on run time
+        if run_time_ms >= 1000 {
+            self.last_arrival_time = arrival_time;
+            self.count += 1;
         }
-
-        // Update IAT average
-        self.iat_avg =
-            (((self.iat_avg as u64 * self.count as u64) + iat) / (self.count as u64 + 1)) as u64;
-
-        // Increment counters and update last arrival time
-        self.last_arrival_time = arrival_time;
-        self.count += 1;
     }
 }
 
