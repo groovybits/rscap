@@ -15,12 +15,12 @@
 use async_zmq;
 use chrono::TimeZone;
 use clap::Parser;
-use kafka::error::Error as KafkaError;
-use kafka::producer::{Producer, Record, RequiredAcks};
 use log::{debug, error, info};
+use rdkafka::config::ClientConfig;
+use rdkafka::error::{KafkaError, KafkaResult, RDKafkaErrorCode};
+use rdkafka::producer::{FutureProducer, FutureRecord};
 use std::fs::File;
 use std::io::Write;
-use std::time::Duration as StdDuration;
 use std::time::Instant;
 use tokio;
 use tokio::time::{timeout, Duration};
@@ -194,44 +194,47 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
 }
 
 async fn produce_message(
-    data: Vec<u8>, // Changed to Vec<u8> to allow cloning
+    data: Vec<u8>,
     topic: String,
     brokers: Vec<String>,
     kafka_timeout: u64,
     key: String,
-) -> Result<(), KafkaError> {
+    stream_data_timestamp: i64,
+) -> KafkaResult<()> {
     let kafka_operation_timeout = Duration::from_secs(kafka_timeout);
+    let brokers_list = brokers.join(",");
 
-    match timeout(
-        kafka_operation_timeout,
-        tokio::task::spawn_blocking(move || {
-            let mut producer = Producer::from_hosts(brokers)
-                .with_ack_timeout(StdDuration::from_secs(1))
-                .with_required_acks(RequiredAcks::One)
-                .create()?;
+    let producer_result = ClientConfig::new()
+        .set("bootstrap.servers", &brokers_list)
+        .create::<FutureProducer>();
 
-            producer.send(&Record {
-                topic: &topic,
-                partition: -1,
-                key,
-                value: data, // Pass Vec<u8> directly
-            })?;
+    let producer = match producer_result {
+        Ok(p) => p,
+        Err(e) => match e {
+            KafkaError::ClientCreation(rd_err) => return Err(KafkaError::ClientCreation(rd_err)),
+            _ => return Err(e),
+        },
+    };
 
-            Ok::<(), KafkaError>(())
-        }),
-    )
+    match timeout(kafka_operation_timeout, async move {
+        let record = FutureRecord::to(&topic)
+            .payload(&data)
+            .key(&key)
+            .timestamp(stream_data_timestamp);
+
+        producer.send(record, kafka_operation_timeout).await
+    })
     .await
     {
-        Ok(Ok(Ok(()))) => Ok(()),
-        Ok(Ok(Err(e))) => Err(e),
-        Ok(Err(e)) => Err(KafkaError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("JoinError: {}", e),
-        ))),
-        Err(_) => Err(KafkaError::Io(std::io::Error::new(
-            std::io::ErrorKind::TimedOut,
-            "Kafka operation timed out",
-        ))),
+        Ok(Ok(delivery)) => {
+            println!(
+                "Message sent successfully to partition {:?} with offset {:?}",
+                delivery.0, delivery.1
+            );
+            Ok(())
+        }
+        Ok(Err((e, _))) => Err(e),
+        Err(_) => Err(KafkaError::MessageProduction(RDKafkaErrorCode::QueueFull)),
     }
 }
 
@@ -883,7 +886,7 @@ async fn main() {
                 // remove existing "timestamp" field from value JSON
                 value.as_object_mut().unwrap().remove("timestamp");
 
-                let kafka_timestamp = stream_data.last_arrival_time;
+                let kafka_timestamp = stream_data.last_arrival_time as i64;
                 value["timestamp"] = serde_json::json!(kafka_timestamp);
 
                 // Convert the start_time to an ISO 8601 formatted timestamp
@@ -965,6 +968,7 @@ async fn main() {
                         brokers,
                         kafka_timeout,
                         kafka_key.clone(),
+                        kafka_timestamp,
                     )
                     .await
                     {
