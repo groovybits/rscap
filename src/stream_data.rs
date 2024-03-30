@@ -212,6 +212,9 @@ impl StreamData {
     pub fn update_stream_type(&mut self, stream_type: String) {
         self.stream_type = stream_type;
     }
+    pub fn update_stream_type_num(&mut self, stream_type_number: u8) {
+        self.stream_type_number = stream_type_number;
+    }
     pub fn increment_error_count(&mut self, error_count: u32) {
         self.error_count += error_count;
     }
@@ -295,13 +298,15 @@ impl StreamData {
                     .unwrap_or_default();
 
                 // Update IAT max with proper initialization handling
-                if self.iat_max == 0 || iat > self.iat_max {
-                    self.iat_max = iat;
-                }
+                if run_time_ms >= 1000 {
+                    if iat > self.iat_max {
+                        self.iat_max = iat;
+                    }
 
-                // Adjustments specific to IAT max startup handling
-                if self.iat_min == 0 || (iat < self.iat_min && iat != 0) {
-                    self.iat_min = iat;
+                    // Adjustments specific to IAT max startup handling
+                    if self.iat_min == 0 || (iat < self.iat_min && iat != 0) {
+                        self.iat_min = iat;
+                    }
                 }
 
                 self.iat_avg = (((self.iat_avg as u64 * self.count as u64) + iat)
@@ -603,7 +608,7 @@ pub fn process_packet(
                     0,
                     stream_data_packet.pid,
                     stream_data_packet.stream_type.clone(),
-                    0,
+                    stream_data_packet.stream_type_number.clone(),
                     stream_data_packet.start_time,
                     stream_data_packet.timestamp,
                     stream_data_packet.continuity_counter,
@@ -717,6 +722,9 @@ pub fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8]) {
 
                     // update the stream type
                     Arc::make_mut(&mut stream_data).update_stream_type(stream_type.to_string());
+
+                    // update the stream type number
+                    Arc::make_mut(&mut stream_data).update_stream_type_num(pmt_entry.stream_type);
 
                     // print out each field of structure
                     debug!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);

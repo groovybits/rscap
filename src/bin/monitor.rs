@@ -213,7 +213,7 @@ async fn produce_message(
             producer.send(&Record {
                 topic: &topic,
                 partition: -1,
-                key: key,
+                key,
                 value: data, // Pass Vec<u8> directly
             })?;
 
@@ -347,6 +347,15 @@ struct Args {
     /// Kafka sending interval in milliseconds
     #[clap(long, env = "KAFKA_INTERVAL", default_value_t = 10)]
     kafka_interval: u64,
+}
+
+fn convert_to_kafka_timestamp(unix_timestamp_ms: i64) -> i64 {
+    if unix_timestamp_ms < 0 {
+        // Handle negative or invalid timestamp
+        0
+    } else {
+        unix_timestamp_ms
+    }
 }
 
 #[tokio::main]
@@ -934,26 +943,34 @@ async fn main() {
                 // Normalize the bitrate fields to megabits with 4 decimal places precision
                 if let Some(bitrate) = value.get_mut("bitrate") {
                     *bitrate = serde_json::json!(
-                        (bitrate.as_f64().unwrap_or(0.0) / 1_000_000.0).round() / 1000.0
+                        (bitrate.as_f64().unwrap_or(0.0) / 1_000.0).round() / 1000.0
                     );
                 }
 
                 if let Some(bitrate_max) = value.get_mut("bitrate_max") {
                     *bitrate_max = serde_json::json!(
-                        (bitrate_max.as_f64().unwrap_or(0.0) / 1_000_000.0).round() / 1000.0
+                        (bitrate_max.as_f64().unwrap_or(0.0) / 1_000.0).round() / 1000.0
                     );
                 }
 
                 if let Some(bitrate_min) = value.get_mut("bitrate_min") {
                     *bitrate_min = serde_json::json!(
-                        (bitrate_min.as_f64().unwrap_or(0.0) / 1_000_000.0).round() / 1000.0
+                        (bitrate_min.as_f64().unwrap_or(0.0) / 1_000.0).round() / 1000.0
                     );
                 }
 
                 if let Some(bitrate_avg) = value.get_mut("bitrate_avg") {
                     *bitrate_avg = serde_json::json!(
-                        (bitrate_avg.as_f64().unwrap_or(0.0) / 1_000_000.0).round() / 1000.0
+                        (bitrate_avg.as_f64().unwrap_or(0.0) / 1_000.0).round() / 1000.0
                     );
+                }
+
+                // Update the timestamp field in the JSON value
+                if let Some(last_arrival_time) = value.get("last_arrival_time") {
+                    if let Some(last_arrival_time) = last_arrival_time.as_i64() {
+                        let kafka_timestamp = convert_to_kafka_timestamp(last_arrival_time);
+                        value["timestamp"] = serde_json::json!(kafka_timestamp);
+                    }
                 }
 
                 // Convert the modified JSON value back to bytes
