@@ -74,6 +74,7 @@ pub struct StreamData {
     pub iat_avg: u64,
     pub error_count: u32,
     pub last_arrival_time: u64,
+    pub last_sample_time: u64,
     pub start_time: u64, // field for start time
     pub total_bits: u64, // field for total bits
     pub count: u32,      // field for count
@@ -112,6 +113,7 @@ impl Clone for StreamData {
             iat_avg: self.iat_avg,
             error_count: self.error_count,
             last_arrival_time: self.last_arrival_time,
+            last_sample_time: self.last_sample_time,
             start_time: self.start_time,
             total_bits: self.total_bits,
             count: self.count,
@@ -161,6 +163,7 @@ impl StreamData {
             iat_avg: 0,
             error_count: 0,
             last_arrival_time,
+            last_sample_time: 0,
             start_time,    // Initialize start time
             total_bits: 0, // Initialize total bits
             count: 0,      // Initialize count
@@ -240,13 +243,17 @@ impl StreamData {
         let bits = packet_size as u64 * 8; // Convert bytes to bits
 
         // Elapsed time in milliseconds
-        let elapsed_time_ms = arrival_time.checked_sub(self.start_time).unwrap_or(0);
+        let elapsed_time_ms = arrival_time.checked_sub(self.last_sample_time).unwrap_or(0);
+        let run_time_ms = arrival_time.checked_sub(self.start_time).unwrap_or(0);
 
         // Store bitrate values for each packet
-        let bitrate = if elapsed_time_ms >= 10 && elapsed_time_ms > 0 {
-            ((bits * 1000) / elapsed_time_ms) as u32
+        let bitrate = if elapsed_time_ms >= 10 {
+            let new_bitrate = ((self.total_bits * 1000) / run_time_ms) as u32;
+            self.last_sample_time = current_unix_timestamp_ms().unwrap_or(0);
+            new_bitrate
         } else {
-            self.bitrate // Use the previous bitrate value instead of setting it to 0
+            self.last_sample_time = self.start_time;
+            0
         };
         self.bitrate = bitrate;
 
@@ -278,7 +285,7 @@ impl StreamData {
         self.iat = iat;
 
         // Update IAT max and min after a certain time interval (e.g., 10 ms)
-        if elapsed_time_ms >= 10 {
+        if run_time_ms >= 10 {
             if iat > self.iat_max {
                 self.iat_max = iat;
             }

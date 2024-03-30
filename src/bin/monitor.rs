@@ -171,6 +171,7 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         iat_avg: reader.get_iat_avg(),
         error_count: reader.get_error_count(),
         last_arrival_time: reader.get_last_arrival_time(),
+        last_sample_time: reader.get_last_sample_time(),
         start_time: reader.get_start_time(),
         total_bits: reader.get_total_bits(),
         count: reader.get_count(),
@@ -911,6 +912,18 @@ async fn main() {
                             .unwrap()
                             .to_rfc3339();
                         value["last_arrival_time"] = serde_json::Value::String(last_arrival_time);
+                    }
+                }
+
+                // Convert the start_time to an ISO 8601 formatted timestamp
+                if let Some(last_sample_time) = value.get("last_sample_time") {
+                    if let Some(last_sample_time) = last_sample_time.as_u64() {
+                        let last_sample_time = chrono::Local
+                            .timestamp_millis_opt(last_sample_time as i64)
+                            .single()
+                            .unwrap()
+                            .to_rfc3339();
+                        value["last_sample_time"] = serde_json::Value::String(last_sample_time);
                     }
                 }
 
