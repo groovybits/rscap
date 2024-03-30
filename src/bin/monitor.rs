@@ -934,22 +934,25 @@ async fn main() {
                 if let Some(bitrate) = value.get_mut("bitrate") {
                     *bitrate = serde_json::json!((bitrate.as_u64().unwrap_or(1) as f64
                         / 1_000_000.0)
-                        .round() as u32);
+                        .round() as f64);
                 }
+
                 if let Some(bitrate_max) = value.get_mut("bitrate_max") {
                     *bitrate_max = serde_json::json!((bitrate_max.as_u64().unwrap_or(1) as f64
                         / 1_000_000.0)
-                        .round() as u32);
+                        .round() as f64);
                 }
+
                 if let Some(bitrate_min) = value.get_mut("bitrate_min") {
                     *bitrate_min = serde_json::json!((bitrate_min.as_u64().unwrap_or(1) as f64
                         / 1_000_000.0)
-                        .round() as u32);
+                        .round() as f64);
                 }
+
                 if let Some(bitrate_avg) = value.get_mut("bitrate_avg") {
                     *bitrate_avg = serde_json::json!((bitrate_avg.as_u64().unwrap_or(1) as f64
                         / 1_000_000.0)
-                        .round() as u32);
+                        .round() as f64);
                 }
 
                 // Convert the modified JSON value back to bytes
