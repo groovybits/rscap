@@ -16,14 +16,15 @@ use async_zmq;
 use chrono::TimeZone;
 use clap::Parser;
 use log::{debug, error, info};
+use rdkafka::admin::{AdminClient, AdminOptions, NewTopic};
+use rdkafka::client::DefaultClientContext;
 use rdkafka::config::ClientConfig;
-use rdkafka::error::{KafkaError, KafkaResult, RDKafkaErrorCode};
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use std::fs::File;
 use std::io::Write;
 use std::time::Instant;
 use tokio;
-use tokio::time::{timeout, Duration};
+use tokio::time::Duration;
 use zmq::PULL;
 // Include the generated paths for the Cap'n Proto schema
 use capnp;
@@ -194,48 +195,55 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
     Ok(stream_data)
 }
 
+// Callback function to check the status of the sent messages
+async fn delivery_report(
+    result: Result<(i32, i64), (rdkafka::error::KafkaError, rdkafka::message::OwnedMessage)>,
+) {
+    match result {
+        Ok((partition, offset)) => println!(
+            "Message delivered to partition {} at offset {}",
+            partition, offset
+        ),
+        Err((err, _)) => println!("Message delivery failed: {:?}", err),
+    }
+}
+
 async fn produce_message(
     data: Vec<u8>,
-    topic: String,
-    brokers: Vec<String>,
+    kafka_server: String,
+    kafka_topic: String,
     kafka_timeout: u64,
     key: String,
     stream_data_timestamp: i64,
-) -> KafkaResult<()> {
-    let kafka_operation_timeout = Duration::from_secs(kafka_timeout);
-    let brokers_list = brokers.join(",");
+    producer: FutureProducer,
+    admin_client: &AdminClient<DefaultClientContext>,
+) {
+    debug!("Service {} sending message", kafka_topic);
+    let kafka_topic = kafka_topic.replace(":", "_").replace(".", "_");
 
-    let producer_result = ClientConfig::new()
-        .set("bootstrap.servers", &brokers_list)
-        .create::<FutureProducer>();
+    // Metadata fetching is problematic, directly attempt to ensure the topic exists.
+    // This code block tries to create the topic if it doesn't already exist, ignoring errors that indicate existence.
+    let new_topic = NewTopic::new(&kafka_topic, 1, rdkafka::admin::TopicReplication::Fixed(1));
+    let _ = admin_client
+        .create_topics(&[new_topic], &AdminOptions::new())
+        .await;
 
-    let producer = match producer_result {
-        Ok(p) => p,
-        Err(e) => match e {
-            KafkaError::ClientCreation(rd_err) => return Err(KafkaError::ClientCreation(rd_err)),
-            _ => return Err(e),
-        },
-    };
+    debug!(
+        "Forwarding message for topic {} to Kafka server {:?}",
+        kafka_topic, kafka_server
+    );
 
-    match timeout(kafka_operation_timeout, async move {
-        let record = FutureRecord::to(&topic)
-            .payload(&data)
-            .key(&key)
-            .timestamp(stream_data_timestamp);
+    let record = FutureRecord::to(&kafka_topic)
+        .payload(&data)
+        .key(&key)
+        .timestamp(stream_data_timestamp);
 
-        producer.send(record, kafka_operation_timeout).await
-    })
-    .await
-    {
-        Ok(Ok(delivery)) => {
-            println!(
-                "Message sent successfully to partition {:?} with offset {:?}",
-                delivery.0, delivery.1
-            );
-            Ok(())
-        }
-        Ok(Err((e, _))) => Err(e),
-        Err(_) => Err(KafkaError::MessageProduction(RDKafkaErrorCode::QueueFull)),
+    let delivery_future = producer
+        .send(record, Duration::from_secs(kafka_timeout))
+        .await;
+    match delivery_future {
+        Ok(delivery_result) => delivery_report(Ok(delivery_result)).await,
+        Err(e) => println!("Failed to send message: {:?}", e),
     }
 }
 
@@ -852,6 +860,17 @@ async fn main() {
     let mut dot_last_sent_stats = Instant::now();
     let mut dot_last_sent_ts = Instant::now();
     let mut last_kafka_send_time = Instant::now();
+
+    let mut kafka_conf = ClientConfig::new();
+    kafka_conf.set("bootstrap.servers", &kafka_broker);
+    kafka_conf.set("client.id", "rscap");
+
+    let admin_client: AdminClient<DefaultClientContext> =
+        kafka_conf.create().expect("Failed to create admin client");
+    let producer: FutureProducer = kafka_conf
+        .create()
+        .expect("Failed to create Kafka producer");
+
     loop {
         // check for packet count
         if packet_count > 0 && counter >= packet_count {
@@ -959,23 +978,21 @@ async fn main() {
                     && last_kafka_send_time.elapsed().as_millis() >= args.kafka_interval as u128
                 {
                     last_kafka_send_time = Instant::now();
-                    let brokers = vec![kafka_broker.clone()];
-                    let topic = kafka_topic.clone();
 
                     // Send serialized data to Kafka
-                    match produce_message(
+                    let future = produce_message(
                         serialized_data,
-                        topic,
-                        brokers,
+                        kafka_broker.clone(),
+                        kafka_topic.clone(),
                         kafka_timeout,
                         kafka_key.clone(),
                         kafka_timestamp,
-                    )
-                    .await
-                    {
-                        Ok(_) => debug!("Sent message to Kafka"),
-                        Err(e) => error!("Error sending message to Kafka: {:?}", e),
-                    }
+                        producer.clone(),
+                        &admin_client,
+                    );
+
+                    // Wait for the future to complete
+                    future.await;
                 }
 
                 // print the structure of the packet
