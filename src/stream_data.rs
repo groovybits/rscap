@@ -243,7 +243,7 @@ impl StreamData {
         let elapsed_time_ms = arrival_time.checked_sub(self.start_time).unwrap_or(0);
 
         // Store bitrate values for each packet
-        let bitrate = if elapsed_time_ms >= 10 {
+        let bitrate = if elapsed_time_ms >= 10 && elapsed_time_ms > 0 {
             ((bits * 1000) / elapsed_time_ms) as u32
         } else {
             self.bitrate // Use the previous bitrate value instead of setting it to 0
