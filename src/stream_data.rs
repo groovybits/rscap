@@ -285,7 +285,7 @@ impl StreamData {
             }
 
             // Calculate and update Inter-Arrival Time (IAT) and its statistics
-            if self.count > 0 {
+            if self.count > 0 && run_time_ms > 1000 {
                 let iat = arrival_time
                     .checked_sub(self.last_arrival_time)
                     .unwrap_or_default();
