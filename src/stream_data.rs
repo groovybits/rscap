@@ -30,6 +30,7 @@ pub struct PatEntry {
 pub struct PmtEntry {
     pub stream_pid: u16,
     pub stream_type: u8, // Stream type (e.g., 0x02 for MPEG video)
+    pub program_number: u16,
 }
 
 pub struct Pmt {
@@ -75,13 +76,14 @@ pub struct StreamData {
     pub error_count: u32,
     pub last_arrival_time: u64,
     pub last_sample_time: u64,
-    pub start_time: u64, // field for start time
-    pub total_bits: u64, // field for total bits
-    pub count: u32,      // field for count
+    pub start_time: u64,        // field for start time
+    pub total_bits: u64,        // field for total bits
+    pub total_bits_sample: u64, // field for total bits
+    pub count: u32,             // field for count
     #[serde(skip)]
     pub packet: Arc<Vec<u8>>, // The actual MPEG-TS packet data
-    pub packet_start: usize, // Offset into the data
-    pub packet_len: usize, // Offset into the data
+    pub packet_start: usize,    // Offset into the data
+    pub packet_len: usize,      // Offset into the data
     // SMPTE 2110 fields
     pub rtp_timestamp: u32,
     pub rtp_payload_type: u8,
@@ -117,6 +119,7 @@ impl Clone for StreamData {
             last_sample_time: self.last_sample_time,
             start_time: self.start_time,
             total_bits: self.total_bits,
+            total_bits_sample: self.total_bits_sample,
             count: self.count,
             packet: Arc::new(Vec::new()), // Initialize as empty with Arc
             packet_start: 0,
@@ -144,6 +147,7 @@ impl StreamData {
         pid: u16,
         stream_type: String,
         stream_type_number: u8,
+        program_number: u16,
         start_time: u64,
         timestamp: u64,
         continuity_counter: u8,
@@ -152,7 +156,7 @@ impl StreamData {
         StreamData {
             pid,
             pmt_pid: 0xFFFF,
-            program_number: 0,
+            program_number,
             stream_type,
             continuity_counter,
             timestamp,
@@ -167,9 +171,10 @@ impl StreamData {
             error_count: 0,
             last_arrival_time,
             last_sample_time: start_time,
-            start_time,    // Initialize start time
-            total_bits: 0, // Initialize total bits
-            count: 0,      // Initialize count
+            start_time,           // Initialize start time
+            total_bits: 0,        // Initialize total bits
+            total_bits_sample: 0, // Initialize total bits
+            count: 0,             // Initialize count
             packet: packet,
             packet_start: packet_start,
             packet_len: packet_len,
@@ -212,9 +217,6 @@ impl StreamData {
     pub fn update_stream_type(&mut self, stream_type: String) {
         self.stream_type = stream_type;
     }
-    pub fn update_stream_type_num(&mut self, stream_type_number: u8) {
-        self.stream_type_number = stream_type_number;
-    }
     pub fn increment_error_count(&mut self, error_count: u32) {
         self.error_count += error_count;
     }
@@ -249,6 +251,7 @@ impl StreamData {
     pub fn update_stats(&mut self, packet_size: usize, arrival_time: u64) {
         let bits = packet_size as u64 * 8; // Convert packet size from bytes to bits
         self.total_bits += bits;
+        self.total_bits_sample += bits;
 
         // Calculate elapsed time since the start of streaming and since the last sample
         let run_time_ms = arrival_time
@@ -262,23 +265,21 @@ impl StreamData {
         if run_time_ms >= 1000 {
             if elapsed_time_since_last_sample >= 1000 {
                 // Calculate the bitrate for the past second
-                let bitrate = if self.total_bits > 0 {
-                    (self.total_bits * 1000) / elapsed_time_since_last_sample
+                let bitrate = if self.total_bits_sample > 0 {
+                    (self.total_bits_sample * 1000) / elapsed_time_since_last_sample
                 } else {
                     0
                 };
 
                 // Update the moving average for the bitrate
                 if self.count > 0 {
-                    self.bitrate_avg = (((self.bitrate_avg as u64 * self.count as u64)
-                        + bitrate as u64)
-                        / (self.count as u64 + 1)) as u32;
+                    self.bitrate_avg = ((self.total_bits * 1000) / run_time_ms) as u32;
                 } else {
                     self.bitrate_avg = bitrate as u32;
                 }
 
                 // Reset counters for the next interval
-                self.total_bits = 0;
+                self.total_bits_sample = 0;
                 self.last_sample_time = arrival_time;
                 self.bitrate = bitrate as u32;
             }
@@ -299,7 +300,7 @@ impl StreamData {
                 self.iat = iat;
 
                 // Update IAT max with proper initialization handling
-                if run_time_ms >= 10000 {
+                if run_time_ms >= 60000 && self.count > 1 {
                     if iat > self.iat_max {
                         self.iat_max = iat;
                     }
@@ -534,10 +535,11 @@ pub fn parse_pmt(packet: &[u8]) -> Pmt {
         entries.push(PmtEntry {
             stream_pid,
             stream_type,
+            program_number,
         });
         debug!(
-            "ParsePMT: Stream PID: {}, Stream Type: {}",
-            stream_pid, stream_type
+            "ParsePMT: ProgramNumber: {}, Stream PID: {}, Stream Type: {}",
+            program_number, stream_pid, stream_type
         );
     }
 
@@ -571,10 +573,10 @@ pub fn process_packet(
             let mut stream_data = Arc::clone(stream_data_arc);
             Arc::make_mut(&mut stream_data).update_stats(packet.len(), arrival_time);
             Arc::make_mut(&mut stream_data).increment_count(1);
-            if stream_data.pid != 0x1FFF && is_mpegts {
-                Arc::make_mut(&mut stream_data)
-                    .set_continuity_counter(stream_data_packet.continuity_counter);
-            }
+            //if stream_data.pid != 0x1FFF && is_mpegts {
+            Arc::make_mut(&mut stream_data)
+                .set_continuity_counter(stream_data_packet.continuity_counter);
+            //}
             let uptime = arrival_time - stream_data.start_time;
 
             // print out each field of structure
@@ -594,9 +596,11 @@ pub fn process_packet(
             stream_data_packet.error_count = stream_data.error_count;
             stream_data_packet.last_arrival_time = stream_data.last_arrival_time;
             stream_data_packet.last_sample_time = stream_data.last_sample_time;
+            stream_data_packet.total_bits_sample = stream_data.total_bits_sample;
             stream_data_packet.total_bits = stream_data.total_bits;
             stream_data_packet.count = stream_data.count;
             stream_data_packet.pmt_pid = pmt_pid;
+            stream_data_packet.program_number = stream_data.program_number;
             stream_data_packet.stream_type_number = stream_data.stream_type_number;
 
             // write the stream_data back to the pid_map with modified values
@@ -615,6 +619,7 @@ pub fn process_packet(
                     stream_data_packet.pid,
                     stream_data_packet.stream_type.clone(),
                     stream_data_packet.stream_type_number.clone(),
+                    stream_data_packet.program_number,
                     stream_data_packet.start_time,
                     stream_data_packet.timestamp,
                     stream_data_packet.continuity_counter,
@@ -661,6 +666,7 @@ pub fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8]) {
                 );
 
                 let stream_pid = pmt_entry.stream_pid;
+                let stream_type_num = pmt_entry.stream_type;
                 let stream_type = match pmt_entry.stream_type {
                     0x00 => "Reserved",
                     0x01 => "ISO/IEC 11172 MPEG-1 Video",
@@ -709,7 +715,8 @@ pub fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8]) {
                         0,
                         stream_pid,
                         stream_type.to_string(),
-                        pmt_entry.stream_type,
+                        stream_type_num,
+                        program_number,
                         timestamp,
                         timestamp,
                         0,
@@ -728,9 +735,6 @@ pub fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8]) {
 
                     // update the stream type
                     Arc::make_mut(&mut stream_data).update_stream_type(stream_type.to_string());
-
-                    // update the stream type number
-                    Arc::make_mut(&mut stream_data).update_stream_type_num(pmt_entry.stream_type);
 
                     // print out each field of structure
                     debug!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
@@ -770,6 +774,20 @@ pub fn determine_stream_type_number(pid: u16) -> u8 {
     pid_map
         .get(&pid)
         .map(|stream_data| stream_data.stream_type_number.clone())
+        .unwrap_or_else(|| 0)
+}
+
+pub fn determine_stream_program_number(pid: u16) -> u16 {
+    let pid_map = PID_MAP.lock().unwrap();
+
+    // check if pid already is mapped, if so return the stream type already stored
+    if let Some(stream_data) = pid_map.get(&pid) {
+        return stream_data.program_number.clone();
+    }
+
+    pid_map
+        .get(&pid)
+        .map(|stream_data| stream_data.program_number.clone())
         .unwrap_or_else(|| 0)
 }
 
@@ -886,6 +904,7 @@ pub fn process_smpte2110_packet(
                     pid,
                     stream_type,
                     payload_type,
+                    0,
                     start_time,
                     timestamp as u64,
                     0,
@@ -951,6 +970,7 @@ pub fn process_mpegts_packet(
 
             let stream_type = determine_stream_type(pid);
             let stream_type_number = determine_stream_type_number(pid);
+            let stream_program_number = determine_stream_program_number(pid);
             let timestamp = ((chunk[4] as u64) << 25)
                 | ((chunk[5] as u64) << 17)
                 | ((chunk[6] as u64) << 9)
@@ -965,6 +985,7 @@ pub fn process_mpegts_packet(
                 pid,
                 stream_type,
                 stream_type_number,
+                stream_program_number,
                 start_time,
                 timestamp,
                 continuity_counter,
