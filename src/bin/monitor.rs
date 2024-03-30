@@ -45,6 +45,7 @@ use mpeg2ts_reader::demultiplex;
 use rscap::current_unix_timestamp_ms;
 use rscap::mpegts;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
 use tokio::sync::mpsc::{self};
@@ -61,11 +62,9 @@ struct StreamGrouping {
 
 #[derive(Serialize)]
 struct CombinedStreamData {
-    pid: u16,
     stream_type: String,
     program_number: u16,
     pmt_pid: u16,
-    pmt_status: String,
     bitrate_avg: u32,
     iat_avg: u64,
     packet_count: u32,
@@ -74,7 +73,7 @@ struct CombinedStreamData {
 
 #[derive(Serialize)]
 struct CombinedSchema {
-    streams: Vec<CombinedStreamData>,
+    streams: HashMap<u16, CombinedStreamData>,
     bitrate_avg_global: u32,
     iat_avg_global: u64,
 }
@@ -1030,7 +1029,7 @@ async fn main() {
 
                     let stream_groupings = STREAM_GROUPINGS.read().unwrap();
 
-                    let mut combined_streams = Vec::new();
+                    let mut combined_streams: HashMap<u16, CombinedStreamData> = HashMap::new();
                     let mut bitrate_sum_global = 0;
                     let mut iat_sum_global = 0;
 
@@ -1055,25 +1054,17 @@ async fn main() {
                             let bitrate_avg = bitrate_sum / stream_count as u32;
                             let iat_avg = iat_sum / stream_count as u64;
 
-                            let pmt_status = if grouping.stream_data_list[0].pmt_pid != 0xFFFF {
-                                "Found".to_string()
-                            } else {
-                                "Not Found".to_string()
-                            };
-
                             let combined_stream_data = CombinedStreamData {
-                                pid: *pid,
                                 stream_type: grouping.stream_data_list[0].stream_type.clone(),
                                 program_number: grouping.stream_data_list[0].program_number,
                                 pmt_pid: grouping.stream_data_list[0].pmt_pid,
-                                pmt_status,
                                 bitrate_avg,
                                 iat_avg,
                                 packet_count: stream_count as u32,
                                 stream_data: grouping.stream_data_list[0].clone(),
                             };
 
-                            combined_streams.push(combined_stream_data);
+                            combined_streams.insert(*pid, combined_stream_data);
 
                             bitrate_sum_global += bitrate_avg;
                             iat_sum_global += iat_avg;
