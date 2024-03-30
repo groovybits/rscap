@@ -163,6 +163,7 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
 
         // Correct way to convert a String to ::capnp::text::Reader<'_>
         stream_data_msg.set_stream_type(stream_data.stream_type.as_str().into());
+        stream_data_msg.set_stream_type_number(stream_data.stream_type_number);
 
         stream_data_msg.set_continuity_counter(stream_data.continuity_counter);
         stream_data_msg.set_timestamp(stream_data.timestamp);

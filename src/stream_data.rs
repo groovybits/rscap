@@ -732,9 +732,6 @@ pub fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8]) {
                     // update the stream type
                     Arc::make_mut(&mut stream_data).update_stream_type(stream_type.to_string());
 
-                    // update the stream type number
-                    Arc::make_mut(&mut stream_data).update_stream_type_num(pmt_entry.stream_type);
-
                     // print out each field of structure
                     debug!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
 
