@@ -349,15 +349,6 @@ struct Args {
     kafka_interval: u64,
 }
 
-fn convert_to_kafka_timestamp(unix_timestamp_ms: i64) -> i64 {
-    if unix_timestamp_ms < 0 {
-        // Handle negative or invalid timestamp
-        0
-    } else {
-        unix_timestamp_ms
-    }
-}
-
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().ok(); // read .env file
@@ -889,28 +880,11 @@ async fn main() {
                 let mut value: serde_json::Value =
                     serde_json::from_slice(&serialized_data).expect("Failed to parse JSON");
 
-                // Update the timestamp field in the JSON value
-                if let Some(last_arrival_time) = value.get("last_arrival_time") {
-                    if let Some(last_arrival_time) = last_arrival_time.as_i64() {
-                        let kafka_timestamp = convert_to_kafka_timestamp(last_arrival_time);
-                        value["timestamp"] = serde_json::json!(kafka_timestamp);
-                    }
-                }
-
-                // Convert the last_arrival_time to an ISO 8601 formatted timestamp
-                if let Some(last_arrival_time) = value.get("last_arrival_time") {
-                    if let Some(last_arrival_time) = last_arrival_time.as_u64() {
-                        let timestamp = chrono::Local
-                            .timestamp_millis_opt(last_arrival_time as i64)
-                            .single()
-                            .unwrap()
-                            .to_rfc3339();
-                        value["ts"] = serde_json::Value::String(timestamp);
-                    }
-                }
-
                 // remove existing "timestamp" field from value JSON
                 value.as_object_mut().unwrap().remove("timestamp");
+
+                let kafka_timestamp = stream_data.last_arrival_time;
+                value["timestamp"] = serde_json::json!(kafka_timestamp);
 
                 // Convert the start_time to an ISO 8601 formatted timestamp
                 if let Some(start_time) = value.get("start_time") {

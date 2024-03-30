@@ -296,17 +296,23 @@ impl StreamData {
                 let iat = arrival_time
                     .checked_sub(self.last_arrival_time)
                     .unwrap_or_default();
+                self.iat = iat;
 
                 // Update IAT max with proper initialization handling
-                if run_time_ms >= 1000 {
+                if run_time_ms >= 10000 {
                     if iat > self.iat_max {
                         self.iat_max = iat;
                     }
 
                     // Adjustments specific to IAT max startup handling
-                    if self.iat_min == 0 || (iat < self.iat_min && iat != 0) {
+                    if iat < self.iat_min {
                         self.iat_min = iat;
                     }
+                } else {
+                    if (self.iat_min > iat) || (self.count == 1) {
+                        self.iat_min = iat;
+                    }
+                    self.iat_max = 0;
                 }
 
                 self.iat_avg = (((self.iat_avg as u64 * self.count as u64) + iat)
