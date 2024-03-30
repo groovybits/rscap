@@ -1486,8 +1486,8 @@ async fn rscap() {
             // release the packet Arc so it can be reused
             if !send_raw_stream && stream_data.packet_len > 0 {
                 stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
-                stream_data.packet_len = stream_data.packet_len;
-                stream_data.packet_start = stream_data.packet_start;
+                stream_data.packet_len = 0;
+                stream_data.packet_start = 0;
                 if pid == 0x1FFF && is_mpegts {
                     continue;
                 }
