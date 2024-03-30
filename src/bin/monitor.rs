@@ -243,7 +243,7 @@ async fn produce_message(
     kafka_topic: String,
     kafka_timeout: u64,
     key: String,
-    stream_data_timestamp: i64,
+    _stream_data_timestamp: i64,
     producer: FutureProducer,
     admin_client: &AdminClient<DefaultClientContext>,
 ) {
@@ -1025,7 +1025,7 @@ async fn main() {
                     let mut bitrate_sum_global = 0;
                     let mut iat_sum_global = 0;
 
-                    for (pid, grouping) in stream_groupings.iter() {
+                    for (_pid, grouping) in stream_groupings.iter() {
                         let stream_count = grouping.stream_data_list.len();
 
                         if stream_count > 0 {

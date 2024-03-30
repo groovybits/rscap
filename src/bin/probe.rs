@@ -27,6 +27,7 @@ use rscap::stream_data::{
     update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
 };
 use rscap::{current_unix_timestamp_ms, hexdump};
+use std::time::SystemTime;
 use std::{
     error::Error as StdError,
     fmt,
@@ -56,10 +57,16 @@ use tokio::time::Duration;
 pub struct BoxCodec;
 
 impl PacketCodec for BoxCodec {
-    type Item = Box<[u8]>;
+    type Item = (Box<[u8]>, std::time::SystemTime); // Adjusted to return SystemTime
 
     fn decode(&mut self, packet: pcap::Packet) -> Self::Item {
-        packet.data.into()
+        // Convert pcap timestamp to SystemTime
+        let timestamp = std::time::UNIX_EPOCH
+            + std::time::Duration::new(
+                packet.header.ts.tv_sec as u64,
+                packet.header.ts.tv_usec as u32 * 1000,
+            );
+        (packet.data.into(), timestamp)
     }
 }
 
@@ -690,7 +697,7 @@ async fn rscap() {
     // Initialize logging
     let _ = env_logger::try_init();
 
-    let (ptx, mut prx) = mpsc::channel::<Arc<Vec<u8>>>(pcap_channel_size);
+    let (ptx, mut prx) = mpsc::channel::<(Arc<Vec<u8>>, SystemTime)>(pcap_channel_size);
 
     let running = Arc::new(AtomicBool::new(true));
     let running_capture = running.clone();
@@ -724,9 +731,10 @@ async fn rscap() {
 
                             // Convert to Arc<Vec<u8>> to maintain consistency with pcap logic
                             let packet_data = Arc::new(data.to_vec());
+                            let timestamp = SystemTime::now();
 
                             // Send packet data to processing channel
-                            ptx.send(packet_data).await.unwrap();
+                            ptx.send((packet_data, timestamp)).await.unwrap();
 
                             // Here you can implement additional processing such as parsing the packet,
                             // updating statistics, handling specific packet types, etc.
@@ -775,10 +783,10 @@ async fn rscap() {
                         break;
                     }
                     match packet {
-                        Ok(data) => {
+                        Ok((data, timestamp)) => {
                             count += 1;
                             let packet_data = Arc::new(data.to_vec());
-                            ptx.send(packet_data).await.unwrap();
+                            ptx.send((packet_data, timestamp)).await.unwrap();
                             if !running_capture.load(Ordering::SeqCst) {
                                 break;
                             }
@@ -1349,7 +1357,7 @@ async fn rscap() {
     };
 
     let mut dot_last_sent_ts = Instant::now();
-    while let Some(packet) = prx.recv().await {
+    while let Some((packet, timestamp)) = prx.recv().await {
         if packet_count > 0 && packets_captured > packet_count {
             println!(
                 "\nPacket count limit reached {}, signaling termination...",
@@ -1378,7 +1386,7 @@ async fn rscap() {
         }
 
         let chunks = if is_mpegts {
-            process_mpegts_packet(payload_offset, packet, packet_size, start_time)
+            process_mpegts_packet(payload_offset, packet, packet_size, start_time, timestamp)
         } else {
             process_smpte2110_packet(
                 payload_offset,
@@ -1386,6 +1394,7 @@ async fn rscap() {
                 packet_size,
                 start_time,
                 debug_smpte2110,
+                timestamp,
             )
         };
 
@@ -1422,7 +1431,7 @@ async fn rscap() {
                         if pid == pmt_info.pid {
                             debug!("ProcessPacket: PMT packet detected with PID {}", pid);
                             // Update PID_MAP with new stream types
-                            update_pid_map(&packet_chunk, &pmt_info.packet);
+                            update_pid_map(&packet_chunk, &pmt_info.packet, timestamp);
                             // Identify the video PID (if not already identified)
                             if let Some((new_pid, new_codec)) = identify_video_pid(&packet_chunk) {
                                 if video_pid.map_or(true, |vp| vp != new_pid) {
