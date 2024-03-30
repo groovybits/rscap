@@ -163,7 +163,7 @@ impl StreamData {
             iat_avg: 0,
             error_count: 0,
             last_arrival_time,
-            last_sample_time: 0,
+            last_sample_time: start_time,
             start_time,    // Initialize start time
             total_bits: 0, // Initialize total bits
             count: 0,      // Initialize count
@@ -247,13 +247,16 @@ impl StreamData {
         let run_time_ms = arrival_time.checked_sub(self.start_time).unwrap_or(0);
 
         // Store bitrate values for each packet
-        let bitrate = if elapsed_time_ms >= 10 && run_time_ms >= 10 {
-            let new_bitrate = ((self.total_bits * 1000) / run_time_ms) as u32;
-            self.last_sample_time = current_unix_timestamp_ms().unwrap_or(0);
-            new_bitrate
+        let bitrate = if elapsed_time_ms >= 10 {
+            if run_time_ms >= 10 {
+                let new_bitrate = ((self.total_bits) / run_time_ms) as u32;
+                self.last_sample_time = current_unix_timestamp_ms().unwrap_or(0);
+                new_bitrate
+            } else {
+                self.bitrate
+            }
         } else {
-            self.last_sample_time = self.start_time;
-            0
+            self.bitrate
         };
         self.bitrate = bitrate;
 
