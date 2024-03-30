@@ -875,9 +875,6 @@ async fn main() {
         // Deserialize the received message into StreamData
         match capnp_to_stream_data(&header_msg) {
             Ok(stream_data) => {
-                // Serialize the StreamData object to JSON
-                info!("StreamData before Kafka grooming: {:?}", stream_data);
-
                 let mut serialized_data = serde_json::to_vec(&stream_data)
                     .expect("Failed to serialize StreamData to JSON");
 
@@ -955,12 +952,6 @@ async fn main() {
 
                 // Convert the modified JSON value back to bytes
                 serialized_data = serde_json::to_vec(&value).expect("Failed to serialize JSON");
-
-                // print out serialized data
-                info!(
-                    "Serialized data after grooming before kafka: {:?}",
-                    serialized_data
-                );
 
                 // Check if it's time to send data to Kafka based on the interval
                 if send_to_kafka
