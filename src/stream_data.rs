@@ -217,9 +217,6 @@ impl StreamData {
     pub fn update_stream_type(&mut self, stream_type: String) {
         self.stream_type = stream_type;
     }
-    pub fn update_stream_type_num(&mut self, stream_type_number: u8) {
-        self.stream_type_number = stream_type_number;
-    }
     pub fn increment_error_count(&mut self, error_count: u32) {
         self.error_count += error_count;
     }
@@ -603,8 +600,8 @@ pub fn process_packet(
             stream_data_packet.total_bits = stream_data.total_bits;
             stream_data_packet.count = stream_data.count;
             stream_data_packet.pmt_pid = pmt_pid;
-            stream_data_packet.program_number = stream_data.program_number;
-            stream_data_packet.stream_type_number = stream_data.stream_type_number.clone();
+            //stream_data_packet.program_number = stream_data.program_number;
+            //stream_data_packet.stream_type_number = stream_data.stream_type_number.clone();
 
             // write the stream_data back to the pid_map with modified values
             pid_map.insert(pid, stream_data);
