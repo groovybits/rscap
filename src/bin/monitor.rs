@@ -887,9 +887,12 @@ async fn main() {
                             .single()
                             .unwrap()
                             .to_rfc3339();
-                        value["timestamp"] = serde_json::Value::String(timestamp);
+                        value["ts"] = serde_json::Value::String(timestamp);
                     }
                 }
+
+                // remove existing "timestamp" field from value JSON
+                value.as_object_mut().unwrap().remove("timestamp");
 
                 // Convert the start_time to an ISO 8601 formatted timestamp
                 if let Some(start_time) = value.get("start_time") {
