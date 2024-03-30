@@ -1083,6 +1083,10 @@ async fn main() {
                     let serialized_data = serde_json::to_vec(&combined_schema)
                         .expect("Failed to serialize CombinedSchema to JSON");
 
+                    // print out serialized_data nicely
+                    let serialized_data_str = String::from_utf8_lossy(&serialized_data);
+                    info!("MONITOR::PACKET:SERIALIZED_DATA: {}", serialized_data_str);
+
                     let kafka_timestamp = current_unix_timestamp_ms().unwrap_or(0) as i64;
 
                     // Send serialized data to Kafka
