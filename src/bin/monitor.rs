@@ -187,6 +187,7 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         packet: Arc::new(Vec::new()),
         packet_start: 0,
         packet_len: 0,
+        stream_type_number: reader.get_stream_type_number(),
     };
 
     Ok(stream_data)
@@ -932,27 +933,27 @@ async fn main() {
 
                 // Normalize the bitrate fields to megabits with 4 decimal places precision
                 if let Some(bitrate) = value.get_mut("bitrate") {
-                    *bitrate = serde_json::json!((bitrate.as_u64().unwrap_or(1) as f64
-                        / 1_000_000.0)
-                        .round() as f64);
+                    *bitrate = serde_json::json!(
+                        (bitrate.as_f64().unwrap_or(0.0) / 1_000_000.0).round() / 1000.0
+                    );
                 }
 
                 if let Some(bitrate_max) = value.get_mut("bitrate_max") {
-                    *bitrate_max = serde_json::json!((bitrate_max.as_u64().unwrap_or(1) as f64
-                        / 1_000_000.0)
-                        .round() as f64);
+                    *bitrate_max = serde_json::json!(
+                        (bitrate_max.as_f64().unwrap_or(0.0) / 1_000_000.0).round() / 1000.0
+                    );
                 }
 
                 if let Some(bitrate_min) = value.get_mut("bitrate_min") {
-                    *bitrate_min = serde_json::json!((bitrate_min.as_u64().unwrap_or(1) as f64
-                        / 1_000_000.0)
-                        .round() as f64);
+                    *bitrate_min = serde_json::json!(
+                        (bitrate_min.as_f64().unwrap_or(0.0) / 1_000_000.0).round() / 1000.0
+                    );
                 }
 
                 if let Some(bitrate_avg) = value.get_mut("bitrate_avg") {
-                    *bitrate_avg = serde_json::json!((bitrate_avg.as_u64().unwrap_or(1) as f64
-                        / 1_000_000.0)
-                        .round() as f64);
+                    *bitrate_avg = serde_json::json!(
+                        (bitrate_avg.as_f64().unwrap_or(0.0) / 1_000_000.0).round() / 1000.0
+                    );
                 }
 
                 // Convert the modified JSON value back to bytes

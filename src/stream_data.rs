@@ -61,7 +61,7 @@ pub struct StreamData {
     pub pid: u16,
     pub pmt_pid: u16,
     pub program_number: u16,
-    pub stream_type: String, // "video", "audio", "text"
+    pub stream_type: String, // Official stream type name in human readable form
     pub continuity_counter: u8,
     pub timestamp: u64,
     pub bitrate: u32,
@@ -92,6 +92,7 @@ pub struct StreamData {
     pub rtp_field_id: u8,
     pub rtp_line_continuation: u8,
     pub rtp_extended_sequence_number: u16,
+    pub stream_type_number: u8,
 }
 
 impl Clone for StreamData {
@@ -129,6 +130,7 @@ impl Clone for StreamData {
             rtp_field_id: self.rtp_field_id,
             rtp_line_continuation: self.rtp_line_continuation,
             rtp_extended_sequence_number: self.rtp_extended_sequence_number,
+            stream_type_number: self.stream_type_number,
         }
     }
 }
@@ -141,6 +143,7 @@ impl StreamData {
         packet_len: usize,
         pid: u16,
         stream_type: String,
+        stream_type_number: u8,
         start_time: u64,
         timestamp: u64,
         continuity_counter: u8,
@@ -180,6 +183,7 @@ impl StreamData {
             rtp_field_id: 0,
             rtp_line_continuation: 0,
             rtp_extended_sequence_number: 0,
+            stream_type_number,
         }
     }
     // set RTP fields
@@ -581,6 +585,8 @@ pub fn process_packet(
             stream_data_packet.last_sample_time = stream_data.last_sample_time;
             stream_data_packet.total_bits = stream_data.total_bits;
             stream_data_packet.count = stream_data.count;
+            stream_data_packet.pmt_pid = pmt_pid;
+            stream_data_packet.stream_type_number = stream_data.stream_type_number;
 
             // write the stream_data back to the pid_map with modified values
             pid_map.insert(pid, stream_data);
@@ -597,6 +603,7 @@ pub fn process_packet(
                     0,
                     stream_data_packet.pid,
                     stream_data_packet.stream_type.clone(),
+                    0,
                     stream_data_packet.start_time,
                     stream_data_packet.timestamp,
                     stream_data_packet.continuity_counter,
@@ -691,6 +698,7 @@ pub fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8]) {
                         0,
                         stream_pid,
                         stream_type.to_string(),
+                        pmt_entry.stream_type,
                         timestamp,
                         timestamp,
                         0,
@@ -735,6 +743,20 @@ pub fn determine_stream_type(pid: u16) -> String {
         .get(&pid)
         .map(|stream_data| stream_data.stream_type.clone())
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+pub fn determine_stream_type_number(pid: u16) -> u8 {
+    let pid_map = PID_MAP.lock().unwrap();
+
+    // check if pid already is mapped, if so return the stream type already stored
+    if let Some(stream_data) = pid_map.get(&pid) {
+        return stream_data.stream_type_number.clone();
+    }
+
+    pid_map
+        .get(&pid)
+        .map(|stream_data| stream_data.stream_type_number.clone())
+        .unwrap_or_else(|| 0)
 }
 
 // Helper function to identify the video PID from the stored PAT packet and return the PID and codec
@@ -849,6 +871,7 @@ pub fn process_smpte2110_packet(
                     rtp_payload_length,
                     pid,
                     stream_type,
+                    payload_type,
                     start_time,
                     timestamp as u64,
                     0,
@@ -912,7 +935,8 @@ pub fn process_mpegts_packet(
 
             let pid = extract_pid(chunk);
 
-            let stream_type = determine_stream_type(pid); // Implement this function based on PAT/PMT parsing
+            let stream_type = determine_stream_type(pid);
+            let stream_type_number = determine_stream_type_number(pid);
             let timestamp = ((chunk[4] as u64) << 25)
                 | ((chunk[5] as u64) << 17)
                 | ((chunk[6] as u64) << 9)
@@ -926,6 +950,7 @@ pub fn process_mpegts_packet(
                 packet_size,
                 pid,
                 stream_type,
+                stream_type_number,
                 start_time,
                 timestamp,
                 continuity_counter,

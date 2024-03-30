@@ -30,4 +30,5 @@ struct StreamDataCapnp {
     rtpFieldId @26 :UInt8;
     rtpLineContinuation @27 :UInt8;
     rtpExtendedSequenceNumber @28 :UInt16;
+    streamTypeNumber @29 :UInt8;
 }
