@@ -1046,6 +1046,8 @@ async fn main() {
                             let mut bitrate_sum = 0;
                             let mut iat_sum = 0;
 
+                            let latest_stream_data = grouping.stream_data_list.last().unwrap();
+
                             for stream_data in &grouping.stream_data_list {
                                 bitrate_sum += stream_data.bitrate_avg;
                                 iat_sum += stream_data.iat_avg;
@@ -1055,13 +1057,13 @@ async fn main() {
                             let iat_avg = iat_sum / stream_count as u64;
 
                             let combined_stream_data = CombinedStreamData {
-                                stream_type: grouping.stream_data_list[0].stream_type.clone(),
-                                program_number: grouping.stream_data_list[0].program_number,
-                                pmt_pid: grouping.stream_data_list[0].pmt_pid,
+                                stream_type: latest_stream_data.stream_type.clone(),
+                                program_number: latest_stream_data.program_number,
+                                pmt_pid: latest_stream_data.pmt_pid,
                                 bitrate_avg,
                                 iat_avg,
                                 packet_count: stream_count as u32,
-                                stream_data: grouping.stream_data_list[0].clone(),
+                                stream_data: latest_stream_data.clone(),
                             };
 
                             combined_streams.insert(*pid, combined_stream_data);
