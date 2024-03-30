@@ -555,8 +555,10 @@ pub fn process_packet(
 ) {
     let packet: &[u8] = &stream_data_packet.packet[stream_data_packet.packet_start
         ..stream_data_packet.packet_start + stream_data_packet.packet_len];
-    tr101290_p1_check(packet, errors);
-    tr101290_p2_check(packet, errors);
+    if is_mpegts {
+        tr101290_p1_check(packet, errors);
+        tr101290_p2_check(packet, errors);
+    }
 
     let pid = stream_data_packet.pid;
     let arrival_time = current_unix_timestamp_ms().unwrap_or(0);
@@ -564,7 +566,7 @@ pub fn process_packet(
     let mut pid_map = PID_MAP.lock().unwrap();
 
     // TODO: high debug level output, may need a flag specific to this dump
-    //info!("PID Map Contents: {:#?}", pid_map);
+    debug!("PID Map Contents: {:#?}", pid_map);
 
     // Check if the PID map already has an entry for this PID
     match pid_map.get_mut(&pid) {

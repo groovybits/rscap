@@ -35,15 +35,44 @@ use rscap::{get_stats_as_json, StatsType};
 use serde_json::json;
 use std::sync::Arc;
 // Video Processor Decoder
+use ahash::AHashMap;
 use h264_reader::annexb::AnnexBReader;
 use h264_reader::nal::{pps, sei, slice, sps, Nal, RefNal, UnitType};
 use h264_reader::push::NalInterest;
 use h264_reader::Context;
+use lazy_static::lazy_static;
 use mpeg2ts_reader::demultiplex;
+use rscap::current_unix_timestamp_ms;
 use rscap::mpegts;
+use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use tokio::sync::mpsc::{self};
 use tokio::task;
+
+lazy_static! {
+    static ref STREAM_GROUPINGS: Mutex<AHashMap<u16, StreamGrouping>> = Mutex::new(AHashMap::new());
+}
+
+struct StreamGrouping {
+    stream_data_list: Vec<StreamData>,
+}
+
+#[derive(Serialize)]
+struct CombinedStreamData {
+    program_number: u16,
+    pmt_pid: u16,
+    pmt_status: String,
+    bitrate_avg: u32,
+    iat_avg: u64,
+}
+
+#[derive(Serialize)]
+struct CombinedSchema {
+    streams: Vec<CombinedStreamData>,
+    bitrate_avg_global: u32,
+    iat_avg_global: u64,
+}
 
 fn is_cea_608(itu_t_t35_data: &sei::user_data_registered_itu_t_t35::ItuTT35) -> bool {
     // In this example, we check if the ITU-T T.35 data matches the known format for CEA-608.
@@ -893,13 +922,13 @@ async fn main() {
         // Deserialize the received message into StreamData
         match capnp_to_stream_data(&header_msg) {
             Ok(stream_data) => {
-                let /*mut*/ serialized_data = serde_json::to_vec(&stream_data)
+                /*let /*mut*/ serialized_data = serde_json::to_vec(&stream_data)
                     .expect("Failed to serialize StreamData to JSON");
 
                 let kafka_timestamp = stream_data.last_arrival_time as i64;
 
                 // Parse the JSON string into a Value
-                /*let mut value: serde_json::Value =
+                let mut value: serde_json::Value =
                     serde_json::from_slice(&serialized_data).expect("Failed to parse JSON");
 
                 // remove existing "timestamp" field from value JSON
@@ -972,11 +1001,89 @@ async fn main() {
                 serialized_data = serde_json::to_vec(&value).expect("Failed to serialize JSON");
                 */
 
+                // Update stream groupings
+                let pid = stream_data.pid;
+                let mut stream_groupings = STREAM_GROUPINGS.lock().unwrap();
+                if let Some(grouping) = stream_groupings.get_mut(&pid) {
+                    grouping.stream_data_list.push(stream_data.clone());
+                } else {
+                    let new_grouping = StreamGrouping {
+                        stream_data_list: vec![stream_data.clone()],
+                    };
+                    stream_groupings.insert(pid, new_grouping);
+                }
+
                 // Check if it's time to send data to Kafka based on the interval
                 if send_to_kafka
                     && last_kafka_send_time.elapsed().as_millis() >= args.kafka_interval as u128
                 {
                     last_kafka_send_time = Instant::now();
+
+                    let stream_groupings = STREAM_GROUPINGS.lock().unwrap();
+
+                    let mut combined_streams = Vec::new();
+                    let mut bitrate_sum_global = 0;
+                    let mut iat_sum_global = 0;
+
+                    for (pid, grouping) in stream_groupings.iter() {
+                        let stream_count = grouping.stream_data_list.len();
+
+                        if stream_count > 0 {
+                            let mut bitrate_sum = 0;
+                            let mut iat_sum = 0;
+
+                            for stream_data in &grouping.stream_data_list {
+                                bitrate_sum += stream_data.bitrate_avg;
+                                iat_sum += stream_data.iat_avg;
+                            }
+
+                            let bitrate_avg = bitrate_sum / stream_count as u32;
+                            let iat_avg = iat_sum / stream_count as u64;
+
+                            let pmt_status = if grouping.stream_data_list[0].pmt_pid != 0xFFFF {
+                                "Found".to_string()
+                            } else {
+                                "Not Found".to_string()
+                            };
+
+                            let combined_stream_data = CombinedStreamData {
+                                program_number: grouping.stream_data_list[0].program_number,
+                                pmt_pid: grouping.stream_data_list[0].pmt_pid,
+                                pmt_status,
+                                bitrate_avg,
+                                iat_avg,
+                            };
+
+                            combined_streams.push(combined_stream_data);
+
+                            bitrate_sum_global += bitrate_avg;
+                            iat_sum_global += iat_avg;
+                        }
+                    }
+
+                    let stream_count_global = combined_streams.len();
+                    let bitrate_avg_global = if stream_count_global > 0 {
+                        bitrate_sum_global / stream_count_global as u32
+                    } else {
+                        0
+                    };
+
+                    let iat_avg_global = if stream_count_global > 0 {
+                        iat_sum_global / stream_count_global as u64
+                    } else {
+                        0
+                    };
+
+                    let combined_schema = CombinedSchema {
+                        streams: combined_streams,
+                        bitrate_avg_global,
+                        iat_avg_global,
+                    };
+
+                    let serialized_data = serde_json::to_vec(&combined_schema)
+                        .expect("Failed to serialize CombinedSchema to JSON");
+
+                    let kafka_timestamp = current_unix_timestamp_ms().unwrap_or(0) as i64;
 
                     // Send serialized data to Kafka
                     let future = produce_message(
