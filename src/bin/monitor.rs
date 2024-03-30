@@ -174,6 +174,7 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         last_sample_time: reader.get_last_sample_time(),
         start_time: reader.get_start_time(),
         total_bits: reader.get_total_bits(),
+        total_bits_sample: reader.get_total_bits_sample(),
         count: reader.get_count(),
         rtp_timestamp: reader.get_rtp_timestamp(),
         rtp_payload_type: reader.get_rtp_payload_type(),

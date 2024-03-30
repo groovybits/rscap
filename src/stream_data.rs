@@ -75,13 +75,14 @@ pub struct StreamData {
     pub error_count: u32,
     pub last_arrival_time: u64,
     pub last_sample_time: u64,
-    pub start_time: u64, // field for start time
-    pub total_bits: u64, // field for total bits
-    pub count: u32,      // field for count
+    pub start_time: u64,        // field for start time
+    pub total_bits: u64,        // field for total bits
+    pub total_bits_sample: u64, // field for total bits
+    pub count: u32,             // field for count
     #[serde(skip)]
     pub packet: Arc<Vec<u8>>, // The actual MPEG-TS packet data
-    pub packet_start: usize, // Offset into the data
-    pub packet_len: usize, // Offset into the data
+    pub packet_start: usize,    // Offset into the data
+    pub packet_len: usize,      // Offset into the data
     // SMPTE 2110 fields
     pub rtp_timestamp: u32,
     pub rtp_payload_type: u8,
@@ -117,6 +118,7 @@ impl Clone for StreamData {
             last_sample_time: self.last_sample_time,
             start_time: self.start_time,
             total_bits: self.total_bits,
+            total_bits_sample: self.total_bits_sample,
             count: self.count,
             packet: Arc::new(Vec::new()), // Initialize as empty with Arc
             packet_start: 0,
@@ -167,9 +169,10 @@ impl StreamData {
             error_count: 0,
             last_arrival_time,
             last_sample_time: start_time,
-            start_time,    // Initialize start time
-            total_bits: 0, // Initialize total bits
-            count: 0,      // Initialize count
+            start_time,           // Initialize start time
+            total_bits: 0,        // Initialize total bits
+            total_bits_sample: 0, // Initialize total bits
+            count: 0,             // Initialize count
             packet: packet,
             packet_start: packet_start,
             packet_len: packet_len,
@@ -249,6 +252,7 @@ impl StreamData {
     pub fn update_stats(&mut self, packet_size: usize, arrival_time: u64) {
         let bits = packet_size as u64 * 8; // Convert packet size from bytes to bits
         self.total_bits += bits;
+        self.total_bits_sample += bits;
 
         // Calculate elapsed time since the start of streaming and since the last sample
         let run_time_ms = arrival_time
@@ -262,23 +266,25 @@ impl StreamData {
         if run_time_ms >= 1000 {
             if elapsed_time_since_last_sample >= 1000 {
                 // Calculate the bitrate for the past second
-                let bitrate = if self.total_bits > 0 {
-                    (self.total_bits * 1000) / elapsed_time_since_last_sample
+                let bitrate = if self.total_bits_sample > 0 {
+                    (self.total_bits_sample * 1000) / elapsed_time_since_last_sample
                 } else {
                     0
                 };
 
                 // Update the moving average for the bitrate
                 if self.count > 0 {
-                    self.bitrate_avg = (((self.bitrate_avg as u64 * self.count as u64)
+                    self.bitrate_avg = ((((self.bitrate_avg as u64 * self.count as u64)
                         + bitrate as u64)
-                        / (self.count as u64 + 1)) as u32;
+                        / (self.count as u64 + 1)) as u32)
+                        * 1000;
+                    //self.bitrate_avg = ((self.total_bits * 1000) / run_time_ms) as u32;
                 } else {
                     self.bitrate_avg = bitrate as u32;
                 }
 
                 // Reset counters for the next interval
-                self.total_bits = 0;
+                self.total_bits_sample = 0;
                 self.last_sample_time = arrival_time;
                 self.bitrate = bitrate as u32;
             }
@@ -594,6 +600,7 @@ pub fn process_packet(
             stream_data_packet.error_count = stream_data.error_count;
             stream_data_packet.last_arrival_time = stream_data.last_arrival_time;
             stream_data_packet.last_sample_time = stream_data.last_sample_time;
+            stream_data_packet.total_bits_sample = stream_data.total_bits_sample;
             stream_data_packet.total_bits = stream_data.total_bits;
             stream_data_packet.count = stream_data.count;
             stream_data_packet.pmt_pid = pmt_pid;
