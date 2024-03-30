@@ -30,6 +30,7 @@ pub struct PatEntry {
 pub struct PmtEntry {
     pub stream_pid: u16,
     pub stream_type: u8, // Stream type (e.g., 0x02 for MPEG video)
+    pub program_number: u16,
 }
 
 pub struct Pmt {
@@ -536,10 +537,11 @@ pub fn parse_pmt(packet: &[u8]) -> Pmt {
         entries.push(PmtEntry {
             stream_pid,
             stream_type,
+            program_number,
         });
         debug!(
-            "ParsePMT: Stream PID: {}, Stream Type: {}",
-            stream_pid, stream_type
+            "ParsePMT: ProgramNumber: {}, Stream PID: {}, Stream Type: {}",
+            program_number, stream_pid, stream_type
         );
     }
 
@@ -600,7 +602,8 @@ pub fn process_packet(
             stream_data_packet.total_bits = stream_data.total_bits;
             stream_data_packet.count = stream_data.count;
             stream_data_packet.pmt_pid = pmt_pid;
-            stream_data_packet.stream_type_number = stream_data.stream_type_number;
+            stream_data_packet.program_number = stream_data.program_number;
+            stream_data_packet.stream_type_number = stream_data.stream_type_number.clone();
 
             // write the stream_data back to the pid_map with modified values
             pid_map.insert(pid, stream_data);

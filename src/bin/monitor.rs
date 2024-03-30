@@ -901,7 +901,7 @@ async fn main() {
                 let kafka_timestamp = stream_data.last_arrival_time as i64;
 
                 // Parse the JSON string into a Value
-                let mut value: serde_json::Value =
+                /*let mut value: serde_json::Value =
                     serde_json::from_slice(&serialized_data).expect("Failed to parse JSON");
 
                 // remove existing "timestamp" field from value JSON
@@ -972,6 +972,7 @@ async fn main() {
 
                 // Convert the modified JSON value back to bytes
                 serialized_data = serde_json::to_vec(&value).expect("Failed to serialize JSON");
+                */
 
                 // Check if it's time to send data to Kafka based on the interval
                 if send_to_kafka
