@@ -871,7 +871,7 @@ async fn main() {
         match capnp_to_stream_data(&header_msg) {
             Ok(stream_data) => {
                 // Serialize the StreamData object to JSON
-                let serialized_data = serde_json::to_vec(&stream_data)
+                let mut serialized_data = serde_json::to_vec(&stream_data)
                     .expect("Failed to serialize StreamData to JSON");
 
                 // Parse the JSON string into a Value
@@ -911,6 +911,9 @@ async fn main() {
                         / 1_000_000.0)
                         .round() as u32);
                 }
+
+                // Convert the modified JSON value back to bytes
+                serialized_data = serde_json::to_vec(&value).expect("Failed to serialize JSON");
 
                 // Check if it's time to send data to Kafka based on the interval
                 if send_to_kafka
