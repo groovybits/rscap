@@ -285,22 +285,25 @@ impl StreamData {
             }
 
             // Calculate and update Inter-Arrival Time (IAT) and its statistics
-            if self.count > 0 && run_time_ms > 1000 {
+            if self.count > 0 {
                 let iat = arrival_time
                     .checked_sub(self.last_arrival_time)
                     .unwrap_or_default();
-                self.iat_avg = (((self.iat_avg as u64 * self.count as u64) + iat)
-                    / (self.count as u64 + 1)) as u64;
 
-                if iat > self.iat_max {
+                // Update IAT max with proper initialization handling
+                if self.iat_max == 0 || iat > self.iat_max {
                     self.iat_max = iat;
                 }
-                if iat < self.iat_min || self.iat_min == 0 {
+
+                // Adjustments specific to IAT max startup handling
+                if self.iat_min == 0 || (iat < self.iat_min && iat != 0) {
                     self.iat_min = iat;
                 }
 
-                self.last_arrival_time = arrival_time; // Update for the next packet's IAT calculation
+                self.iat_avg = (((self.iat_avg as u64 * self.count as u64) + iat)
+                    / (self.count as u64 + 1)) as u64;
             }
+            self.last_arrival_time = arrival_time; // Update for the next packet's IAT calculation
 
             // Properly increment the count after all checks
             self.count += 1;
