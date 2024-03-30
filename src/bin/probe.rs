@@ -591,6 +591,10 @@ struct Args {
     // MpegTS Reader use
     #[clap(long, env = "MPEGTS_READER", default_value_t = false)]
     mpegts_reader: bool,
+
+    /// Sampling time for the MPEGTS Reader
+    #[clap(long, env = "MPEGTS_READER_SAMPLING_TIME", default_value_t = 1_000)]
+    mpegts_reader_sampling_time: u64,
 }
 
 // MAIN Function

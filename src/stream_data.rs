@@ -242,46 +242,62 @@ impl StreamData {
         // Elapsed time in milliseconds
         let elapsed_time_ms = arrival_time.checked_sub(self.start_time).unwrap_or(0);
 
-        if elapsed_time_ms > 0 {
-            let elapsed_time_sec = elapsed_time_ms as f64 / 1000.0;
-            self.bitrate = (self.total_bits as f64 / elapsed_time_sec) as u32;
+        // Store bitrate values for each packet
+        let bitrate = if elapsed_time_ms >= 10 {
+            ((bits * 1000) / elapsed_time_ms) as u32
+        } else {
+            self.bitrate // Use the previous bitrate value instead of setting it to 0
+        };
+        self.bitrate = bitrate;
 
-            // Bitrate max
-            if self.bitrate > self.bitrate_max {
-                self.bitrate_max = self.bitrate;
+        // Update bitrate max and min
+        if self.count > 0 {
+            if bitrate > self.bitrate_max {
+                self.bitrate_max = bitrate;
             }
-
-            // Bitrate min
-            if self.bitrate < self.bitrate_min {
-                self.bitrate_min = self.bitrate;
+            if bitrate < self.bitrate_min || self.bitrate_min == 0 {
+                self.bitrate_min = bitrate;
             }
-
-            // Bitrate avg
-            self.bitrate_avg = (self.bitrate_avg + self.bitrate) / 2;
+        } else {
+            self.bitrate_max = bitrate;
+            self.bitrate_min = bitrate;
         }
 
-        self.total_bits += bits; // Accumulate total bits
+        // Update bitrate avg using a moving average
+        self.bitrate_avg = ((self.bitrate_avg as u64 * self.count as u64) + bitrate as u64) as u32
+            / (self.count + 1);
 
-        // IAT calculation remains the same
-        let iat = arrival_time
-            .checked_sub(self.last_arrival_time)
-            .unwrap_or(0);
+        // IAT calculation
+        let iat = if self.count > 0 {
+            arrival_time
+                .checked_sub(self.last_arrival_time)
+                .unwrap_or(0)
+        } else {
+            0
+        };
         self.iat = iat;
 
-        // IAT max
-        if iat > self.iat_max {
-            self.iat_max = iat;
+        // Update IAT max and min after a certain time interval (e.g., 10 ms)
+        if elapsed_time_ms >= 10 {
+            if iat > self.iat_max {
+                self.iat_max = iat;
+            }
+            if iat < self.iat_min || self.iat_min == 0 {
+                self.iat_min = iat;
+            }
         }
 
-        // IAT min
-        if iat < self.iat_min {
-            self.iat_min = iat;
-        }
+        // Update IAT avg using a moving average
+        self.iat_avg = ((self.iat_avg as u64 * self.count as u64) + iat) / (self.count as u64 + 1);
 
-        // IAT avg
-        self.iat_avg = (self.iat_avg + iat) / 2;
+        // Total bits
+        self.total_bits += bits; // Accumulate total bits
 
+        // Update last arrival time
         self.last_arrival_time = arrival_time;
+
+        // Increment packet count
+        self.count += 1;
     }
 }
 

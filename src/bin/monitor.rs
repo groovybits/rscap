@@ -13,6 +13,7 @@
  */
 
 use async_zmq;
+use chrono::TimeZone;
 use clap::Parser;
 use kafka::error::Error as KafkaError;
 use kafka::producer::{Producer, Record, RequiredAcks};
@@ -863,10 +864,47 @@ async fn main() {
         // Deserialize the received message into StreamData
         match capnp_to_stream_data(&header_msg) {
             Ok(stream_data) => {
-                // Process the StreamData as needed
                 // Serialize the StreamData object to JSON
                 let serialized_data = serde_json::to_vec(&stream_data)
                     .expect("Failed to serialize StreamData to JSON");
+
+                // Parse the JSON string into a Value
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(&serialized_data).expect("Failed to parse JSON");
+
+                // Convert the last_arrival_time to an ISO 8601 formatted timestamp
+                if let Some(last_arrival_time) = value.get("last_arrival_time") {
+                    if let Some(last_arrival_time) = last_arrival_time.as_u64() {
+                        let timestamp = chrono::Utc
+                            .timestamp_millis_opt(last_arrival_time as i64)
+                            .single()
+                            .unwrap()
+                            .to_rfc3339();
+                        value["timestamp"] = serde_json::Value::String(timestamp);
+                    }
+                }
+
+                // Normalize the bitrate fields to megabits with 4 decimal places precision
+                if let Some(bitrate) = value.get_mut("bitrate") {
+                    *bitrate = serde_json::json!((bitrate.as_u64().unwrap_or(1) as f64
+                        / 1_000_000.0)
+                        .round() as u32);
+                }
+                if let Some(bitrate_max) = value.get_mut("bitrate_max") {
+                    *bitrate_max = serde_json::json!((bitrate_max.as_u64().unwrap_or(1) as f64
+                        / 1_000_000.0)
+                        .round() as u32);
+                }
+                if let Some(bitrate_min) = value.get_mut("bitrate_min") {
+                    *bitrate_min = serde_json::json!((bitrate_min.as_u64().unwrap_or(1) as f64
+                        / 1_000_000.0)
+                        .round() as u32);
+                }
+                if let Some(bitrate_avg) = value.get_mut("bitrate_avg") {
+                    *bitrate_avg = serde_json::json!((bitrate_avg.as_u64().unwrap_or(1) as f64
+                        / 1_000_000.0)
+                        .round() as u32);
+                }
 
                 // Process the StreamData as needed
                 if send_to_kafka {
@@ -874,7 +912,15 @@ async fn main() {
                     let topic = kafka_topic.clone();
 
                     // Send serialized data to Kafka
-                    match produce_message(serialized_data, topic, brokers, kafka_timeout, kafka_key.clone()).await {
+                    match produce_message(
+                        serialized_data,
+                        topic,
+                        brokers,
+                        kafka_timeout,
+                        kafka_key.clone(),
+                    )
+                    .await
+                    {
                         Ok(_) => debug!("Sent message to Kafka"),
                         Err(e) => error!("Error sending message to Kafka: {:?}", e),
                     }
