@@ -274,11 +274,7 @@ impl StreamData {
 
                 // Update the moving average for the bitrate
                 if self.count > 0 {
-                    self.bitrate_avg = ((((self.bitrate_avg as u64 * self.count as u64)
-                        + bitrate as u64)
-                        / (self.count as u64 + 1)) as u32)
-                        * 1000;
-                    //self.bitrate_avg = ((self.total_bits * 1000) / run_time_ms) as u32;
+                    self.bitrate_avg = ((self.total_bits * 1000) / run_time_ms) as u32;
                 } else {
                     self.bitrate_avg = bitrate as u32;
                 }
