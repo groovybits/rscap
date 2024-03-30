@@ -600,8 +600,8 @@ pub fn process_packet(
             stream_data_packet.total_bits = stream_data.total_bits;
             stream_data_packet.count = stream_data.count;
             stream_data_packet.pmt_pid = pmt_pid;
-            //stream_data_packet.program_number = stream_data.program_number;
-            //stream_data_packet.stream_type_number = stream_data.stream_type_number.clone();
+            stream_data_packet.program_number = stream_data.program_number;
+            stream_data_packet.stream_type_number = stream_data.stream_type_number.clone();
 
             // write the stream_data back to the pid_map with modified values
             pid_map.insert(pid, stream_data);
@@ -666,6 +666,7 @@ pub fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8]) {
                 );
 
                 let stream_pid = pmt_entry.stream_pid;
+                let stream_type_num = pmt_entry.stream_type;
                 let stream_type = match pmt_entry.stream_type {
                     0x00 => "Reserved",
                     0x01 => "ISO/IEC 11172 MPEG-1 Video",
@@ -714,8 +715,8 @@ pub fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8]) {
                         0,
                         stream_pid,
                         stream_type.to_string(),
-                        pmt_entry.stream_type,
-                        pmt_entry.program_number,
+                        stream_type_num,
+                        program_number,
                         timestamp,
                         timestamp,
                         0,

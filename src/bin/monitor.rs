@@ -233,10 +233,8 @@ async fn produce_message(
         kafka_topic, kafka_server
     );
 
-    let record = FutureRecord::to(&kafka_topic)
-        .payload(&data)
-        .key(&key)
-        .timestamp(stream_data_timestamp);
+    let record = FutureRecord::to(&kafka_topic).payload(&data).key(&key);
+    /* .timestamp(stream_data_timestamp);*/
 
     let delivery_future = producer
         .send(record, Duration::from_secs(kafka_timeout))
