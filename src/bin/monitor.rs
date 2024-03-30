@@ -876,13 +876,15 @@ async fn main() {
         match capnp_to_stream_data(&header_msg) {
             Ok(stream_data) => {
                 // Serialize the StreamData object to JSON
+                info!("StreamData before Kafka grooming: {:?}", stream_data);
+
                 let mut serialized_data = serde_json::to_vec(&stream_data)
                     .expect("Failed to serialize StreamData to JSON");
 
                 let kafka_timestamp = stream_data.last_arrival_time as i64;
 
                 // Parse the JSON string into a Value
-                /*let mut value: serde_json::Value =
+                let mut value: serde_json::Value =
                     serde_json::from_slice(&serialized_data).expect("Failed to parse JSON");
 
                 // remove existing "timestamp" field from value JSON
@@ -949,11 +951,16 @@ async fn main() {
                     *bitrate_avg = serde_json::json!(
                         (bitrate_avg.as_f64().unwrap_or(0.0) / 1_000.0).round() / 1000.0
                     );
-                    }
+                }
 
                 // Convert the modified JSON value back to bytes
                 serialized_data = serde_json::to_vec(&value).expect("Failed to serialize JSON");
-                */
+
+                // print out serialized data
+                info!(
+                    "Serialized data after grooming before kafka: {:?}",
+                    serialized_data
+                );
 
                 // Check if it's time to send data to Kafka based on the interval
                 if send_to_kafka
