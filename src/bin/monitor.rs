@@ -46,12 +46,13 @@ use rscap::current_unix_timestamp_ms;
 use rscap::mpegts;
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::RwLock;
 use tokio::sync::mpsc::{self};
 use tokio::task;
 
 lazy_static! {
-    static ref STREAM_GROUPINGS: Mutex<AHashMap<u16, StreamGrouping>> = Mutex::new(AHashMap::new());
+    static ref STREAM_GROUPINGS: RwLock<AHashMap<u16, StreamGrouping>> =
+        RwLock::new(AHashMap::new());
 }
 
 struct StreamGrouping {
@@ -1003,14 +1004,16 @@ async fn main() {
 
                 // Update stream groupings
                 let pid = stream_data.pid;
-                let mut stream_groupings = STREAM_GROUPINGS.lock().unwrap();
-                if let Some(grouping) = stream_groupings.get_mut(&pid) {
-                    grouping.stream_data_list.push(stream_data.clone());
-                } else {
-                    let new_grouping = StreamGrouping {
-                        stream_data_list: vec![stream_data.clone()],
-                    };
-                    stream_groupings.insert(pid, new_grouping);
+                {
+                    let mut stream_groupings = STREAM_GROUPINGS.write().unwrap();
+                    if let Some(grouping) = stream_groupings.get_mut(&pid) {
+                        grouping.stream_data_list.push(stream_data.clone());
+                    } else {
+                        let new_grouping = StreamGrouping {
+                            stream_data_list: vec![stream_data.clone()],
+                        };
+                        stream_groupings.insert(pid, new_grouping);
+                    }
                 }
 
                 // Check if it's time to send data to Kafka based on the interval
@@ -1021,7 +1024,7 @@ async fn main() {
 
                     last_kafka_send_time = Instant::now();
 
-                    let stream_groupings = STREAM_GROUPINGS.lock().unwrap();
+                    let stream_groupings = STREAM_GROUPINGS.read().unwrap();
 
                     let mut combined_streams = Vec::new();
                     let mut bitrate_sum_global = 0;
