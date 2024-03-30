@@ -340,6 +340,11 @@ struct Args {
     // MpegTS Reader use
     #[clap(long, env = "MPEGTS_READER", default_value_t = false)]
     mpegts_reader: bool,
+
+    // Add the new argument for Kafka interval
+    /// Kafka sending interval in milliseconds
+    #[clap(long, env = "KAFKA_INTERVAL", default_value_t = 10)]
+    kafka_interval: u64,
 }
 
 #[tokio::main]
@@ -840,6 +845,7 @@ async fn main() {
     let mut dot_last_file_write = Instant::now();
     let mut dot_last_sent_stats = Instant::now();
     let mut dot_last_sent_ts = Instant::now();
+    let mut last_kafka_send_time = Instant::now();
     loop {
         // check for packet count
         if packet_count > 0 && counter >= packet_count {
@@ -906,8 +912,11 @@ async fn main() {
                         .round() as u32);
                 }
 
-                // Process the StreamData as needed
-                if send_to_kafka {
+                // Check if it's time to send data to Kafka based on the interval
+                if send_to_kafka
+                    && last_kafka_send_time.elapsed().as_millis() >= args.kafka_interval as u128
+                {
+                    last_kafka_send_time = Instant::now();
                     let brokers = vec![kafka_broker.clone()];
                     let topic = kafka_topic.clone();
 
