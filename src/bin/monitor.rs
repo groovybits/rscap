@@ -61,11 +61,15 @@ struct StreamGrouping {
 
 #[derive(Serialize)]
 struct CombinedStreamData {
+    pid: u16,
+    stream_type: String,
     program_number: u16,
     pmt_pid: u16,
     pmt_status: String,
     bitrate_avg: u32,
     iat_avg: u64,
+    packet_count: u32,
+    stream_data: StreamData,
 }
 
 #[derive(Serialize)]
@@ -1030,7 +1034,7 @@ async fn main() {
                     let mut bitrate_sum_global = 0;
                     let mut iat_sum_global = 0;
 
-                    for (_pid, grouping) in stream_groupings.iter() {
+                    for (pid, grouping) in stream_groupings.iter() {
                         let stream_count = grouping.stream_data_list.len();
 
                         println!("Kafka sending stream count: {}", stream_count);
@@ -1038,7 +1042,7 @@ async fn main() {
                         if stream_count > 0 {
                             println!(
                                 "Kafka sending stream data for pid {} for {} streams.",
-                                grouping.stream_data_list[0].pid, stream_count
+                                pid, stream_count
                             );
                             let mut bitrate_sum = 0;
                             let mut iat_sum = 0;
@@ -1058,11 +1062,15 @@ async fn main() {
                             };
 
                             let combined_stream_data = CombinedStreamData {
+                                pid: *pid,
+                                stream_type: grouping.stream_data_list[0].stream_type.clone(),
                                 program_number: grouping.stream_data_list[0].program_number,
                                 pmt_pid: grouping.stream_data_list[0].pmt_pid,
                                 pmt_status,
                                 bitrate_avg,
                                 iat_avg,
+                                packet_count: stream_count as u32,
+                                stream_data: grouping.stream_data_list[0].clone(),
                             };
 
                             combined_streams.push(combined_stream_data);
