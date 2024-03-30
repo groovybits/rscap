@@ -881,12 +881,36 @@ async fn main() {
                 // Convert the last_arrival_time to an ISO 8601 formatted timestamp
                 if let Some(last_arrival_time) = value.get("last_arrival_time") {
                     if let Some(last_arrival_time) = last_arrival_time.as_u64() {
-                        let timestamp = chrono::Utc
+                        let timestamp = chrono::Local
                             .timestamp_millis_opt(last_arrival_time as i64)
                             .single()
                             .unwrap()
                             .to_rfc3339();
                         value["timestamp"] = serde_json::Value::String(timestamp);
+                    }
+                }
+
+                // Convert the start_time to an ISO 8601 formatted timestamp
+                if let Some(start_time) = value.get("start_time") {
+                    if let Some(start_time) = start_time.as_u64() {
+                        let start_time = chrono::Local
+                            .timestamp_millis_opt(start_time as i64)
+                            .single()
+                            .unwrap()
+                            .to_rfc3339();
+                        value["start_time"] = serde_json::Value::String(start_time);
+                    }
+                }
+
+                // Convert the start_time to an ISO 8601 formatted timestamp
+                if let Some(last_arrival_time) = value.get("last_arrival_time") {
+                    if let Some(last_arrival_time) = last_arrival_time.as_u64() {
+                        let last_arrival_time = chrono::Local
+                            .timestamp_millis_opt(last_arrival_time as i64)
+                            .single()
+                            .unwrap()
+                            .to_rfc3339();
+                        value["last_arrival_time"] = serde_json::Value::String(last_arrival_time);
                     }
                 }
 
