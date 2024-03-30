@@ -301,7 +301,7 @@ impl StreamData {
                 self.iat = iat;
 
                 // Update IAT max with proper initialization handling
-                if run_time_ms >= 10000 {
+                if run_time_ms >= 60000 && self.count > 1 {
                     if iat > self.iat_max {
                         self.iat_max = iat;
                     }
