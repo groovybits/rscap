@@ -742,10 +742,13 @@ pub fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8], capture_timesta
                         0,
                         capture_timestamp,
                     ));
+                    // convert capture_timestamp from systemTime to u64 for update_stats
+                    let capture_time = capture_timestamp
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64;
                     // update stream_data stats
-                    let capture_timestamp = current_unix_timestamp_ms().unwrap_or(0);
-                    Arc::make_mut(&mut stream_data)
-                        .update_stats(pmt_packet.len(), capture_timestamp);
+                    Arc::make_mut(&mut stream_data).update_stats(pmt_packet.len(), capture_time);
 
                     // print out each field of structure
                     info!("STATUS::STREAM:CREATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
