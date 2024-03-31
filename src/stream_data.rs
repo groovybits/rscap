@@ -228,11 +228,20 @@ impl StreamData {
     pub fn update_stream_type(&mut self, stream_type: String) {
         self.stream_type = stream_type;
     }
+    pub fn update_stream_type_number(&mut self, stream_type_number: u8) {
+        self.stream_type_number = stream_type_number;
+    }
     pub fn increment_error_count(&mut self, error_count: u32) {
         self.error_count += error_count;
     }
     pub fn increment_count(&mut self, count: u32) {
         self.count += count;
+    }
+    pub fn update_capture_time(&mut self, capture_timestamp: u64) {
+        self.capture_time = capture_timestamp;
+    }
+    pub fn update_program_number(&mut self, program_number: u16) {
+        self.program_number = program_number;
     }
     pub fn set_continuity_counter(&mut self, continuity_counter: u8) {
         // check for continuity continuous increment and wrap around from 0 to 15
@@ -259,16 +268,23 @@ impl StreamData {
         }
         self.continuity_counter = continuity_counter;
     }
-    pub fn update_stats(&mut self, packet_size: usize, arrival_time: u64) {
+    pub fn update_stats(&mut self, packet_size: usize) {
         let bits = packet_size as u64 * 8; // Convert packet size from bytes to bits
         self.total_bits += bits;
         self.total_bits_sample += bits;
 
+        println!(
+            "{} Updating stats with packet size: {} and capture time: {}",
+            self.count, packet_size, self.capture_time
+        );
+
         // Calculate elapsed time since the start of streaming and since the last sample
-        let run_time_ms = arrival_time
+        let run_time_ms = self
+            .capture_time
             .checked_sub(self.start_time)
             .unwrap_or_default();
-        let elapsed_time_since_last_sample = arrival_time
+        let elapsed_time_since_last_sample = self
+            .capture_time
             .checked_sub(self.last_sample_time)
             .unwrap_or_default();
 
@@ -291,7 +307,7 @@ impl StreamData {
 
                 // Reset counters for the next interval
                 self.total_bits_sample = 0;
-                self.last_sample_time = arrival_time;
+                self.last_sample_time = self.capture_time;
                 self.bitrate = bitrate as u32;
             }
 
@@ -305,7 +321,8 @@ impl StreamData {
 
             // Calculate and update Inter-Arrival Time (IAT) and its statistics
             if self.count > 0 {
-                let iat = arrival_time
+                let iat = self
+                    .capture_time
                     .checked_sub(self.last_arrival_time)
                     .unwrap_or_default();
                 self.iat = iat;
@@ -330,7 +347,7 @@ impl StreamData {
                 self.iat_avg = (((self.iat_avg as u64 * self.count as u64) + iat)
                     / (self.count as u64 + 1)) as u64;
             }
-            self.last_arrival_time = arrival_time; // Update for the next packet's IAT calculation
+            self.last_arrival_time = self.capture_time; // Update for the next packet's IAT calculation
 
             // Properly increment the count after all checks
             self.count += 1;
@@ -584,8 +601,13 @@ pub fn process_packet(
             // Existing StreamData instance found, update it
             let mut stream_data = Arc::clone(stream_data_arc);
             let arrival_time = stream_data.capture_time;
-            Arc::make_mut(&mut stream_data).update_stats(packet.len(), arrival_time);
+            Arc::make_mut(&mut stream_data).update_stats(packet.len());
             Arc::make_mut(&mut stream_data).increment_count(1);
+            Arc::make_mut(&mut stream_data)
+                .update_stream_type_number(stream_data_packet.stream_type_number);
+            Arc::make_mut(&mut stream_data).update_capture_time(stream_data_packet.capture_time);
+            Arc::make_mut(&mut stream_data)
+                .update_program_number(stream_data_packet.program_number);
             //if stream_data.pid != 0x1FFF && is_mpegts {
             Arc::make_mut(&mut stream_data)
                 .set_continuity_counter(stream_data_packet.continuity_counter);
@@ -614,9 +636,9 @@ pub fn process_packet(
             stream_data_packet.total_bits = stream_data.total_bits;
             stream_data_packet.count = stream_data.count;
             stream_data_packet.pmt_pid = pmt_pid;
-            stream_data_packet.program_number = stream_data.program_number;
-            stream_data_packet.stream_type_number = stream_data.stream_type_number;
-            stream_data_packet.capture_time = stream_data.capture_time;
+            //stream_data_packet.program_number = stream_data.program_number;
+            //stream_data_packet.stream_type_number = stream_data.stream_type_number;
+            //stream_data_packet.capture_time = stream_data.capture_time;
 
             // write the stream_data back to the pid_map with modified values
             pid_map.insert(pid, stream_data);
@@ -643,8 +665,7 @@ pub fn process_packet(
                     stream_data_packet.continuity_counter,
                     capture_time,
                 ));
-                Arc::make_mut(&mut stream_data)
-                    .update_stats(packet.len(), stream_data_packet.capture_time);
+                Arc::make_mut(&mut stream_data).update_stats(packet.len());
 
                 // print out each field of structure
                 info!("STATUS::PACKET:ADD[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
@@ -742,13 +763,8 @@ pub fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8], capture_timesta
                         0,
                         capture_timestamp,
                     ));
-                    // convert capture_timestamp from systemTime to u64 for update_stats
-                    let capture_time = capture_timestamp
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64;
                     // update stream_data stats
-                    Arc::make_mut(&mut stream_data).update_stats(pmt_packet.len(), capture_time);
+                    Arc::make_mut(&mut stream_data).update_stats(pmt_packet.len());
 
                     // print out each field of structure
                     info!("STATUS::STREAM:CREATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
@@ -761,6 +777,8 @@ pub fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8], capture_timesta
 
                     // update the stream type
                     Arc::make_mut(&mut stream_data).update_stream_type(stream_type.to_string());
+                    Arc::make_mut(&mut stream_data)
+                        .update_stream_type_number(pmt_entry.stream_type);
 
                     // print out each field of structure
                     debug!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
@@ -939,12 +957,7 @@ pub fn process_smpte2110_packet(
                 );
 
                 // Update StreamData stats and RTP fields
-                // convert capture_timestamp to unix timestamp in milliseconds as a u64
-                let capture_timestamp = capture_timestamp
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as u64;
-                stream_data.update_stats(rtp_payload_length, capture_timestamp);
+                stream_data.update_stats(rtp_payload_length);
                 stream_data.set_rtp_fields(
                     timestamp,
                     payload_type,
@@ -1024,12 +1037,7 @@ pub fn process_mpegts_packet(
                 continuity_counter,
                 capture_timestamp,
             );
-            // convert capture_timestamp to unix timestamp in milliseconds as a u64
-            let capture_timestamp = capture_timestamp
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64;
-            stream_data.update_stats(packet_size, capture_timestamp);
+            stream_data.update_stats(packet_size);
             streams.push(stream_data);
         } else {
             error!("ProcessPacket: Not MPEG-TS");
