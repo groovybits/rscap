@@ -32,4 +32,5 @@ struct StreamDataCapnp {
     rtpExtendedSequenceNumber @28 :UInt16;
     streamTypeNumber @29 :UInt8;
     totalBitsSample @30 :UInt64;
+    captureTime @31 :UInt64;
 }

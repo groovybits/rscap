@@ -96,6 +96,7 @@ pub struct StreamData {
     pub rtp_line_continuation: u8,
     pub rtp_extended_sequence_number: u16,
     pub stream_type_number: u8,
+    pub capture_time: u64,
 }
 
 impl Clone for StreamData {
@@ -135,6 +136,7 @@ impl Clone for StreamData {
             rtp_line_continuation: self.rtp_line_continuation,
             rtp_extended_sequence_number: self.rtp_extended_sequence_number,
             stream_type_number: self.stream_type_number,
+            capture_time: self.capture_time,
         }
     }
 }
@@ -197,6 +199,7 @@ impl StreamData {
             rtp_line_continuation: 0,
             rtp_extended_sequence_number: 0,
             stream_type_number,
+            capture_time: last_arrival_time,
         }
     }
     // set RTP fields
@@ -569,7 +572,6 @@ pub fn process_packet(
     }
 
     let pid = stream_data_packet.pid;
-    //let arrival_time = current_unix_timestamp_ms().unwrap_or(0);
 
     let mut pid_map = PID_MAP.lock().unwrap();
 
@@ -581,15 +583,15 @@ pub fn process_packet(
         Some(stream_data_arc) => {
             // Existing StreamData instance found, update it
             let mut stream_data = Arc::clone(stream_data_arc);
-            let last_arrival_time = stream_data.last_arrival_time.clone();
-            Arc::make_mut(&mut stream_data).update_stats(packet.len(), last_arrival_time);
+            let arrival_time = stream_data.capture_time;
+            Arc::make_mut(&mut stream_data).update_stats(packet.len(), arrival_time);
             Arc::make_mut(&mut stream_data).increment_count(1);
             //if stream_data.pid != 0x1FFF && is_mpegts {
             Arc::make_mut(&mut stream_data)
                 .set_continuity_counter(stream_data_packet.continuity_counter);
             //}
             // calculate uptime using the arrival time as SystemTime and start_time as u64
-            let uptime = stream_data.last_arrival_time - stream_data.start_time;
+            let uptime = arrival_time - stream_data.start_time;
 
             // print out each field of structure
             debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {} packet_offset: {}, packet_len: {}",
@@ -614,6 +616,7 @@ pub fn process_packet(
             stream_data_packet.pmt_pid = pmt_pid;
             stream_data_packet.program_number = stream_data.program_number;
             stream_data_packet.stream_type_number = stream_data.stream_type_number;
+            stream_data_packet.capture_time = stream_data.capture_time;
 
             // write the stream_data back to the pid_map with modified values
             pid_map.insert(pid, stream_data);
@@ -623,9 +626,9 @@ pub fn process_packet(
             if pmt_pid != 0xFFFF {
                 debug!("ProcessPacket: New PID {} Found, adding to PID map.", pid);
             } else {
-                // convert stream_data_packet.last_arrival_time to SystemTime
-                let capture_timestamp = SystemTime::UNIX_EPOCH
-                    + Duration::from_millis(stream_data_packet.last_arrival_time as u64);
+                // convert stream_data_packet.capture_time a u64 to SystemTime
+                let capture_time = SystemTime::UNIX_EPOCH
+                    + Duration::from_secs(stream_data_packet.capture_time as u64);
                 // PMT packet not found yet, add the stream_data_packet to the pid_map
                 let mut stream_data = Arc::new(StreamData::new(
                     Arc::new(Vec::new()), // Ensure packet_data is Arc<Vec<u8>>
@@ -638,10 +641,10 @@ pub fn process_packet(
                     stream_data_packet.start_time,
                     stream_data_packet.timestamp,
                     stream_data_packet.continuity_counter,
-                    capture_timestamp,
+                    capture_time,
                 ));
                 Arc::make_mut(&mut stream_data)
-                    .update_stats(packet.len(), stream_data_packet.last_arrival_time);
+                    .update_stats(packet.len(), stream_data_packet.capture_time);
 
                 // print out each field of structure
                 info!("STATUS::PACKET:ADD[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);

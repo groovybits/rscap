@@ -184,6 +184,7 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
         stream_data_msg.set_iat_avg(stream_data.iat_avg);
         stream_data_msg.set_error_count(stream_data.error_count);
         stream_data_msg.set_last_arrival_time(stream_data.last_arrival_time);
+        stream_data_msg.set_capture_time(stream_data.capture_time);
         stream_data_msg.set_last_sample_time(stream_data.last_sample_time);
         stream_data_msg.set_start_time(stream_data.start_time);
         stream_data_msg.set_total_bits(stream_data.total_bits);

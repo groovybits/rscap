@@ -223,6 +223,7 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         packet_start: 0,
         packet_len: 0,
         stream_type_number: reader.get_stream_type_number(),
+        capture_time: reader.get_capture_time(),
     };
 
     Ok(stream_data)
@@ -929,7 +930,7 @@ async fn main() {
                 /*let /*mut*/ serialized_data = serde_json::to_vec(&stream_data)
                     .expect("Failed to serialize StreamData to JSON");
 
-                let kafka_timestamp = stream_data.last_arrival_time as i64;
+                let kafka_timestamp = stream_data.capture_time as i64;
 
                 // Parse the JSON string into a Value
                 let mut value: serde_json::Value =
