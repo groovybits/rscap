@@ -32,18 +32,51 @@ use rscap::hexdump;
 use rscap::stream_data::StreamData;
 include!("../stream_data_capnp.rs");
 use rscap::{get_stats_as_json, StatsType};
-use serde_json::json;
 use std::sync::Arc;
 // Video Processor Decoder
+use ahash::AHashMap;
 use h264_reader::annexb::AnnexBReader;
 use h264_reader::nal::{pps, sei, slice, sps, Nal, RefNal, UnitType};
 use h264_reader::push::NalInterest;
 use h264_reader::Context;
+use lazy_static::lazy_static;
 use mpeg2ts_reader::demultiplex;
+use rscap::current_unix_timestamp_ms;
 use rscap::mpegts;
+use serde::Serialize;
+use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::RwLock;
 use tokio::sync::mpsc::{self};
 use tokio::task;
+
+lazy_static! {
+    static ref STREAM_GROUPINGS: RwLock<AHashMap<u16, StreamGrouping>> =
+        RwLock::new(AHashMap::new());
+}
+
+struct StreamGrouping {
+    stream_data_list: Vec<StreamData>,
+}
+
+#[derive(Serialize)]
+struct CombinedStreamData {
+    stream_type: String,
+    program_number: u16,
+    pmt_pid: u16,
+    bitrate_avg: u32,
+    iat_avg: u64,
+    packet_count: u32,
+    stream_data: StreamData,
+}
+
+#[derive(Serialize)]
+struct CombinedSchema {
+    streams: HashMap<u16, CombinedStreamData>,
+    bitrate_avg_global: u32,
+    iat_avg_global: u64,
+}
 
 fn is_cea_608(itu_t_t35_data: &sei::user_data_registered_itu_t_t35::ItuTT35) -> bool {
     // In this example, we check if the ITU-T T.35 data matches the known format for CEA-608.
@@ -190,6 +223,7 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         packet_start: 0,
         packet_len: 0,
         stream_type_number: reader.get_stream_type_number(),
+        capture_time: reader.get_capture_time(),
     };
 
     Ok(stream_data)
@@ -208,13 +242,165 @@ async fn delivery_report(
     }
 }
 
+fn flatten_streams(
+    stream_groupings: &AHashMap<u16, StreamGrouping>,
+) -> serde_json::Map<String, Value> {
+    let mut flat_structure: serde_json::Map<String, Value> = serde_json::Map::new();
+
+    // Example of adding global statistics
+    flat_structure.insert("bitrate_avg_global".into(), json!(7));
+    flat_structure.insert("iat_avg_global".into(), json!(0));
+
+    for (pid, grouping) in stream_groupings.iter() {
+        let stream_data = grouping.stream_data_list.last().unwrap(); // Assuming last item is representative
+
+        let prefix = format!("streams.{}", pid);
+
+        // Adding basic info of the stream
+        flat_structure.insert(
+            format!("{}.stream_type", prefix),
+            json!(stream_data.stream_type),
+        );
+        flat_structure.insert(
+            format!("{}.program_number", prefix),
+            json!(stream_data.program_number),
+        );
+        flat_structure.insert(format!("{}.pmt_pid", prefix), json!(stream_data.pmt_pid));
+        flat_structure.insert(
+            format!("{}.bitrate_avg", prefix),
+            json!(stream_data.bitrate_avg),
+        );
+        flat_structure.insert(format!("{}.iat_avg", prefix), json!(stream_data.iat_avg));
+        flat_structure.insert(
+            format!("{}.packet_count", prefix),
+            json!(grouping.stream_data_list.len()),
+        );
+
+        // Adding detailed stats of the stream
+        flat_structure.insert(format!("{}.pid", prefix), json!(stream_data.pid));
+        flat_structure.insert(format!("{}.pmt_pid", prefix), json!(stream_data.pmt_pid));
+        flat_structure.insert(
+            format!("{}.program_number", prefix),
+            json!(stream_data.program_number),
+        );
+        flat_structure.insert(
+            format!("{}.stream_type", prefix),
+            json!(stream_data.stream_type),
+        );
+        flat_structure.insert(
+            format!("{}.continuity_counter", prefix),
+            json!(stream_data.continuity_counter),
+        );
+        flat_structure.insert(
+            format!("{}.timestamp", prefix),
+            json!(stream_data.timestamp),
+        );
+        flat_structure.insert(format!("{}.bitrate", prefix), json!(stream_data.bitrate));
+        flat_structure.insert(
+            format!("{}.bitrate_max", prefix),
+            json!(stream_data.bitrate_max),
+        );
+        flat_structure.insert(
+            format!("{}.bitrate_min", prefix),
+            json!(stream_data.bitrate_min),
+        );
+        flat_structure.insert(
+            format!("{}.bitrate_avg", prefix),
+            json!(stream_data.bitrate_avg),
+        );
+        flat_structure.insert(format!("{}.iat", prefix), json!(stream_data.iat));
+        flat_structure.insert(format!("{}.iat_max", prefix), json!(stream_data.iat_max));
+        flat_structure.insert(format!("{}.iat_min", prefix), json!(stream_data.iat_min));
+        flat_structure.insert(format!("{}.iat_avg", prefix), json!(stream_data.iat_avg));
+        flat_structure.insert(
+            format!("{}.error_count", prefix),
+            json!(stream_data.error_count),
+        );
+        flat_structure.insert(
+            format!("{}.last_arrival_time", prefix),
+            json!(stream_data.last_arrival_time),
+        );
+        flat_structure.insert(
+            format!("{}.last_sample_time", prefix),
+            json!(stream_data.last_sample_time),
+        );
+        flat_structure.insert(
+            format!("{}.start_time", prefix),
+            json!(stream_data.start_time),
+        );
+        flat_structure.insert(
+            format!("{}.total_bits", prefix),
+            json!(stream_data.total_bits),
+        );
+        flat_structure.insert(
+            format!("{}.total_bits_sample", prefix),
+            json!(stream_data.total_bits_sample),
+        );
+        flat_structure.insert(format!("{}.count", prefix), json!(stream_data.count));
+        flat_structure.insert(
+            format!("{}.packet_start", prefix),
+            json!(stream_data.packet_start),
+        );
+        flat_structure.insert(
+            format!("{}.packet_len", prefix),
+            json!(stream_data.packet_len),
+        );
+        flat_structure.insert(
+            format!("{}.rtp_timestamp", prefix),
+            json!(stream_data.rtp_timestamp),
+        );
+        flat_structure.insert(
+            format!("{}.rtp_payload_type", prefix),
+            json!(stream_data.rtp_payload_type),
+        );
+        flat_structure.insert(
+            format!("{}.rtp_payload_type_name", prefix),
+            json!(stream_data.rtp_payload_type_name),
+        );
+        flat_structure.insert(
+            format!("{}.rtp_line_number", prefix),
+            json!(stream_data.rtp_line_number),
+        );
+        flat_structure.insert(
+            format!("{}.rtp_line_offset", prefix),
+            json!(stream_data.rtp_line_offset),
+        );
+        flat_structure.insert(
+            format!("{}.rtp_line_length", prefix),
+            json!(stream_data.rtp_line_length),
+        );
+        flat_structure.insert(
+            format!("{}.rtp_field_id", prefix),
+            json!(stream_data.rtp_field_id),
+        );
+        flat_structure.insert(
+            format!("{}.rtp_line_continuation", prefix),
+            json!(stream_data.rtp_line_continuation),
+        );
+        flat_structure.insert(
+            format!("{}.rtp_extended_sequence_number", prefix),
+            json!(stream_data.rtp_extended_sequence_number),
+        );
+        flat_structure.insert(
+            format!("{}.stream_type_number", prefix),
+            json!(stream_data.stream_type_number),
+        );
+        flat_structure.insert(
+            format!("{}.capture_time", prefix),
+            json!(stream_data.capture_time),
+        );
+    }
+
+    flat_structure
+}
+
 async fn produce_message(
     data: Vec<u8>,
     kafka_server: String,
     kafka_topic: String,
     kafka_timeout: u64,
     key: String,
-    stream_data_timestamp: i64,
+    _stream_data_timestamp: i64,
     producer: FutureProducer,
     admin_client: &AdminClient<DefaultClientContext>,
 ) {
@@ -248,7 +434,7 @@ async fn produce_message(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.4.0",
+    version = "0.4.1",
     about = "RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe."
 )]
 struct Args {
@@ -893,84 +1079,20 @@ async fn main() {
         // Deserialize the received message into StreamData
         match capnp_to_stream_data(&header_msg) {
             Ok(stream_data) => {
-                let /*mut*/ serialized_data = serde_json::to_vec(&stream_data)
-                    .expect("Failed to serialize StreamData to JSON");
-
-                let kafka_timestamp = stream_data.last_arrival_time as i64;
-
-                // Parse the JSON string into a Value
-                /*let mut value: serde_json::Value =
-                    serde_json::from_slice(&serialized_data).expect("Failed to parse JSON");
-
-                // remove existing "timestamp" field from value JSON
-                value.as_object_mut().unwrap().remove("timestamp");
-
-                value["timestamp"] = serde_json::json!(kafka_timestamp);
-
-                // Convert the start_time to an ISO 8601 formatted timestamp
-                if let Some(start_time) = value.get("start_time") {
-                    if let Some(start_time) = start_time.as_u64() {
-                        let start_time = chrono::Local
-                            .timestamp_millis_opt(start_time as i64)
-                            .single()
-                            .unwrap()
-                            .to_rfc3339();
-                        value["start_time"] = serde_json::Value::String(start_time);
+                let pid = stream_data.pid;
+                {
+                    let mut stream_groupings = STREAM_GROUPINGS.write().unwrap();
+                    if let Some(grouping) = stream_groupings.get_mut(&pid) {
+                        // Update the existing StreamData instance in the grouping
+                        let last_stream_data = grouping.stream_data_list.last_mut().unwrap();
+                        *last_stream_data = stream_data.clone();
+                    } else {
+                        let new_grouping = StreamGrouping {
+                            stream_data_list: vec![stream_data.clone()],
+                        };
+                        stream_groupings.insert(pid, new_grouping);
                     }
                 }
-
-                // Convert the start_time to an ISO 8601 formatted timestamp
-                if let Some(last_arrival_time) = value.get("last_arrival_time") {
-                    if let Some(last_arrival_time) = last_arrival_time.as_u64() {
-                        let last_arrival_time = chrono::Local
-                            .timestamp_millis_opt(last_arrival_time as i64)
-                            .single()
-                            .unwrap()
-                            .to_rfc3339();
-                        value["last_arrival_time"] = serde_json::Value::String(last_arrival_time);
-                    }
-                }
-
-                // Convert the start_time to an ISO 8601 formatted timestamp
-                if let Some(last_sample_time) = value.get("last_sample_time") {
-                    if let Some(last_sample_time) = last_sample_time.as_u64() {
-                        let last_sample_time = chrono::Local
-                            .timestamp_millis_opt(last_sample_time as i64)
-                            .single()
-                            .unwrap()
-                            .to_rfc3339();
-                        value["last_sample_time"] = serde_json::Value::String(last_sample_time);
-                    }
-                }
-
-                // Normalize the bitrate fields to megabits with 4 decimal places precision
-                if let Some(bitrate) = value.get_mut("bitrate") {
-                    *bitrate = serde_json::json!(
-                        (bitrate.as_f64().unwrap_or(0.0) / 1_000.0).round() / 1000.0
-                    );
-                }
-
-                if let Some(bitrate_max) = value.get_mut("bitrate_max") {
-                    *bitrate_max = serde_json::json!(
-                        (bitrate_max.as_f64().unwrap_or(0.0) / 1_000.0).round() / 1000.0
-                    );
-                }
-
-                if let Some(bitrate_min) = value.get_mut("bitrate_min") {
-                    *bitrate_min = serde_json::json!(
-                        (bitrate_min.as_f64().unwrap_or(0.0) / 1_000.0).round() / 1000.0
-                    );
-                }
-
-                if let Some(bitrate_avg) = value.get_mut("bitrate_avg") {
-                    *bitrate_avg = serde_json::json!(
-                        (bitrate_avg.as_f64().unwrap_or(0.0) / 1_000.0).round() / 1000.0
-                    );
-                }
-
-                // Convert the modified JSON value back to bytes
-                serialized_data = serde_json::to_vec(&value).expect("Failed to serialize JSON");
-                */
 
                 // Check if it's time to send data to Kafka based on the interval
                 if send_to_kafka
@@ -978,19 +1100,77 @@ async fn main() {
                 {
                     last_kafka_send_time = Instant::now();
 
-                    // Send serialized data to Kafka
+                    // Acquire read access to STREAM_GROUPINGS
+                    let stream_groupings = STREAM_GROUPINGS.read().unwrap();
+                    let mut flattened_data = flatten_streams(&stream_groupings);
+
+                    // Initialize variables to accumulate global averages
+                    let mut total_bitrate_avg: u64 = 0;
+                    let mut total_iat_avg: u64 = 0;
+                    let mut stream_count: u64 = 0;
+
+                    // Process each stream to accumulate averages
+                    for (_, grouping) in stream_groupings.iter() {
+                        for stream_data in &grouping.stream_data_list {
+                            total_bitrate_avg += stream_data.bitrate_avg as u64;
+                            total_iat_avg += stream_data.iat_avg;
+                            stream_count += 1;
+                        }
+                    }
+
+                    // Calculate global averages
+                    let global_bitrate_avg = if stream_count > 0 {
+                        total_bitrate_avg / stream_count
+                    } else {
+                        0
+                    };
+                    let global_iat_avg = if stream_count > 0 {
+                        total_iat_avg / stream_count
+                    } else {
+                        0
+                    };
+                    let current_timestamp = current_unix_timestamp_ms().unwrap_or(0);
+
+                    // Directly insert global statistics and timestamp into the flattened_data map
+                    flattened_data.insert(
+                        "bitrate_avg_global".to_string(),
+                        serde_json::json!(global_bitrate_avg),
+                    );
+                    flattened_data.insert(
+                        "iat_avg_global".to_string(),
+                        serde_json::json!(global_iat_avg),
+                    );
+                    flattened_data.insert(
+                        "timestamp".to_string(),
+                        serde_json::json!(current_timestamp),
+                    );
+
+                    // Convert the Map directly to a Value for serialization
+                    let combined_stats = serde_json::Value::Object(flattened_data);
+
+                    // Serialization
+                    let ser_data =
+                        serde_json::to_vec(&combined_stats).expect("Failed to serialize for Kafka");
+
+                    // Debug output if enabled
+                    if debug_on {
+                        let ser_data_str = String::from_utf8_lossy(&ser_data);
+                        debug!("MONITOR::PACKET:SERIALIZED_DATA: {}", ser_data_str);
+                    }
+
+                    // Kafka message production
                     let future = produce_message(
-                        serialized_data,
+                        ser_data,
                         kafka_broker.clone(),
                         kafka_topic.clone(),
                         kafka_timeout,
                         kafka_key.clone(),
-                        kafka_timestamp,
+                        current_unix_timestamp_ms().unwrap_or(0) as i64,
                         producer.clone(),
                         &admin_client,
                     );
 
-                    // Wait for the future to complete
+                    // Await the future for sending the message
                     future.await;
                 }
 

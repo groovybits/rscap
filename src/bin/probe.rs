@@ -56,10 +56,16 @@ use tokio::time::Duration;
 pub struct BoxCodec;
 
 impl PacketCodec for BoxCodec {
-    type Item = Box<[u8]>;
+    type Item = (Box<[u8]>, std::time::SystemTime); // Adjusted to return SystemTime
 
     fn decode(&mut self, packet: pcap::Packet) -> Self::Item {
-        packet.data.into()
+        // Convert pcap timestamp to SystemTime
+        let timestamp = std::time::UNIX_EPOCH
+            + std::time::Duration::new(
+                packet.header.ts.tv_sec as u64,
+                packet.header.ts.tv_usec as u32 * 1000,
+            );
+        (packet.data.into(), timestamp)
     }
 }
 
@@ -177,6 +183,7 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
         stream_data_msg.set_iat_avg(stream_data.iat_avg);
         stream_data_msg.set_error_count(stream_data.error_count);
         stream_data_msg.set_last_arrival_time(stream_data.last_arrival_time);
+        stream_data_msg.set_capture_time(stream_data.capture_time);
         stream_data_msg.set_last_sample_time(stream_data.last_sample_time);
         stream_data_msg.set_start_time(stream_data.start_time);
         stream_data_msg.set_total_bits(stream_data.total_bits);
@@ -425,7 +432,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.4.0",
+    version = "0.4.1",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {
@@ -690,7 +697,7 @@ async fn rscap() {
     // Initialize logging
     let _ = env_logger::try_init();
 
-    let (ptx, mut prx) = mpsc::channel::<Arc<Vec<u8>>>(pcap_channel_size);
+    let (ptx, mut prx) = mpsc::channel::<(Arc<Vec<u8>>, u64)>(pcap_channel_size);
 
     let running = Arc::new(AtomicBool::new(true));
     let running_capture = running.clone();
@@ -724,9 +731,10 @@ async fn rscap() {
 
                             // Convert to Arc<Vec<u8>> to maintain consistency with pcap logic
                             let packet_data = Arc::new(data.to_vec());
+                            let timestamp = current_unix_timestamp_ms().unwrap_or(0);
 
                             // Send packet data to processing channel
-                            ptx.send(packet_data).await.unwrap();
+                            ptx.send((packet_data, timestamp)).await.unwrap();
 
                             // Here you can implement additional processing such as parsing the packet,
                             // updating statistics, handling specific packet types, etc.
@@ -775,10 +783,19 @@ async fn rscap() {
                         break;
                     }
                     match packet {
-                        Ok(data) => {
+                        Ok((data, system_time_timestamp)) => {
                             count += 1;
                             let packet_data = Arc::new(data.to_vec());
-                            ptx.send(packet_data).await.unwrap();
+
+                            // Convert SystemTime to u64 milliseconds
+                            let duration_since_epoch = system_time_timestamp
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .expect("Time went backwards");
+                            let timestamp_ms = duration_since_epoch.as_secs() * 1_000
+                                + duration_since_epoch.subsec_millis() as u64;
+
+                            ptx.send((packet_data, timestamp_ms)).await.unwrap();
+
                             if !running_capture.load(Ordering::SeqCst) {
                                 break;
                             }
@@ -790,8 +807,8 @@ async fn rscap() {
                                 stats_last_sent_ts = current_ts;
                                 let stats = stream.capture_mut().stats().unwrap();
                                 println!(
-                                    "#{} Current stats: Received: {}, Dropped: {}/{}, Interface Dropped: {} packet_size: {} bytes.",
-                                    count, stats.received, stats.dropped - packets_dropped, stats.dropped, stats.if_dropped, data.len(),
+                                    "[{}] #{} Current stats: Received: {}, Dropped: {}/{}, Interface Dropped: {} packet_size: {} bytes.",
+                                    timestamp_ms, count, stats.received, stats.dropped - packets_dropped, stats.dropped, stats.if_dropped, data.len(),
                                 );
                                 packets_dropped = stats.dropped;
                             }
@@ -1349,7 +1366,7 @@ async fn rscap() {
     };
 
     let mut dot_last_sent_ts = Instant::now();
-    while let Some(packet) = prx.recv().await {
+    while let Some((packet, timestamp)) = prx.recv().await {
         if packet_count > 0 && packets_captured > packet_count {
             println!(
                 "\nPacket count limit reached {}, signaling termination...",
@@ -1378,7 +1395,7 @@ async fn rscap() {
         }
 
         let chunks = if is_mpegts {
-            process_mpegts_packet(payload_offset, packet, packet_size, start_time)
+            process_mpegts_packet(payload_offset, packet, packet_size, start_time, timestamp)
         } else {
             process_smpte2110_packet(
                 payload_offset,
@@ -1386,6 +1403,7 @@ async fn rscap() {
                 packet_size,
                 start_time,
                 debug_smpte2110,
+                timestamp,
             )
         };
 
@@ -1422,7 +1440,7 @@ async fn rscap() {
                         if pid == pmt_info.pid {
                             debug!("ProcessPacket: PMT packet detected with PID {}", pid);
                             // Update PID_MAP with new stream types
-                            update_pid_map(&packet_chunk, &pmt_info.packet);
+                            update_pid_map(&packet_chunk, &pmt_info.packet, timestamp);
                             // Identify the video PID (if not already identified)
                             if let Some((new_pid, new_codec)) = identify_video_pid(&packet_chunk) {
                                 if video_pid.map_or(true, |vp| vp != new_pid) {
