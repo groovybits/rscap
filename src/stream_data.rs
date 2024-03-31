@@ -11,7 +11,6 @@ use log::{debug, error, info};
 use rtp::RtpReader;
 use rtp_rs as rtp;
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{fmt, sync::Arc, sync::Mutex};
 
 // global variable to store the MpegTS PID Map (initially empty)
@@ -154,14 +153,10 @@ impl StreamData {
         start_time: u64,
         timestamp: u64,
         continuity_counter: u8,
-        capture_timestamp: SystemTime,
+        capture_timestamp: u64,
     ) -> Self {
-        //let last_arrival_time = current_unix_timestamp_ms().unwrap_or(0);
         // convert capture_timestamp to unix timestamp in milliseconds since epoch
-        let last_arrival_time = capture_timestamp
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+        let last_arrival_time = capture_timestamp;
 
         StreamData {
             pid,
@@ -199,7 +194,7 @@ impl StreamData {
             rtp_line_continuation: 0,
             rtp_extended_sequence_number: 0,
             stream_type_number,
-            capture_time: last_arrival_time,
+            capture_time: capture_timestamp,
         }
     }
     // set RTP fields
@@ -648,9 +643,6 @@ pub fn process_packet(
             if pmt_pid != 0xFFFF {
                 debug!("ProcessPacket: New PID {} Found, adding to PID map.", pid);
             } else {
-                // convert stream_data_packet.capture_time a u64 to SystemTime
-                let capture_time = SystemTime::UNIX_EPOCH
-                    + Duration::from_secs(stream_data_packet.capture_time as u64);
                 // PMT packet not found yet, add the stream_data_packet to the pid_map
                 let mut stream_data = Arc::new(StreamData::new(
                     Arc::new(Vec::new()), // Ensure packet_data is Arc<Vec<u8>>
@@ -663,7 +655,7 @@ pub fn process_packet(
                     stream_data_packet.start_time,
                     stream_data_packet.timestamp,
                     stream_data_packet.continuity_counter,
-                    capture_time,
+                    stream_data_packet.capture_time,
                 ));
                 Arc::make_mut(&mut stream_data).update_stats(packet.len());
 
@@ -677,7 +669,7 @@ pub fn process_packet(
 }
 
 // Use the stored PAT packet
-pub fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8], capture_timestamp: SystemTime) {
+pub fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8], capture_timestamp: u64) {
     let mut pid_map = PID_MAP.lock().unwrap();
 
     // Process the stored PAT packet to find program numbers and corresponding PMT PIDs
@@ -903,7 +895,7 @@ pub fn process_smpte2110_packet(
     _packet_size: usize,
     start_time: u64,
     debug: bool,
-    capture_timestamp: SystemTime,
+    capture_timestamp: u64,
 ) -> Vec<StreamData> {
     let mut streams = Vec::new();
     let mut offset = payload_offset;
@@ -998,7 +990,7 @@ pub fn process_mpegts_packet(
     packet: Arc<Vec<u8>>,
     packet_size: usize,
     start_time: u64,
-    capture_timestamp: SystemTime,
+    capture_timestamp: u64,
 ) -> Vec<StreamData> {
     let mut start = payload_offset;
     let mut read_size = packet_size;

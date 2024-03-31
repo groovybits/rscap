@@ -27,7 +27,6 @@ use rscap::stream_data::{
     update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
 };
 use rscap::{current_unix_timestamp_ms, hexdump};
-use std::time::SystemTime;
 use std::{
     error::Error as StdError,
     fmt,
@@ -698,7 +697,7 @@ async fn rscap() {
     // Initialize logging
     let _ = env_logger::try_init();
 
-    let (ptx, mut prx) = mpsc::channel::<(Arc<Vec<u8>>, SystemTime)>(pcap_channel_size);
+    let (ptx, mut prx) = mpsc::channel::<(Arc<Vec<u8>>, u64)>(pcap_channel_size);
 
     let running = Arc::new(AtomicBool::new(true));
     let running_capture = running.clone();
@@ -732,7 +731,7 @@ async fn rscap() {
 
                             // Convert to Arc<Vec<u8>> to maintain consistency with pcap logic
                             let packet_data = Arc::new(data.to_vec());
-                            let timestamp = SystemTime::now();
+                            let timestamp = current_unix_timestamp_ms().unwrap_or(0);
 
                             // Send packet data to processing channel
                             ptx.send((packet_data, timestamp)).await.unwrap();
@@ -787,6 +786,8 @@ async fn rscap() {
                         Ok((data, timestamp)) => {
                             count += 1;
                             let packet_data = Arc::new(data.to_vec());
+                            // create u64 with systemTime that captures ms granularity timestamp
+                            let timestamp = current_unix_timestamp_ms().unwrap_or(0);
                             ptx.send((packet_data, timestamp)).await.unwrap();
                             if !running_capture.load(Ordering::SeqCst) {
                                 break;
