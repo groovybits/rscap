@@ -242,7 +242,9 @@ async fn delivery_report(
     }
 }
 
-fn flatten_streams(stream_groupings: &AHashMap<u16, StreamGrouping>) -> Value {
+fn flatten_streams(
+    stream_groupings: &AHashMap<u16, StreamGrouping>,
+) -> serde_json::Map<String, Value> {
     let mut flat_structure: serde_json::Map<String, Value> = serde_json::Map::new();
 
     // Example of adding global statistics
@@ -389,7 +391,7 @@ fn flatten_streams(stream_groupings: &AHashMap<u16, StreamGrouping>) -> Value {
         );
     }
 
-    Value::Object(flat_structure)
+    flat_structure
 }
 
 async fn produce_message(
@@ -1179,7 +1181,7 @@ async fn main() {
 
                     // Acquire read access to STREAM_GROUPINGS
                     let stream_groupings = STREAM_GROUPINGS.read().unwrap();
-                    let flattened_data = flatten_streams(&stream_groupings);
+                    let mut flattened_data = flatten_streams(&stream_groupings);
 
                     // Initialize variables to accumulate global averages
                     let mut total_bitrate_avg: u64 = 0;
@@ -1208,15 +1210,22 @@ async fn main() {
                     };
                     let current_timestamp = current_unix_timestamp_ms().unwrap_or(0);
 
-                    // Structuring data for serialization, including the newly calculated global averages
-                    let combined_stats = json!({
-                        "streams": flattened_data,
-                        "total_mpegts_stats_combined": {
-                            "bitrate_avg_global": global_bitrate_avg,
-                            "iat_avg_global": global_iat_avg,
-                            "timestamp": current_timestamp,
-                        }
-                    });
+                    // Directly insert global statistics and timestamp into the flattened_data map
+                    flattened_data.insert(
+                        "bitrate_avg_global".to_string(),
+                        serde_json::json!(global_bitrate_avg),
+                    );
+                    flattened_data.insert(
+                        "iat_avg_global".to_string(),
+                        serde_json::json!(global_iat_avg),
+                    );
+                    flattened_data.insert(
+                        "timestamp".to_string(),
+                        serde_json::json!(current_timestamp),
+                    );
+
+                    // Convert the Map directly to a Value for serialization
+                    let combined_stats = serde_json::Value::Object(flattened_data);
 
                     // Serialization
                     let ser_data =
