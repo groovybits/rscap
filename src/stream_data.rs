@@ -268,7 +268,7 @@ impl StreamData {
         self.total_bits += bits;
         self.total_bits_sample += bits;
 
-        println!(
+        debug!(
             "{} Updating stats with packet size: {} and capture time: {}",
             self.count, packet_size, self.capture_time
         );
@@ -315,7 +315,7 @@ impl StreamData {
             }
 
             // Calculate and update Inter-Arrival Time (IAT) and its statistics
-            if self.count > 0 {
+            if self.count > 1 {
                 let iat = self
                     .capture_time
                     .checked_sub(self.last_arrival_time)
@@ -323,7 +323,7 @@ impl StreamData {
                 self.iat = iat;
 
                 // Update IAT max with proper initialization handling
-                if run_time_ms >= 60000 && self.count > 1 {
+                if run_time_ms >= 60000 && self.count > 100 {
                     if iat > self.iat_max {
                         self.iat_max = iat;
                     }
@@ -595,20 +595,19 @@ pub fn process_packet(
         Some(stream_data_arc) => {
             // Existing StreamData instance found, update it
             let mut stream_data = Arc::clone(stream_data_arc);
-            let arrival_time = stream_data.capture_time;
+            Arc::make_mut(&mut stream_data).update_capture_time(stream_data_packet.capture_time);
             Arc::make_mut(&mut stream_data).update_stats(packet.len());
-            Arc::make_mut(&mut stream_data).increment_count(1);
+            //Arc::make_mut(&mut stream_data).increment_count(1);
             Arc::make_mut(&mut stream_data)
                 .update_stream_type_number(stream_data_packet.stream_type_number);
-            Arc::make_mut(&mut stream_data).update_capture_time(stream_data_packet.capture_time);
             Arc::make_mut(&mut stream_data)
                 .update_program_number(stream_data_packet.program_number);
-            //if stream_data.pid != 0x1FFF && is_mpegts {
-            Arc::make_mut(&mut stream_data)
-                .set_continuity_counter(stream_data_packet.continuity_counter);
-            //}
+            if stream_data.pid != 0x1FFF && is_mpegts {
+                Arc::make_mut(&mut stream_data)
+                    .set_continuity_counter(stream_data_packet.continuity_counter);
+            }
             // calculate uptime using the arrival time as SystemTime and start_time as u64
-            let uptime = arrival_time - stream_data.start_time;
+            let uptime = stream_data.capture_time - stream_data.start_time;
 
             // print out each field of structure
             debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {} packet_offset: {}, packet_len: {}",

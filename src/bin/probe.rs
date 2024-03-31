@@ -783,12 +783,19 @@ async fn rscap() {
                         break;
                     }
                     match packet {
-                        Ok((data, timestamp)) => {
+                        Ok((data, system_time_timestamp)) => {
                             count += 1;
                             let packet_data = Arc::new(data.to_vec());
-                            // create u64 with systemTime that captures ms granularity timestamp
-                            let timestamp = current_unix_timestamp_ms().unwrap_or(0);
-                            ptx.send((packet_data, timestamp)).await.unwrap();
+
+                            // Convert SystemTime to u64 milliseconds
+                            let duration_since_epoch = system_time_timestamp
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .expect("Time went backwards");
+                            let timestamp_ms = duration_since_epoch.as_secs() * 1_000
+                                + duration_since_epoch.subsec_millis() as u64;
+
+                            ptx.send((packet_data, timestamp_ms)).await.unwrap();
+
                             if !running_capture.load(Ordering::SeqCst) {
                                 break;
                             }
@@ -800,8 +807,8 @@ async fn rscap() {
                                 stats_last_sent_ts = current_ts;
                                 let stats = stream.capture_mut().stats().unwrap();
                                 println!(
-                                    "#{} Current stats: Received: {}, Dropped: {}/{}, Interface Dropped: {} packet_size: {} bytes.",
-                                    count, stats.received, stats.dropped - packets_dropped, stats.dropped, stats.if_dropped, data.len(),
+                                    "[{}] #{} Current stats: Received: {}, Dropped: {}/{}, Interface Dropped: {} packet_size: {} bytes.",
+                                    timestamp_ms, count, stats.received, stats.dropped - packets_dropped, stats.dropped, stats.if_dropped, data.len(),
                                 );
                                 packets_dropped = stats.dropped;
                             }

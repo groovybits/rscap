@@ -1025,8 +1025,6 @@ async fn main() {
                 if send_to_kafka
                     && last_kafka_send_time.elapsed().as_millis() >= args.kafka_interval as u128
                 {
-                    println!("Attempting to send data to Kafka.");
-
                     last_kafka_send_time = Instant::now();
 
                     let stream_groupings = STREAM_GROUPINGS.read().unwrap();
@@ -1038,10 +1036,10 @@ async fn main() {
                     for (pid, grouping) in stream_groupings.iter() {
                         let stream_count = grouping.stream_data_list.len();
 
-                        println!("Kafka sending stream count: {}", stream_count);
+                        debug!("Kafka sending stream count: {}", stream_count);
 
                         if stream_count > 0 {
-                            println!(
+                            debug!(
                                 "Kafka sending stream data for pid {} for {} streams.",
                                 pid, stream_count
                             );
@@ -1055,7 +1053,7 @@ async fn main() {
                                 iat_sum += stream_data.iat_avg;
                             }
 
-                            let bitrate_avg = bitrate_sum / stream_count as u32;
+                            let bitrate_avg = bitrate_sum; // / stream_count as u32;
                             let iat_avg = iat_sum / stream_count as u64;
 
                             let combined_stream_data = CombinedStreamData {
@@ -1077,7 +1075,7 @@ async fn main() {
 
                     let stream_count_global = combined_streams.len();
                     let bitrate_avg_global = if stream_count_global > 0 {
-                        bitrate_sum_global / stream_count_global as u32
+                        bitrate_sum_global as u32
                     } else {
                         0
                     };
@@ -1094,14 +1092,14 @@ async fn main() {
                         iat_avg_global,
                     };
 
-                    println!("Before serialization to Kafka.");
-
                     let serialized_data = serde_json::to_vec(&combined_schema)
                         .expect("Failed to serialize CombinedSchema to JSON");
 
                     // print out serialized_data nicely
-                    let serialized_data_str = String::from_utf8_lossy(&serialized_data);
-                    println!("MONITOR::PACKET:SERIALIZED_DATA: {}", serialized_data_str);
+                    if debug_on {
+                        let serialized_data_str = String::from_utf8_lossy(&serialized_data);
+                        debug!("MONITOR::PACKET:SERIALIZED_DATA: {}", serialized_data_str);
+                    }
 
                     let kafka_timestamp = current_unix_timestamp_ms().unwrap_or(0) as i64;
 
