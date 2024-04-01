@@ -1121,7 +1121,7 @@ async fn main() {
                         0
                     };
                     let global_iat_avg = if stream_count > 0 { total_iat_avg } else { 0 };
-                    let current_timestamp = stream_data.capture_time;
+                    let current_timestamp = current_unix_timestamp_ms().unwrap_or(0); // stream_data.capture_time;
 
                     // Directly insert global statistics and timestamp into the flattened_data map
                     flattened_data.insert(
