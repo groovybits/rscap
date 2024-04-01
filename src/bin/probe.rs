@@ -492,6 +492,10 @@ struct Args {
     #[clap(long, env = "SEND_RAW_STREAM", default_value_t = false)]
     send_raw_stream: bool,
 
+    /// Send Null Packets
+    #[clap(long, env = "SEND_NULL_PACKETS", default_value_t = false)]
+    send_null_packets: bool,
+
     /// number of packets to capture
     #[clap(long, env = "PACKET_COUNT", default_value_t = 0)]
     packet_count: u64,
@@ -1506,15 +1510,19 @@ async fn rscap() {
                 stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
                 stream_data.packet_len = 0;
                 stream_data.packet_start = 0;
-                if pid == 0x1FFF && is_mpegts {
-                    continue;
+                if !args.send_null_packets {
+                    if pid == 0x1FFF && is_mpegts {
+                        continue;
+                    }
                 }
             } else if send_raw_stream {
                 // Skip null packets
-                if pid == 0x1FFF && is_mpegts {
-                    // clear the Arc so it can be reused
-                    stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
-                    continue;
+                if !args.send_null_packets {
+                    if pid == 0x1FFF && is_mpegts {
+                        // clear the Arc so it can be reused
+                        stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
+                        continue;
+                    }
                 }
             }
             batch.push(stream_data);
