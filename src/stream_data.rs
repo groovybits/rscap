@@ -254,11 +254,12 @@ impl StreamData {
                     return;
                 }
             }
-            // loss
-            self.increment_error_count(1);
+            // increment the error count by the difference between the current and previous continuity counter
+            let error_count = (self.continuity_counter - previous_continuity_counter) as u32;
+            self.error_count += error_count;
             error!(
-                "Continuity Counter Error: PID: {} Previous: {} Current: {}",
-                self.pid, previous_continuity_counter, self.continuity_counter
+                "Continuity Counter Error: PID: {} Previous: {} Current: {} Loss: {}",
+                self.pid, previous_continuity_counter, self.continuity_counter, error_count
             );
         }
         self.continuity_counter = continuity_counter;
@@ -597,11 +598,8 @@ pub fn process_packet(
             let mut stream_data = Arc::clone(stream_data_arc);
             Arc::make_mut(&mut stream_data).update_capture_time(stream_data_packet.capture_time);
             Arc::make_mut(&mut stream_data).update_stats(packet.len());
-            //Arc::make_mut(&mut stream_data).increment_count(1);
             Arc::make_mut(&mut stream_data)
                 .update_stream_type_number(stream_data_packet.stream_type_number);
-            Arc::make_mut(&mut stream_data)
-                .update_program_number(stream_data_packet.program_number);
             if stream_data.pid != 0x1FFF && is_mpegts {
                 Arc::make_mut(&mut stream_data)
                     .set_continuity_counter(stream_data_packet.continuity_counter);
@@ -623,7 +621,6 @@ pub fn process_packet(
             stream_data_packet.iat_min = stream_data.iat_min;
             stream_data_packet.stream_type = stream_data.stream_type.clone();
             stream_data_packet.start_time = stream_data.start_time;
-            stream_data_packet.error_count = stream_data.error_count;
             stream_data_packet.last_arrival_time = stream_data.last_arrival_time;
             stream_data_packet.last_sample_time = stream_data.last_sample_time;
             stream_data_packet.total_bits_sample = stream_data.total_bits_sample;
@@ -631,6 +628,7 @@ pub fn process_packet(
             stream_data_packet.count = stream_data.count;
             stream_data_packet.pmt_pid = pmt_pid;
             stream_data_packet.program_number = stream_data.program_number;
+            stream_data_packet.error_count = stream_data.error_count;
 
             // write the stream_data back to the pid_map with modified values
             pid_map.insert(pid, stream_data);

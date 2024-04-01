@@ -247,10 +247,6 @@ fn flatten_streams(
 ) -> serde_json::Map<String, Value> {
     let mut flat_structure: serde_json::Map<String, Value> = serde_json::Map::new();
 
-    // Example of adding global statistics
-    flat_structure.insert("bitrate_avg_global".into(), json!(7));
-    flat_structure.insert("iat_avg_global".into(), json!(0));
-
     for (pid, grouping) in stream_groupings.iter() {
         let stream_data = grouping.stream_data_list.last().unwrap(); // Assuming last item is representative
 
@@ -1113,23 +1109,21 @@ async fn main() {
                     for (_, grouping) in stream_groupings.iter() {
                         for stream_data in &grouping.stream_data_list {
                             total_bitrate_avg += stream_data.bitrate_avg as u64;
-                            total_iat_avg += stream_data.iat_avg;
+                            if stream_data.pmt_pid != 65535 {
+                                total_iat_avg += stream_data.iat_avg;
+                            }
                             stream_count += 1;
                         }
                     }
 
                     // Calculate global averages
                     let global_bitrate_avg = if stream_count > 0 {
-                        total_bitrate_avg / stream_count
+                        total_bitrate_avg
                     } else {
                         0
                     };
-                    let global_iat_avg = if stream_count > 0 {
-                        total_iat_avg / stream_count
-                    } else {
-                        0
-                    };
-                    let current_timestamp = current_unix_timestamp_ms().unwrap_or(0);
+                    let global_iat_avg = if stream_count > 0 { total_iat_avg } else { 0 };
+                    let current_timestamp = current_unix_timestamp_ms().unwrap_or(0); // stream_data.capture_time;
 
                     // Directly insert global statistics and timestamp into the flattened_data map
                     flattened_data.insert(
