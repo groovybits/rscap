@@ -7,5 +7,6 @@ RUST_LOG=info \
     --source-port 10000 \
     --source-device en0  \
     --target-ip 0.0.0.0 \
+    --send-null-packets \
     --target-port 5556 \
     --zmq-batch-size 10000 $@
