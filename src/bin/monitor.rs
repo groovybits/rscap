@@ -1109,8 +1109,10 @@ async fn main() {
                     for (_, grouping) in stream_groupings.iter() {
                         for stream_data in &grouping.stream_data_list {
                             total_bitrate_avg += stream_data.bitrate_avg as u64;
-                            total_iat_avg += stream_data.iat_avg;
-                            stream_count += 1;
+                            if stream_data.pmt_pid != 65535 {
+                                total_iat_avg += stream_data.iat_avg;
+                                stream_count += 1;
+                            }
                         }
                     }
 
