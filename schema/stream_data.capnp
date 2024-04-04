@@ -33,4 +33,5 @@ struct StreamDataCapnp {
     streamTypeNumber @29 :UInt8;
     totalBitsSample @30 :UInt64;
     captureTime @31 :UInt64;
+    captureIat @32 :UInt64;
 }

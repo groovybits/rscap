@@ -96,6 +96,7 @@ pub struct StreamData {
     pub rtp_extended_sequence_number: u16,
     pub stream_type_number: u8,
     pub capture_time: u64,
+    pub capture_iat: u64,
 }
 
 impl Clone for StreamData {
@@ -136,6 +137,7 @@ impl Clone for StreamData {
             rtp_extended_sequence_number: self.rtp_extended_sequence_number,
             stream_type_number: self.stream_type_number,
             capture_time: self.capture_time,
+            capture_iat: self.capture_iat,
         }
     }
 }
@@ -154,6 +156,7 @@ impl StreamData {
         timestamp: u64,
         continuity_counter: u8,
         capture_timestamp: u64,
+        capture_iat: u64,
     ) -> Self {
         // convert capture_timestamp to unix timestamp in milliseconds since epoch
         let last_arrival_time = capture_timestamp;
@@ -195,6 +198,7 @@ impl StreamData {
             rtp_extended_sequence_number: 0,
             stream_type_number,
             capture_time: capture_timestamp,
+            capture_iat,
         }
     }
     // set RTP fields
@@ -235,6 +239,9 @@ impl StreamData {
     pub fn update_capture_time(&mut self, capture_timestamp: u64) {
         self.capture_time = capture_timestamp;
     }
+    pub fn update_capture_iat(&mut self, capture_iat: u64) {
+        self.capture_iat = capture_iat;
+    }
     pub fn update_program_number(&mut self, program_number: u16) {
         self.program_number = program_number;
     }
@@ -270,8 +277,8 @@ impl StreamData {
         self.total_bits_sample += bits;
 
         debug!(
-            "{} Updating stats with packet size: {} and capture time: {}",
-            self.count, packet_size, self.capture_time
+            "{} Updating stats with packet size: {} and capture time: {} capture iat: {}",
+            self.count, packet_size, self.capture_time, self.capture_iat
         );
 
         // Calculate elapsed time since the start of streaming and since the last sample
@@ -651,6 +658,7 @@ pub fn process_packet(
                     stream_data_packet.timestamp,
                     stream_data_packet.continuity_counter,
                     stream_data_packet.capture_time,
+                    stream_data_packet.capture_iat,
                 ));
                 Arc::make_mut(&mut stream_data).update_stats(packet.len());
 
@@ -664,7 +672,12 @@ pub fn process_packet(
 }
 
 // Use the stored PAT packet
-pub fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8], capture_timestamp: u64) {
+pub fn update_pid_map(
+    pmt_packet: &[u8],
+    last_pat_packet: &[u8],
+    capture_timestamp: u64,
+    capture_iat: u64,
+) {
     let mut pid_map = PID_MAP.lock().unwrap();
 
     // Process the stored PAT packet to find program numbers and corresponding PMT PIDs
@@ -749,6 +762,7 @@ pub fn update_pid_map(pmt_packet: &[u8], last_pat_packet: &[u8], capture_timesta
                         timestamp,
                         0,
                         capture_timestamp,
+                        capture_iat,
                     ));
                     // update stream_data stats
                     Arc::make_mut(&mut stream_data).update_stats(pmt_packet.len());
@@ -891,6 +905,7 @@ pub fn process_smpte2110_packet(
     start_time: u64,
     debug: bool,
     capture_timestamp: u64,
+    capture_iat: u64,
 ) -> Vec<StreamData> {
     let mut streams = Vec::new();
     let mut offset = payload_offset;
@@ -941,6 +956,7 @@ pub fn process_smpte2110_packet(
                     timestamp as u64,
                     0,
                     capture_timestamp,
+                    capture_iat,
                 );
 
                 // Update StreamData stats and RTP fields
@@ -986,6 +1002,7 @@ pub fn process_mpegts_packet(
     packet_size: usize,
     start_time: u64,
     capture_timestamp: u64,
+    capture_iat: u64,
 ) -> Vec<StreamData> {
     let mut start = payload_offset;
     let mut read_size = packet_size;
@@ -1023,6 +1040,7 @@ pub fn process_mpegts_packet(
                 timestamp,
                 continuity_counter,
                 capture_timestamp,
+                capture_iat,
             );
             stream_data.update_stats(packet_size);
             streams.push(stream_data);

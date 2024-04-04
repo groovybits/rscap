@@ -76,6 +76,7 @@ struct CombinedSchema {
     streams: HashMap<u16, CombinedStreamData>,
     bitrate_avg_global: u32,
     iat_avg_global: u64,
+    cc_errors: u32,
 }
 
 fn is_cea_608(itu_t_t35_data: &sei::user_data_registered_itu_t_t35::ItuTT35) -> bool {
@@ -224,6 +225,7 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         packet_len: 0,
         stream_type_number: reader.get_stream_type_number(),
         capture_time: reader.get_capture_time(),
+        capture_iat: reader.get_capture_iat(),
     };
 
     Ok(stream_data)
@@ -384,6 +386,10 @@ fn flatten_streams(
         flat_structure.insert(
             format!("{}.capture_time", prefix),
             json!(stream_data.capture_time),
+        );
+        flat_structure.insert(
+            format!("{}.capture_iat", prefix),
+            json!(stream_data.capture_iat),
         );
     }
 
@@ -1103,18 +1109,24 @@ async fn main() {
                     // Initialize variables to accumulate global averages
                     let mut total_bitrate_avg: u64 = 0;
                     let mut total_iat_avg: u64 = 0;
+                    let mut total_cc_errors: u64 = 0;
                     let mut stream_count: u64 = 0;
 
                     // Process each stream to accumulate averages
                     for (_, grouping) in stream_groupings.iter() {
                         for stream_data in &grouping.stream_data_list {
                             total_bitrate_avg += stream_data.bitrate_avg as u64;
-                            if stream_data.pmt_pid != 65535 {
-                                total_iat_avg += stream_data.iat_avg;
-                            }
+                            total_iat_avg += stream_data.capture_iat;
+                            total_cc_errors += stream_data.error_count as u64;
                             stream_count += 1;
                         }
                     }
+
+                    // Continuity Counter errors
+                    let global_cc_errors = total_cc_errors;
+
+                    // avg IAT
+                    let global_iat_avg = if stream_count > 0 { total_iat_avg / stream_count } else { 0 };
 
                     // Calculate global averages
                     let global_bitrate_avg = if stream_count > 0 {
@@ -1122,7 +1134,6 @@ async fn main() {
                     } else {
                         0
                     };
-                    let global_iat_avg = if stream_count > 0 { total_iat_avg } else { 0 };
                     let current_timestamp = current_unix_timestamp_ms().unwrap_or(0); // stream_data.capture_time;
 
                     // Directly insert global statistics and timestamp into the flattened_data map
@@ -1133,6 +1144,10 @@ async fn main() {
                     flattened_data.insert(
                         "iat_avg_global".to_string(),
                         serde_json::json!(global_iat_avg),
+                    );
+                    flattened_data.insert(
+                        "cc_errors_global".to_string(),
+                        serde_json::json!(global_cc_errors),
                     );
                     flattened_data.insert(
                         "timestamp".to_string(),
