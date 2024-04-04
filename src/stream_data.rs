@@ -74,6 +74,7 @@ pub struct StreamData {
     pub iat_min: u64,
     pub iat_avg: u64,
     pub error_count: u32,
+    pub current_error_count: u32,
     pub last_arrival_time: u64,
     pub last_sample_time: u64,
     pub start_time: u64,        // field for start time
@@ -97,6 +98,8 @@ pub struct StreamData {
     pub stream_type_number: u8,
     pub capture_time: u64,
     pub capture_iat: u64,
+    pub source_ip: String,
+    pub source_port: i32,
 }
 
 impl Clone for StreamData {
@@ -117,6 +120,7 @@ impl Clone for StreamData {
             iat_min: self.iat_min,
             iat_avg: self.iat_avg,
             error_count: self.error_count,
+            current_error_count: self.current_error_count,
             last_arrival_time: self.last_arrival_time,
             last_sample_time: self.last_sample_time,
             start_time: self.start_time,
@@ -138,6 +142,8 @@ impl Clone for StreamData {
             stream_type_number: self.stream_type_number,
             capture_time: self.capture_time,
             capture_iat: self.capture_iat,
+            source_ip: self.source_ip.clone(),
+            source_port: self.source_port,
         }
     }
 }
@@ -157,6 +163,8 @@ impl StreamData {
         continuity_counter: u8,
         capture_timestamp: u64,
         capture_iat: u64,
+        source_ip: String,
+        source_port: i32,
     ) -> Self {
         // convert capture_timestamp to unix timestamp in milliseconds since epoch
         let last_arrival_time = capture_timestamp;
@@ -177,6 +185,7 @@ impl StreamData {
             iat_min: 0,
             iat_avg: 0,
             error_count: 0,
+            current_error_count: 0,
             last_arrival_time,
             last_sample_time: start_time,
             start_time,           // Initialize start time
@@ -199,6 +208,8 @@ impl StreamData {
             stream_type_number,
             capture_time: capture_timestamp,
             capture_iat,
+            source_ip,
+            source_port,
         }
     }
     // set RTP fields
@@ -232,6 +243,7 @@ impl StreamData {
     }
     pub fn increment_error_count(&mut self, error_count: u32) {
         self.error_count += error_count;
+        self.current_error_count = error_count;
     }
     pub fn increment_count(&mut self, count: u32) {
         self.count += count;
@@ -241,6 +253,12 @@ impl StreamData {
     }
     pub fn update_capture_iat(&mut self, capture_iat: u64) {
         self.capture_iat = capture_iat;
+    }
+    pub fn update_source_ip(&mut self, source_ip: String) {
+        self.source_ip = source_ip;
+    }
+    pub fn update_source_port(&mut self, source_port: u32) {
+        self.source_port = source_port as i32;
     }
     pub fn update_program_number(&mut self, program_number: u16) {
         self.program_number = program_number;
@@ -264,9 +282,10 @@ impl StreamData {
             // increment the error count by the difference between the current and previous continuity counter
             let error_count = (self.continuity_counter - previous_continuity_counter) as u32;
             self.error_count += error_count;
+            self.current_error_count = error_count;
             error!(
-                "Continuity Counter Error: PID: {} Previous: {} Current: {} Loss: {}",
-                self.pid, previous_continuity_counter, self.continuity_counter, error_count
+                "Continuity Counter Error: PID: {} Previous: {} Current: {} Loss: {} Total Loss: {}",
+                self.pid, previous_continuity_counter, self.continuity_counter, error_count, self.error_count
             );
         }
         self.continuity_counter = continuity_counter;
@@ -636,6 +655,7 @@ pub fn process_packet(
             stream_data_packet.pmt_pid = pmt_pid;
             stream_data_packet.program_number = stream_data.program_number;
             stream_data_packet.error_count = stream_data.error_count;
+            stream_data_packet.current_error_count = stream_data.current_error_count;
 
             // write the stream_data back to the pid_map with modified values
             pid_map.insert(pid, stream_data);
@@ -659,6 +679,8 @@ pub fn process_packet(
                     stream_data_packet.continuity_counter,
                     stream_data_packet.capture_time,
                     stream_data_packet.capture_iat,
+                    stream_data_packet.source_ip.clone(),
+                    stream_data_packet.source_port,
                 ));
                 Arc::make_mut(&mut stream_data).update_stats(packet.len());
 
@@ -677,6 +699,8 @@ pub fn update_pid_map(
     last_pat_packet: &[u8],
     capture_timestamp: u64,
     capture_iat: u64,
+    source_ip: String,
+    source_port: i32,
 ) {
     let mut pid_map = PID_MAP.lock().unwrap();
 
@@ -763,6 +787,8 @@ pub fn update_pid_map(
                         0,
                         capture_timestamp,
                         capture_iat,
+                        source_ip.clone(),
+                        source_port,
                     ));
                     // update stream_data stats
                     Arc::make_mut(&mut stream_data).update_stats(pmt_packet.len());
@@ -906,6 +932,8 @@ pub fn process_smpte2110_packet(
     debug: bool,
     capture_timestamp: u64,
     capture_iat: u64,
+    source_ip: String,
+    source_port: i32,
 ) -> Vec<StreamData> {
     let mut streams = Vec::new();
     let mut offset = payload_offset;
@@ -957,6 +985,8 @@ pub fn process_smpte2110_packet(
                     0,
                     capture_timestamp,
                     capture_iat,
+                    source_ip.clone(),
+                    source_port,
                 );
 
                 // Update StreamData stats and RTP fields
@@ -1003,6 +1033,8 @@ pub fn process_mpegts_packet(
     start_time: u64,
     capture_timestamp: u64,
     capture_iat: u64,
+    source_ip: String,
+    source_port: i32,
 ) -> Vec<StreamData> {
     let mut start = payload_offset;
     let mut read_size = packet_size;
@@ -1041,6 +1073,8 @@ pub fn process_mpegts_packet(
                 continuity_counter,
                 capture_timestamp,
                 capture_iat,
+                source_ip.clone(),
+                source_port,
             );
             stream_data.update_stats(packet_size);
             streams.push(stream_data);

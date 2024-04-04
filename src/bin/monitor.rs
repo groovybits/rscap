@@ -76,7 +76,8 @@ struct CombinedSchema {
     streams: HashMap<u16, CombinedStreamData>,
     bitrate_avg_global: u32,
     iat_avg_global: u64,
-    cc_errors: u32,
+    cc_errors_global: u32,
+    current_cc_errors_global: u32,
 }
 
 fn is_cea_608(itu_t_t35_data: &sei::user_data_registered_itu_t_t35::ItuTT35) -> bool {
@@ -183,6 +184,11 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         |text_reader| text_reader.to_string().unwrap_or_default(),
     );
 
+    let source_ip = reader.get_source_ip().map_or_else(
+        |_| String::new(),
+        |text_reader| text_reader.to_string().unwrap_or_default(),
+    );
+
     // Same conversion for rtp_payload_type_name
     let rtp_payload_type_name = reader.get_rtp_payload_type_name().map_or_else(
         |_| String::new(),
@@ -205,6 +211,7 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         iat_min: reader.get_iat_min(),
         iat_avg: reader.get_iat_avg(),
         error_count: reader.get_error_count(),
+        current_error_count: reader.get_current_error_count(),
         last_arrival_time: reader.get_last_arrival_time(),
         last_sample_time: reader.get_last_sample_time(),
         start_time: reader.get_start_time(),
@@ -226,6 +233,8 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         stream_type_number: reader.get_stream_type_number(),
         capture_time: reader.get_capture_time(),
         capture_iat: reader.get_capture_iat(),
+        source_ip,
+        source_port: reader.get_source_port() as i32,
     };
 
     Ok(stream_data)
@@ -315,6 +324,10 @@ fn flatten_streams(
             json!(stream_data.error_count),
         );
         flat_structure.insert(
+            format!("{}.current_error_count", prefix),
+            json!(stream_data.current_error_count),
+        );
+        flat_structure.insert(
             format!("{}.last_arrival_time", prefix),
             json!(stream_data.last_arrival_time),
         );
@@ -390,6 +403,14 @@ fn flatten_streams(
         flat_structure.insert(
             format!("{}.capture_iat", prefix),
             json!(stream_data.capture_iat),
+        );
+        flat_structure.insert(
+            format!("{}.source_ip", prefix),
+            json!(stream_data.source_ip),
+        );
+        flat_structure.insert(
+            format!("{}.source_port", prefix),
+            json!(stream_data.source_port),
         );
     }
 
@@ -1110,7 +1131,10 @@ async fn main() {
                     let mut total_bitrate_avg: u64 = 0;
                     let mut total_iat_avg: u64 = 0;
                     let mut total_cc_errors: u64 = 0;
+                    let mut total_cc_errors_current: u64 = 0;
                     let mut stream_count: u64 = 0;
+                    let mut source_ip: String = String::new();
+                    let mut source_port: u32 = 0;
 
                     // Process each stream to accumulate averages
                     for (_, grouping) in stream_groupings.iter() {
@@ -1118,15 +1142,19 @@ async fn main() {
                             total_bitrate_avg += stream_data.bitrate_avg as u64;
                             total_iat_avg += stream_data.capture_iat;
                             total_cc_errors += stream_data.error_count as u64;
+                            total_cc_errors_current += stream_data.current_error_count as u64;
+                            source_port = stream_data.source_port as u32;
+                            source_ip = stream_data.source_ip.clone();
                             stream_count += 1;
                         }
                     }
 
                     // Continuity Counter errors
                     let global_cc_errors = total_cc_errors;
+                    let global_cc_errors_current = total_cc_errors_current;
 
                     // avg IAT
-                    let global_iat_avg = if stream_count > 0 { total_iat_avg / stream_count } else { 0 };
+                    let global_iat_avg = if stream_count > 0 { total_iat_avg as f64 / stream_count as f64 } else { 0.0 };
 
                     // Calculate global averages
                     let global_bitrate_avg = if stream_count > 0 {
@@ -1150,8 +1178,20 @@ async fn main() {
                         serde_json::json!(global_cc_errors),
                     );
                     flattened_data.insert(
+                        "current_cc_errors_global".to_string(),
+                        serde_json::json!(global_cc_errors_current),
+                    );
+                    flattened_data.insert(
                         "timestamp".to_string(),
                         serde_json::json!(current_timestamp),
+                    );
+                    flattened_data.insert(
+                        "source_ip".to_string(),
+                        serde_json::json!(source_ip),
+                    );
+                    flattened_data.insert(
+                        "source_port".to_string(),
+                        serde_json::json!(source_port),
                     );
 
                     // Convert the Map directly to a Value for serialization

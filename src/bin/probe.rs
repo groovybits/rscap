@@ -182,6 +182,7 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
         stream_data_msg.set_iat_min(stream_data.iat_min);
         stream_data_msg.set_iat_avg(stream_data.iat_avg);
         stream_data_msg.set_error_count(stream_data.error_count);
+        stream_data_msg.set_current_error_count(stream_data.current_error_count);
         stream_data_msg.set_last_arrival_time(stream_data.last_arrival_time);
         stream_data_msg.set_capture_time(stream_data.capture_time);
         stream_data_msg.set_capture_iat(stream_data.capture_iat);
@@ -201,6 +202,8 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
         stream_data_msg.set_rtp_field_id(stream_data.rtp_field_id);
         stream_data_msg.set_rtp_line_continuation(stream_data.rtp_line_continuation);
         stream_data_msg.set_rtp_extended_sequence_number(stream_data.rtp_extended_sequence_number);
+        stream_data_msg.set_source_ip(stream_data.source_ip.as_str().into());
+        stream_data_msg.set_source_port(stream_data.source_port as u32);
     }
 
     Ok(message)
@@ -640,7 +643,7 @@ async fn rscap() {
     let target_port = args.target_port;
     let target_ip = args.target_ip;
     let source_device = args.source_device;
-    let source_ip = args.source_ip;
+    let source_ip = args.source_ip.clone();
     let source_protocol = args.source_protocol;
     let source_port = args.source_port;
     let debug_on = args.debug_on;
@@ -1414,7 +1417,7 @@ async fn rscap() {
         }
 
         let chunks = if is_mpegts {
-            process_mpegts_packet(payload_offset, packet, packet_size, start_time, timestamp, iat)
+            process_mpegts_packet(payload_offset, packet, packet_size, start_time, timestamp, iat, args.source_ip.clone(), args.source_port)
         } else {
             process_smpte2110_packet(
                 payload_offset,
@@ -1424,6 +1427,8 @@ async fn rscap() {
                 debug_smpte2110,
                 timestamp,
                 iat,
+                args.source_ip.clone(),
+                args.source_port,
             )
         };
 
@@ -1460,7 +1465,7 @@ async fn rscap() {
                         if pid == pmt_info.pid {
                             debug!("ProcessPacket: PMT packet detected with PID {}", pid);
                             // Update PID_MAP with new stream types
-                            update_pid_map(&packet_chunk, &pmt_info.packet, timestamp, iat);
+                            update_pid_map(&packet_chunk, &pmt_info.packet, timestamp, iat, args.source_ip.clone(), args.source_port);
                             // Identify the video PID (if not already identified)
                             if let Some((new_pid, new_codec)) = identify_video_pid(&packet_chunk) {
                                 if video_pid.map_or(true, |vp| vp != new_pid) {
