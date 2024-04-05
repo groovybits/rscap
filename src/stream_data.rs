@@ -281,12 +281,15 @@ impl StreamData {
             }
             // increment the error count by the difference between the current and previous continuity counter
             let error_count = (self.continuity_counter - previous_continuity_counter) as u32;
-            self.error_count += error_count;
+            self.error_count += 1;
             self.current_error_count = error_count;
             error!(
                 "Continuity Counter Error: PID: {} Previous: {} Current: {} Loss: {} Total Loss: {}",
                 self.pid, previous_continuity_counter, self.continuity_counter, error_count, self.error_count
             );
+        } else {
+            // reset the error count
+            self.current_error_count = 0;
         }
         self.continuity_counter = continuity_counter;
     }
