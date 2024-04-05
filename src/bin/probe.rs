@@ -182,8 +182,10 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
         stream_data_msg.set_iat_min(stream_data.iat_min);
         stream_data_msg.set_iat_avg(stream_data.iat_avg);
         stream_data_msg.set_error_count(stream_data.error_count);
+        stream_data_msg.set_current_error_count(stream_data.current_error_count);
         stream_data_msg.set_last_arrival_time(stream_data.last_arrival_time);
         stream_data_msg.set_capture_time(stream_data.capture_time);
+        stream_data_msg.set_capture_iat(stream_data.capture_iat);
         stream_data_msg.set_last_sample_time(stream_data.last_sample_time);
         stream_data_msg.set_start_time(stream_data.start_time);
         stream_data_msg.set_total_bits(stream_data.total_bits);
@@ -200,6 +202,8 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
         stream_data_msg.set_rtp_field_id(stream_data.rtp_field_id);
         stream_data_msg.set_rtp_line_continuation(stream_data.rtp_line_continuation);
         stream_data_msg.set_rtp_extended_sequence_number(stream_data.rtp_extended_sequence_number);
+        stream_data_msg.set_source_ip(stream_data.source_ip.as_str().into());
+        stream_data_msg.set_source_port(stream_data.source_port as u32);
     }
 
     Ok(message)
@@ -639,7 +643,7 @@ async fn rscap() {
     let target_port = args.target_port;
     let target_ip = args.target_ip;
     let source_device = args.source_device;
-    let source_ip = args.source_ip;
+    let source_ip = args.source_ip.clone();
     let source_protocol = args.source_protocol;
     let source_port = args.source_port;
     let debug_on = args.debug_on;
@@ -701,7 +705,7 @@ async fn rscap() {
     // Initialize logging
     let _ = env_logger::try_init();
 
-    let (ptx, mut prx) = mpsc::channel::<(Arc<Vec<u8>>, u64)>(pcap_channel_size);
+    let (ptx, mut prx) = mpsc::channel::<(Arc<Vec<u8>>, u64, u64)>(pcap_channel_size);
 
     let running = Arc::new(AtomicBool::new(true));
     let running_capture = running.clone();
@@ -726,6 +730,7 @@ async fn rscap() {
             };
 
             let mut packets = Vec::new();
+            let mut last_iat = 0;
             while running_capture.load(Ordering::SeqCst) {
                 match port.rx_burst(&mut packets) {
                     Ok(_) => {
@@ -736,9 +741,15 @@ async fn rscap() {
                             // Convert to Arc<Vec<u8>> to maintain consistency with pcap logic
                             let packet_data = Arc::new(data.to_vec());
                             let timestamp = current_unix_timestamp_ms().unwrap_or(0);
+                            let iat = if last_iat == 0 {
+                                0
+                            } else {
+                                timestamp - last_iat
+                            };
+                            last_iat = timestamp;
 
                             // Send packet data to processing channel
-                            ptx.send((packet_data, timestamp)).await.unwrap();
+                            ptx.send((packet_data, timestamp, iat)).await.unwrap();
 
                             // Here you can implement additional processing such as parsing the packet,
                             // updating statistics, handling specific packet types, etc.
@@ -780,6 +791,7 @@ async fn rscap() {
 
             let mut stats_last_sent_ts = Instant::now();
             let mut packets_dropped = 0;
+            let mut last_iat = 0;
 
             while running_capture.load(Ordering::SeqCst) {
                 while let Some(packet) = stream.next().await {
@@ -797,8 +809,14 @@ async fn rscap() {
                                 .expect("Time went backwards");
                             let timestamp_ms = duration_since_epoch.as_secs() * 1_000
                                 + duration_since_epoch.subsec_millis() as u64;
+                            let iat = if last_iat == 0 {
+                                0
+                            } else {
+                                timestamp_ms - last_iat
+                            };
+                            last_iat = timestamp_ms;
 
-                            ptx.send((packet_data, timestamp_ms)).await.unwrap();
+                            ptx.send((packet_data, timestamp_ms, iat)).await.unwrap();
 
                             if !running_capture.load(Ordering::SeqCst) {
                                 break;
@@ -1370,7 +1388,7 @@ async fn rscap() {
     };
 
     let mut dot_last_sent_ts = Instant::now();
-    while let Some((packet, timestamp)) = prx.recv().await {
+    while let Some((packet, timestamp, iat)) = prx.recv().await {
         if packet_count > 0 && packets_captured > packet_count {
             println!(
                 "\nPacket count limit reached {}, signaling termination...",
@@ -1399,7 +1417,7 @@ async fn rscap() {
         }
 
         let chunks = if is_mpegts {
-            process_mpegts_packet(payload_offset, packet, packet_size, start_time, timestamp)
+            process_mpegts_packet(payload_offset, packet, packet_size, start_time, timestamp, iat, args.source_ip.clone(), args.source_port)
         } else {
             process_smpte2110_packet(
                 payload_offset,
@@ -1408,6 +1426,9 @@ async fn rscap() {
                 start_time,
                 debug_smpte2110,
                 timestamp,
+                iat,
+                args.source_ip.clone(),
+                args.source_port,
             )
         };
 
@@ -1444,7 +1465,7 @@ async fn rscap() {
                         if pid == pmt_info.pid {
                             debug!("ProcessPacket: PMT packet detected with PID {}", pid);
                             // Update PID_MAP with new stream types
-                            update_pid_map(&packet_chunk, &pmt_info.packet, timestamp);
+                            update_pid_map(&packet_chunk, &pmt_info.packet, timestamp, iat, args.source_ip.clone(), args.source_port);
                             // Identify the video PID (if not already identified)
                             if let Some((new_pid, new_codec)) = identify_video_pid(&packet_chunk) {
                                 if video_pid.map_or(true, |vp| vp != new_pid) {
