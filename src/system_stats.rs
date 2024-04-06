@@ -1,17 +1,15 @@
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::sync::RwLock;
 use std::time::{Duration, Instant};
-use sysinfo::{NetworkExt, NetworksExt};
-use sysinfo::{ProcessorExt, System, SystemExt};
+use sysinfo::{NetworkExt, NetworksExt, ProcessorExt, System, SystemExt};
 
-static SYSTEM: Lazy<Mutex<(System, Instant)>> = Lazy::new(|| {
-    let mut system = System::new_all();
-    system.refresh_all(); // Initial refresh
-    Mutex::new((system, Instant::now()))
+static CACHED_STATS: Lazy<RwLock<(SystemStats, Instant)>> = Lazy::new(|| {
+    let stats = get_system_stats_internal();
+    RwLock::new((stats, Instant::now()))
 });
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SystemStats {
     pub total_memory: u64,
     pub used_memory: u64,
@@ -28,29 +26,23 @@ pub struct SystemStats {
     pub network_stats: Vec<NetworkStats>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NetworkStats {
     name: String,
     received: u64,
     transmitted: u64,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LoadAverage {
     pub one: f64,
     pub five: f64,
     pub fifteen: f64,
 }
 
-pub fn get_system_stats() -> SystemStats {
-    let mut system_and_instant = SYSTEM.lock().unwrap();
-    let (system, last_updated) = &mut *system_and_instant;
-
-    // Only refresh if it's been more than a N seconds since the last update
-    if last_updated.elapsed() > Duration::from_secs(60) {
-        system.refresh_all();
-        *last_updated = Instant::now();
-    }
+fn get_system_stats_internal() -> SystemStats {
+    let mut system = System::new_all();
+    system.refresh_all();
 
     let host_name = system.host_name().unwrap_or_else(|| "Unknown".to_string());
     let kernel_version = system
@@ -67,6 +59,7 @@ pub fn get_system_stats() -> SystemStats {
     let cpu_count = system.processors().len();
     let boot_time = system.boot_time();
     let core_count = system.physical_core_count().unwrap_or_else(|| 0);
+
     let networks = system.networks();
     let network_stats = networks
         .iter()
@@ -93,5 +86,19 @@ pub fn get_system_stats() -> SystemStats {
         kernel_version,
         os_version,
         network_stats,
+    }
+}
+
+pub fn get_system_stats() -> SystemStats {
+    let cached_stats = CACHED_STATS.read().unwrap();
+    let (stats, last_updated) = &*cached_stats;
+
+    if last_updated.elapsed() > Duration::from_secs(60) {
+        drop(cached_stats);
+        let mut cached_stats_write = CACHED_STATS.write().unwrap();
+        *cached_stats_write = (get_system_stats_internal(), Instant::now());
+        cached_stats_write.0.clone()
+    } else {
+        stats.clone()
     }
 }
