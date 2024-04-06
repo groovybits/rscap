@@ -22,9 +22,11 @@ use log::{debug, error, info};
 use mpeg2ts_reader::demultiplex;
 use pcap::{Active, Capture, Device, PacketCodec};
 use rscap::mpegts;
+use rscap::system_stats::get_system_stats;
 use rscap::stream_data::{
     identify_video_pid, is_mpegts_or_smpte2110, parse_and_store_pat, process_packet,
     update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
+    generate_images, feed_mpegts_packets, get_image
 };
 use rscap::{current_unix_timestamp_ms, hexdump};
 use std::{
@@ -204,6 +206,22 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
         stream_data_msg.set_rtp_extended_sequence_number(stream_data.rtp_extended_sequence_number);
         stream_data_msg.set_source_ip(stream_data.source_ip.as_str().into());
         stream_data_msg.set_source_port(stream_data.source_port as u32);
+
+        // System stats fields
+        stream_data_msg.set_total_memory(stream_data.total_memory);
+        stream_data_msg.set_used_memory(stream_data.used_memory);
+        stream_data_msg.set_total_swap(stream_data.total_swap);
+        stream_data_msg.set_used_swap(stream_data.used_swap);
+        stream_data_msg.set_cpu_usage(stream_data.cpu_usage);
+        stream_data_msg.set_cpu_count(stream_data.cpu_count as u32);
+        stream_data_msg.set_core_count(stream_data.core_count as u32);
+        stream_data_msg.set_boot_time(stream_data.boot_time);
+        stream_data_msg.set_load_avg_one(stream_data.load_avg_one);
+        stream_data_msg.set_load_avg_five(stream_data.load_avg_five);
+        stream_data_msg.set_load_avg_fifteen(stream_data.load_avg_fifteen);
+        stream_data_msg.set_host_name(stream_data.host_name.as_str().into());
+        stream_data_msg.set_kernel_version(stream_data.kernel_version.as_str().into());
+        stream_data_msg.set_os_version(stream_data.os_version.as_str().into());
     }
 
     Ok(message)
@@ -612,6 +630,10 @@ struct Args {
     /// Sampling time for the MPEGTS Reader
     #[clap(long, env = "MPEGTS_READER_SAMPLING_TIME", default_value_t = 1_000)]
     mpegts_reader_sampling_time: u64,
+
+    /// Extract Images from the video stream
+    #[clap(long, env = "EXTRACT_IMAGES", default_value_t = false)]
+    extract_images: bool,
 }
 
 // MAIN Function
@@ -1387,6 +1409,11 @@ async fn rscap() {
         packet: Vec::new(),
     };
 
+    // OS and Network stats
+    let system_stats =  get_system_stats();
+
+    info!("Startup System OS Stats:\n{:?}", system_stats);
+
     let mut dot_last_sent_ts = Instant::now();
     while let Some((packet, timestamp, iat)) = prx.recv().await {
         if packet_count > 0 && packets_captured > packet_count {
@@ -1519,6 +1546,14 @@ async fn rscap() {
                             stream_data_clone.packet_len = stream_data.packet_len;
                             stream_data_clone.packet = Arc::new(stream_data.packet.to_vec());
                             video_batch.push(stream_data_clone);
+
+                            // Store the video packet and stream type number
+                            if args.extract_images {
+                                let video_packet = stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len].to_vec();
+                                let stream_type_number = stream_data.stream_type_number;
+                                feed_mpegts_packets(vec![video_packet]);
+                                generate_images(stream_type_number);
+                            }
                         }
                     }
                 }

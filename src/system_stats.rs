@@ -13,19 +13,19 @@ static SYSTEM: Lazy<Mutex<(System, Instant)>> = Lazy::new(|| {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SystemStats {
-    total_memory: u64,
-    used_memory: u64,
-    total_swap: u64,
-    used_swap: u64,
-    cpu_usage: f32,
-    cpu_count: usize,
-    core_count: usize,
-    boot_time: u64,
-    load_avg: LoadAverage,
-    host_name: String,
-    kernel_version: String,
-    os_version: String,
-    network_stats: Vec<NetworkStats>,
+    pub total_memory: u64,
+    pub used_memory: u64,
+    pub total_swap: u64,
+    pub used_swap: u64,
+    pub cpu_usage: f32,
+    pub cpu_count: usize,
+    pub core_count: usize,
+    pub boot_time: u64,
+    pub load_avg: LoadAverage,
+    pub host_name: String,
+    pub kernel_version: String,
+    pub os_version: String,
+    pub network_stats: Vec<NetworkStats>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -37,9 +37,9 @@ pub struct NetworkStats {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct LoadAverage {
-    one: f64,
-    five: f64,
-    fifteen: f64,
+    pub one: f64,
+    pub five: f64,
+    pub fifteen: f64,
 }
 
 pub fn get_system_stats() -> SystemStats {

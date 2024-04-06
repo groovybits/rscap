@@ -37,4 +37,18 @@ struct StreamDataCapnp {
     captureIat @33 :UInt64;
     sourceIp @34 :Text;
     sourcePort @35 :UInt32;
+    totalMemory @36 :UInt64;
+    usedMemory @37 :UInt64;
+    totalSwap @38 :UInt64;
+    usedSwap @39 :UInt64;
+    cpuUsage @40 :Float32;
+    cpuCount @41 :UInt32;
+    coreCount @42 :UInt32;
+    bootTime @43 :UInt64;
+    loadAvgOne @44 :Float64;
+    loadAvgFive @45 :Float64;
+    loadAvgFifteen @46 :Float64;
+    hostName @47 :Text;
+    kernelVersion @48 :Text;
+    osVersion @49 :Text;
 }
