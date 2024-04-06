@@ -1395,7 +1395,7 @@ async fn rscap() {
     });
 
     // Create a channel for sending video packets to the image extraction thread/task
-    let (video_packet_sender, mut video_packet_receiver) = mpsc::channel(1024);
+    let (video_packet_sender, mut video_packet_receiver) = mpsc::channel(10000);
 
     // Create a separate thread for image extraction and processing
     let image_extraction_thread = tokio::spawn(async move {
@@ -1457,6 +1457,8 @@ async fn rscap() {
 
     // OS and Network stats
     let system_stats =  get_system_stats();
+
+    let mut video_stream_type = 0;
 
     info!("Startup System OS Stats:\n{:?}", system_stats);
 
@@ -1543,6 +1545,7 @@ async fn rscap() {
                             if let Some((new_pid, new_codec)) = identify_video_pid(&packet_chunk) {
                                 if video_pid.map_or(true, |vp| vp != new_pid) {
                                     video_pid = Some(new_pid);
+                                    video_stream_type = stream_data.stream_type_number;
                                     info!(
                                         "STATUS::VIDEO_PID:CHANGE: to {}/{} from {}/{}",
                                         new_pid,
@@ -1594,19 +1597,18 @@ async fn rscap() {
                             video_batch.push(stream_data_clone);
                         }
                     }
+                }
 
-                    #[cfg(feature = "gst")]
-                    if args.extract_images {
-                        let stream_type_number = stream_data.stream_type_number;
-                        if stream_type_number > 0 {
-                            let video_packet = stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len].to_vec();
+                #[cfg(feature = "gst")]
+                if args.extract_images {
+                    if video_stream_type > 0 {
+                        let video_packet = stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len].to_vec();
 
-                            // Send the video packet and stream type number to the image extraction thread/task
-                            if let Err(e) = video_packet_sender.send((video_packet, stream_type_number)).await {
-                                // Handle the case when the channel is full or disconnected
-                                eprintln!("Failed to send video packet to image extraction thread: {:?}", e);
-                                // You can choose to drop the packet, log an error, or take appropriate action
-                            }
+                        // Send the video packet and stream type number to the image extraction thread/task
+                        if let Err(e) = video_packet_sender.send((video_packet, video_stream_type)).await {
+                            // Handle the case when the channel is full or disconnected
+                            eprintln!("Failed to send video packet to image extraction thread: {:?}", e);
+                            // You can choose to drop the packet, log an error, or take appropriate action
                         }
                     }
                 }

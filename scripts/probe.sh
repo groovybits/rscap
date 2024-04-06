@@ -1,8 +1,10 @@
 #!/bin/bash
 #
-MODE=debug
+MODE=release
 LOGLEVEL=info
-sudo RUST_BACKTRACE=full RUST_LOG=$LOGLEVEL \
+GST_DEBUG_LEVEL=4
+BACKTRACE=full
+sudo GST_DEBUG=$GST_DEBUG_LEVEL RUST_BACKTRACE=$BACKTRACE RUST_LOG=$LOGLEVEL \
     target/$MODE/probe \
     --pcap-stats \
     --source-ip 224.0.0.200 \
