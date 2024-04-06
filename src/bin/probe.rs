@@ -22,10 +22,13 @@ use log::{debug, error, info};
 use mpeg2ts_reader::demultiplex;
 use pcap::{Active, Capture, Device, PacketCodec};
 use rscap::mpegts;
+use rscap::system_stats::get_system_stats;
 use rscap::stream_data::{
     identify_video_pid, is_mpegts_or_smpte2110, parse_and_store_pat, process_packet,
-    update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
+    update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID
 };
+#[cfg(feature = "gst")]
+use rscap::stream_data::{generate_images, feed_mpegts_packets, get_image };
 use rscap::{current_unix_timestamp_ms, hexdump};
 use std::{
     error::Error as StdError,
@@ -47,6 +50,8 @@ use h264_reader::annexb::AnnexBReader;
 use h264_reader::nal::{pps, sei, slice, sps, Nal, RefNal, UnitType};
 use h264_reader::push::NalInterest;
 use h264_reader::Context;
+#[cfg(feature = "gst")]
+use image::GenericImageView;
 //use rscap::videodecoder::VideoProcessor;
 use rscap::stream_data::{process_mpegts_packet, process_smpte2110_packet};
 use tokio::task;
@@ -204,6 +209,22 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
         stream_data_msg.set_rtp_extended_sequence_number(stream_data.rtp_extended_sequence_number);
         stream_data_msg.set_source_ip(stream_data.source_ip.as_str().into());
         stream_data_msg.set_source_port(stream_data.source_port as u32);
+
+        // System stats fields
+        stream_data_msg.set_total_memory(stream_data.total_memory);
+        stream_data_msg.set_used_memory(stream_data.used_memory);
+        stream_data_msg.set_total_swap(stream_data.total_swap);
+        stream_data_msg.set_used_swap(stream_data.used_swap);
+        stream_data_msg.set_cpu_usage(stream_data.cpu_usage);
+        stream_data_msg.set_cpu_count(stream_data.cpu_count as u32);
+        stream_data_msg.set_core_count(stream_data.core_count as u32);
+        stream_data_msg.set_boot_time(stream_data.boot_time);
+        stream_data_msg.set_load_avg_one(stream_data.load_avg_one);
+        stream_data_msg.set_load_avg_five(stream_data.load_avg_five);
+        stream_data_msg.set_load_avg_fifteen(stream_data.load_avg_fifteen);
+        stream_data_msg.set_host_name(stream_data.host_name.as_str().into());
+        stream_data_msg.set_kernel_version(stream_data.kernel_version.as_str().into());
+        stream_data_msg.set_os_version(stream_data.os_version.as_str().into());
     }
 
     Ok(message)
@@ -612,6 +633,11 @@ struct Args {
     /// Sampling time for the MPEGTS Reader
     #[clap(long, env = "MPEGTS_READER_SAMPLING_TIME", default_value_t = 1_000)]
     mpegts_reader_sampling_time: u64,
+
+    /// Extract Images from the video stream
+    #[cfg(feature = "gst")]
+    #[clap(long, env = "EXTRACT_IMAGES", default_value_t = false)]
+    extract_images: bool,
 }
 
 // MAIN Function
@@ -1387,6 +1413,11 @@ async fn rscap() {
         packet: Vec::new(),
     };
 
+    // OS and Network stats
+    let system_stats =  get_system_stats();
+
+    info!("Startup System OS Stats:\n{:?}", system_stats);
+
     let mut dot_last_sent_ts = Instant::now();
     while let Some((packet, timestamp, iat)) = prx.recv().await {
         if packet_count > 0 && packets_captured > packet_count {
@@ -1521,9 +1552,50 @@ async fn rscap() {
                             video_batch.push(stream_data_clone);
                         }
                     }
+
+                    // Store the video packet and stream type number
+                    #[cfg(feature = "gst")]
+                    if args.extract_images {
+                        let stream_type_number = stream_data.stream_type_number;
+                        if stream_type_number > 0 {
+                            let video_packet = stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len].to_vec();
+                            feed_mpegts_packets(vec![video_packet]);
+                            generate_images(stream_type_number);
+                        }
+                    }
                 }
             } else {
                 // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
+            }
+
+            #[cfg(feature = "gst")]
+            if args.extract_images {
+                match get_image() {
+                    Some(image_data) => {
+                        // Process the image data here
+                        // For example, you can save it to a file or perform further analysis
+                        // ...
+                        println!("Received an image with size: {} bytes", image_data.len());
+
+                        // Attempt to decode the image to get its parameters
+                        match image::load_from_memory(&image_data) {
+                            Ok(img) => {
+                                println!("Image dimensions: {:?}", img.dimensions());
+                                println!("Image color type: {:?}", img.color());
+
+                                // Save the image data to a file named "image.jpg"
+                                let mut file = File::create("image.jpg").expect("Failed to create file.");
+                                file.write_all(&image_data).expect("Failed to write image data to file.");
+
+                                println!("Image saved as image.jpg");
+                            },
+                            Err(e) => println!("Failed to decode image data: {:?}", e),
+                        }
+                    }
+                    None => {
+                        // No images available, continue processing
+                    }
+                }
             }
 
             // release the packet Arc so it can be reused

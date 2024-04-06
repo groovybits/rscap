@@ -29,6 +29,7 @@ install_rust() {
 
 # Function to run a command within the SCL environment for CentOS
 run_with_scl() {
+    export PKG_CONFIG_PATH=/usr/local/lib64/pkgconfig:/usr/lib64/pkgconfig:$PKG_CONFIG_PATH
     scl enable devtoolset-11 -- "$@"
 }
 
@@ -88,4 +89,3 @@ else
 fi
 
 echo "Build completed successfully."
-

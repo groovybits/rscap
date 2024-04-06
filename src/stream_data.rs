@@ -5,17 +5,120 @@
 */
 
 use crate::current_unix_timestamp_ms;
+use crate::system_stats::get_system_stats;
+use crate::system_stats::SystemStats;
 use ahash::AHashMap;
+#[cfg(feature = "gst")]
+use gstreamer as gst;
+#[cfg(feature = "gst")]
+use gstreamer::prelude::*;
+#[cfg(feature = "gst")]
+use gstreamer_app as gst_app;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use rtp::RtpReader;
 use rtp_rs as rtp;
 use serde::{Deserialize, Serialize};
+use std::sync::RwLock;
 use std::{fmt, sync::Arc, sync::Mutex};
 
 // global variable to store the MpegTS PID Map (initially empty)
 lazy_static! {
     static ref PID_MAP: Mutex<AHashMap<u16, Arc<StreamData>>> = Mutex::new(AHashMap::new());
+    static ref MPEGTS_PACKETS: RwLock<Vec<Vec<u8>>> = RwLock::new(Vec::new());
+    static ref IMAGE_CHANNEL: (
+        crossbeam::channel::Sender<Vec<u8>>,
+        crossbeam::channel::Receiver<Vec<u8>>
+    ) = crossbeam::channel::bounded(1);
+}
+
+#[cfg(feature = "gst")]
+pub fn feed_mpegts_packets(packets: Vec<Vec<u8>>) {
+    let mut mpegts_packets = MPEGTS_PACKETS.write().unwrap();
+    mpegts_packets.extend(packets);
+}
+
+#[cfg(feature = "gst")]
+pub fn generate_images(stream_type_number: u8) {
+    let sender = IMAGE_CHANNEL.0.clone();
+    let packets = MPEGTS_PACKETS.read().unwrap().clone();
+
+    // copy packets into a new vector for the thread
+    let packets_clone = packets.iter().map(|x| x.clone()).collect::<Vec<Vec<u8>>>();
+    std::thread::spawn(move || {
+        let mut frame_data = None;
+
+        // Initialize GStreamer
+        gst::init().unwrap();
+
+        // Create a pipeline to extract video frames
+        let pipeline = match stream_type_number {
+            0x02 => gst::parse_launch("appsrc name=src ! tsdemux ! mpeg2dec ! videoconvert ! appsink name=sink"),
+            0x1B => gst::parse_launch("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink"),
+            0x24 => gst::parse_launch("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videoconvert ! appsink name=sink"),
+            _ => panic!("Unsupported video stream type {}", stream_type_number),
+        }.unwrap();
+
+        // Get references to the appsrc and appsink elements
+        let appsrc = pipeline
+            .clone()
+            .dynamic_cast::<gst::Bin>()
+            .unwrap()
+            .by_name("src")
+            .unwrap()
+            .downcast::<gst_app::AppSrc>()
+            .unwrap();
+        let appsink = pipeline
+            .clone()
+            .dynamic_cast::<gst::Bin>()
+            .unwrap()
+            .by_name("sink")
+            .unwrap()
+            .downcast::<gst_app::AppSink>()
+            .unwrap();
+
+        // Set the appsrc caps
+        let caps = gst::Caps::builder("video/mpegts")
+            .field("packetsize", 188)
+            .build();
+        appsrc.set_caps(Some(&caps));
+
+        // Configure the appsink
+        appsink.set_caps(Some(&gst::Caps::new_empty_simple("video/x-raw")));
+
+        // Start the pipeline
+        pipeline.set_state(gst::State::Playing).unwrap();
+
+        // Push MPEG-TS packets to the appsrc
+        for packet in packets_clone.into_iter() {
+            let buffer = gst::Buffer::from_slice(packet);
+            appsrc.push_buffer(buffer).unwrap();
+        }
+        appsrc.end_of_stream().unwrap();
+
+        // Retrieve the video frames from the appsink
+        while let Some(sample) = appsink.pull_sample().ok() {
+            if let Some(buffer) = sample.buffer() {
+                let map = buffer.map_readable().unwrap();
+                let data = map.as_slice().to_vec();
+                frame_data = Some(data);
+                break;
+            }
+        }
+
+        // Stop the pipeline
+        pipeline.set_state(gst::State::Null).unwrap();
+
+        // Send the extracted image through the channel
+        if let Some(image_data) = frame_data {
+            sender.send(image_data).unwrap();
+        }
+    });
+}
+
+#[cfg(feature = "gst")]
+pub fn get_image() -> Option<Vec<u8>> {
+    IMAGE_CHANNEL.1.try_recv().ok()
 }
 
 // constant for PAT PID
@@ -100,6 +203,21 @@ pub struct StreamData {
     pub capture_iat: u64,
     pub source_ip: String,
     pub source_port: i32,
+    // System stats
+    pub total_memory: u64,
+    pub used_memory: u64,
+    pub total_swap: u64,
+    pub used_swap: u64,
+    pub cpu_usage: f32,
+    pub cpu_count: usize,
+    pub core_count: usize,
+    pub boot_time: u64,
+    pub load_avg_one: f64,
+    pub load_avg_five: f64,
+    pub load_avg_fifteen: f64,
+    pub host_name: String,
+    pub kernel_version: String,
+    pub os_version: String,
 }
 
 impl Clone for StreamData {
@@ -144,6 +262,21 @@ impl Clone for StreamData {
             capture_iat: self.capture_iat,
             source_ip: self.source_ip.clone(),
             source_port: self.source_port,
+            // System stats initialization
+            total_memory: self.total_memory,
+            used_memory: self.used_memory,
+            total_swap: self.total_swap,
+            used_swap: self.used_swap,
+            cpu_usage: self.cpu_usage,
+            cpu_count: self.cpu_count,
+            core_count: self.core_count,
+            boot_time: self.boot_time,
+            load_avg_one: self.load_avg_one,
+            load_avg_five: self.load_avg_five,
+            load_avg_fifteen: self.load_avg_fifteen,
+            host_name: self.host_name.clone(),
+            kernel_version: self.kernel_version.clone(),
+            os_version: self.os_version.clone(),
         }
     }
 }
@@ -165,6 +298,7 @@ impl StreamData {
         capture_iat: u64,
         source_ip: String,
         source_port: i32,
+        system_stats: SystemStats,
     ) -> Self {
         // convert capture_timestamp to unix timestamp in milliseconds since epoch
         let last_arrival_time = capture_timestamp;
@@ -210,6 +344,21 @@ impl StreamData {
             capture_iat,
             source_ip,
             source_port,
+            // Initialize system stats fields from the SystemStats instance
+            total_memory: system_stats.total_memory,
+            used_memory: system_stats.used_memory,
+            total_swap: system_stats.total_swap,
+            used_swap: system_stats.used_swap,
+            cpu_usage: system_stats.cpu_usage,
+            cpu_count: system_stats.cpu_count,
+            core_count: system_stats.core_count,
+            boot_time: system_stats.boot_time,
+            load_avg_one: system_stats.load_avg.one,
+            load_avg_five: system_stats.load_avg.five,
+            load_avg_fifteen: system_stats.load_avg.fifteen,
+            host_name: system_stats.host_name,
+            kernel_version: system_stats.kernel_version,
+            os_version: system_stats.os_version,
         }
     }
     // set RTP fields
@@ -677,6 +826,8 @@ pub fn process_packet(
                 debug!("ProcessPacket: New PID {} Found, adding to PID map.", pid);
             } else {
                 // PMT packet not found yet, add the stream_data_packet to the pid_map
+                // OS and Network stats
+                let system_stats = get_system_stats();
                 let mut stream_data = Arc::new(StreamData::new(
                     Arc::new(Vec::new()), // Ensure packet_data is Arc<Vec<u8>>
                     0,
@@ -692,6 +843,7 @@ pub fn process_packet(
                     stream_data_packet.capture_iat,
                     stream_data_packet.source_ip.clone(),
                     stream_data_packet.source_port,
+                    system_stats,
                 ));
                 Arc::make_mut(&mut stream_data).update_stats(packet.len());
 
@@ -785,6 +937,7 @@ pub fn update_pid_map(
                 let timestamp = current_unix_timestamp_ms().unwrap_or(0);
 
                 if !pid_map.contains_key(&stream_pid) {
+                    let system_stats = get_system_stats();
                     let mut stream_data = Arc::new(StreamData::new(
                         Arc::new(Vec::new()), // Ensure packet_data is Arc<Vec<u8>>
                         0,
@@ -800,6 +953,7 @@ pub fn update_pid_map(
                         capture_iat,
                         source_ip.clone(),
                         source_port,
+                        system_stats,
                     ));
                     // update stream_data stats
                     Arc::make_mut(&mut stream_data).update_stats(pmt_packet.len());
@@ -983,6 +1137,7 @@ pub fn process_smpte2110_packet(
                 let stream_type = payload_type.to_string();
 
                 // Create new StreamData instance
+                let system_stats = get_system_stats();
                 let mut stream_data = StreamData::new(
                     packet_arc,
                     rtp_payload_offset,
@@ -998,6 +1153,7 @@ pub fn process_smpte2110_packet(
                     capture_iat,
                     source_ip.clone(),
                     source_port,
+                    system_stats,
                 );
 
                 // Update StreamData stats and RTP fields
@@ -1067,6 +1223,7 @@ pub fn process_mpegts_packet(
             let timestamp = extract_timestamp(chunk);
             let continuity_counter = chunk[3] & 0x0F;
 
+            let system_stats = get_system_stats();
             let mut stream_data = StreamData::new(
                 Arc::clone(&packet),
                 start,
@@ -1082,6 +1239,7 @@ pub fn process_mpegts_packet(
                 capture_iat,
                 source_ip.clone(),
                 source_port,
+                system_stats,
             );
             stream_data.update_stats(packet_size);
             streams.push(stream_data);

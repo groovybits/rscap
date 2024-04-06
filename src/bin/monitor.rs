@@ -43,9 +43,7 @@ use lazy_static::lazy_static;
 use mpeg2ts_reader::demultiplex;
 use rscap::current_unix_timestamp_ms;
 use rscap::mpegts;
-use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
 use tokio::sync::mpsc::{self};
@@ -58,26 +56,6 @@ lazy_static! {
 
 struct StreamGrouping {
     stream_data_list: Vec<StreamData>,
-}
-
-#[derive(Serialize)]
-struct CombinedStreamData {
-    stream_type: String,
-    program_number: u16,
-    pmt_pid: u16,
-    bitrate_avg: u32,
-    iat_avg: u64,
-    packet_count: u32,
-    stream_data: StreamData,
-}
-
-#[derive(Serialize)]
-struct CombinedSchema {
-    streams: HashMap<u16, CombinedStreamData>,
-    bitrate_avg_global: u32,
-    iat_avg_global: u64,
-    cc_errors_global: u32,
-    current_cc_errors_global: u32,
 }
 
 fn is_cea_608(itu_t_t35_data: &sei::user_data_registered_itu_t_t35::ItuTT35) -> bool {
@@ -235,6 +213,22 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         capture_iat: reader.get_capture_iat(),
         source_ip,
         source_port: reader.get_source_port() as i32,
+
+        // System stats fields
+        total_memory: reader.get_total_memory(),
+        used_memory: reader.get_used_memory(),
+        total_swap: reader.get_total_swap(),
+        used_swap: reader.get_used_swap(),
+        cpu_usage: reader.get_cpu_usage(),
+        cpu_count: reader.get_cpu_count() as usize,
+        core_count: reader.get_core_count() as usize,
+        boot_time: reader.get_boot_time(),
+        load_avg_one: reader.get_load_avg_one(),
+        load_avg_five: reader.get_load_avg_five(),
+        load_avg_fifteen: reader.get_load_avg_fifteen(),
+        host_name: reader.get_host_name()?.to_string()?,
+        kernel_version: reader.get_kernel_version()?.to_string()?,
+        os_version: reader.get_os_version()?.to_string()?,
     };
 
     Ok(stream_data)
@@ -412,6 +406,22 @@ fn flatten_streams(
             format!("{}.source_port", prefix),
             json!(stream_data.source_port),
         );
+
+        // Add system stats fields to the flattened structure
+        flat_structure.insert(format!("{}.total_memory", prefix), json!(stream_data.total_memory));
+        flat_structure.insert(format!("{}.used_memory", prefix), json!(stream_data.used_memory));
+        flat_structure.insert(format!("{}.total_swap", prefix), json!(stream_data.total_swap));
+        flat_structure.insert(format!("{}.used_swap", prefix), json!(stream_data.used_swap));
+        flat_structure.insert(format!("{}.cpu_usage", prefix), json!(stream_data.cpu_usage));
+        flat_structure.insert(format!("{}.cpu_count", prefix), json!(stream_data.cpu_count));
+        flat_structure.insert(format!("{}.core_count", prefix), json!(stream_data.core_count));
+        flat_structure.insert(format!("{}.boot_time", prefix), json!(stream_data.boot_time));
+        flat_structure.insert(format!("{}.load_avg_one", prefix), json!(stream_data.load_avg_one));
+        flat_structure.insert(format!("{}.load_avg_five", prefix), json!(stream_data.load_avg_five));
+        flat_structure.insert(format!("{}.load_avg_fifteen", prefix), json!(stream_data.load_avg_fifteen));
+        flat_structure.insert(format!("{}.host_name", prefix), json!(stream_data.host_name));
+        flat_structure.insert(format!("{}.kernel_version", prefix), json!(stream_data.kernel_version));
+        flat_structure.insert(format!("{}.os_version", prefix), json!(stream_data.os_version));
     }
 
     flat_structure
@@ -425,7 +435,7 @@ async fn produce_message(
     key: String,
     _stream_data_timestamp: i64,
     producer: FutureProducer,
-    admin_client: &AdminClient<DefaultClientContext>,
+    admin_client: &AdminClient<DefaultClientContext>
 ) {
     debug!("Service {} sending message", kafka_topic);
     let kafka_topic = kafka_topic.replace(":", "_").replace(".", "_");
@@ -1078,6 +1088,17 @@ async fn main() {
         .create()
         .expect("Failed to create Kafka producer");
 
+    // OS and Network stats
+    let mut system_stats_json = if show_os_stats {
+        get_stats_as_json(StatsType::System).await
+    } else {
+        json!({})
+    };
+
+    if system_stats_json != json!({}) {
+        info!("Startup System OS Stats:\n{:?}", system_stats_json);
+    }
+
     loop {
         // check for packet count
         if packet_count > 0 && counter >= packet_count {
@@ -1092,12 +1113,16 @@ async fn main() {
         // get first message
         let header_msg = packet_msg[0].clone();
 
-        // OS and Network stats
-        let system_stats_json = if show_os_stats {
-            get_stats_as_json(StatsType::System).await
-        } else {
-            json!({})
-        };
+        if show_os_stats && dot_last_sent_stats.elapsed().as_secs() > 10 {
+            dot_last_sent_stats = Instant::now();
+
+            // OS and Network stats
+            system_stats_json =  get_stats_as_json(StatsType::System).await;
+
+            if show_os_stats && system_stats_json != json!({}) {
+                info!("System stats as JSON:\n{:?}", system_stats_json);
+            }
+        }
 
         // Deserialize the received message into StreamData
         match capnp_to_stream_data(&header_msg) {
@@ -1216,7 +1241,7 @@ async fn main() {
                         kafka_key.clone(),
                         current_unix_timestamp_ms().unwrap_or(0) as i64,
                         producer.clone(),
-                        &admin_client,
+                        &admin_client
                     );
 
                     // Await the future for sending the message
@@ -1295,12 +1320,6 @@ async fn main() {
             std::io::stdout().flush().unwrap();
         }
 
-        if dot_last_sent_stats.elapsed().as_secs() > 10 {
-            dot_last_sent_stats = Instant::now();
-            if show_os_stats && system_stats_json != json!({}) {
-                info!("System stats as JSON:\n{:?}", system_stats_json);
-            }
-        }
         counter += 1;
     }
 
