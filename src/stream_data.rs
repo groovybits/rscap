@@ -69,9 +69,7 @@ pub fn generate_images(stream_type_number: u8) {
 
             // Create a pipeline to extract video frames
             let pipeline = match stream_type_number {
-                0x02 => create_pipeline("appsrc name=src ! tsdemux ! mpeg2dec ! videoconvert ! appsink name=sink"),
-                0x1B => create_pipeline("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink"),
-                0x24 => create_pipeline("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videoconvert ! appsink name=sink"),
+                0x1B => create_pipeline("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! capsfilter caps=video/x-raw,format=I420,width=1920,height=1080,framerate=60/1 ! queue ! appsink name=sink"),
                 _ => {
                     eprintln!("Unsupported video stream type {}", stream_type_number);
                     return;
@@ -124,14 +122,27 @@ pub fn generate_images(stream_type_number: u8) {
             appsrc.set_caps(Some(&caps));
 
             // Configure the appsink
-            appsink.set_caps(Some(&gst::Caps::new_empty_simple("video/x-raw")));
+            let caps = gst::Caps::builder("video/x-raw")
+                .field("format", "I420")
+                .field("width", 1920)
+                .field("height", 1080)
+                .field("framerate", gst::Fraction::new(60, 1))
+                .build();
+            appsink.set_caps(Some(&caps));
 
             // Push MPEG-TS packets to the appsrc
             for packet in packets_to_process {
                 let buffer = gst::Buffer::from_slice(packet);
-                if let Err(err) = appsrc.push_buffer(buffer) {
-                    eprintln!("Failed to push buffer to appsrc: {}", err);
-                    break;
+                match appsrc.push_buffer(buffer) {
+                    Ok(gst::FlowSuccess::Ok) => {}
+                    Ok(flow_return) => {
+                        eprintln!("Unexpected flow return while pushing buffer: {:?}", flow_return);
+                        break;
+                    }
+                    Err(err) => {
+                        eprintln!("Failed to push buffer to appsrc: {}", err);
+                        break;
+                    }
                 }
             }
             appsrc.end_of_stream().unwrap();
@@ -512,22 +523,21 @@ impl StreamData {
         // check for continuity continuous increment and wrap around from 0 to 15
         let previous_continuity_counter = self.continuity_counter;
         self.continuity_counter = continuity_counter & 0x0F;
+
         // check if we incremented without loss
-        if self.continuity_counter != previous_continuity_counter + 1
+        if self.continuity_counter != (previous_continuity_counter + 1) & 0x0F
             && self.continuity_counter != previous_continuity_counter
         {
-            // check if we wrapped around from 15 to 0
-            if self.continuity_counter == 0 {
-                // check if previous value was 15
-                if previous_continuity_counter == 15 {
-                    // no loss
-                    return;
-                }
-            }
             // increment the error count by the difference between the current and previous continuity counter
-            let error_count = (self.continuity_counter - previous_continuity_counter) as u32;
+            let error_count = if self.continuity_counter < previous_continuity_counter {
+                (self.continuity_counter + 16) - previous_continuity_counter
+            } else {
+                self.continuity_counter - previous_continuity_counter
+            } as u32;
+
             self.error_count += 1;
             self.current_error_count = error_count;
+
             error!(
                 "Continuity Counter Error: PID: {} Previous: {} Current: {} Loss: {} Total Loss: {}",
                 self.pid, previous_continuity_counter, self.continuity_counter, error_count, self.error_count
@@ -536,6 +546,7 @@ impl StreamData {
             // reset the error count
             self.current_error_count = 0;
         }
+
         self.continuity_counter = continuity_counter;
     }
     pub fn update_stats(&mut self, packet_size: usize) {
