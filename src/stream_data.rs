@@ -41,10 +41,7 @@ pub fn feed_mpegts_packets(packets: Vec<Vec<u8>>) {
 #[cfg(feature = "gst")]
 pub fn generate_images(stream_type_number: u8) {
     let sender = IMAGE_CHANNEL.0.clone();
-    let packets = MPEGTS_PACKETS.read().unwrap().clone();
 
-    // copy packets into a new vector for the thread
-    let packets_clone = packets.iter().map(|x| x.clone()).collect::<Vec<Vec<u8>>>();
     std::thread::spawn(move || {
         let mut frame_data = None;
 
@@ -53,9 +50,9 @@ pub fn generate_images(stream_type_number: u8) {
 
         // Create a pipeline to extract video frames
         let pipeline = match stream_type_number {
-            0x02 => gst::parse_launch("appsrc name=src ! tsdemux ! mpeg2dec ! videoconvert ! appsink name=sink"),
-            0x1B => gst::parse_launch("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink"),
-            0x24 => gst::parse_launch("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videoconvert ! appsink name=sink"),
+            0x02 => create_pipeline("appsrc name=src ! tsdemux ! mpeg2dec ! videoconvert ! appsink name=sink"),
+            0x1B => create_pipeline("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink"),
+            0x24 => create_pipeline("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videoconvert ! appsink name=sink"),
             _ => panic!("Unsupported video stream type {}", stream_type_number),
         }.unwrap();
 
@@ -68,6 +65,7 @@ pub fn generate_images(stream_type_number: u8) {
             .unwrap()
             .downcast::<gst_app::AppSrc>()
             .unwrap();
+
         let appsink = pipeline
             .clone()
             .dynamic_cast::<gst::Bin>()
@@ -89,20 +87,55 @@ pub fn generate_images(stream_type_number: u8) {
         // Start the pipeline
         pipeline.set_state(gst::State::Playing).unwrap();
 
-        // Push MPEG-TS packets to the appsrc
-        for packet in packets_clone.into_iter() {
-            let buffer = gst::Buffer::from_slice(packet);
-            appsrc.push_buffer(buffer).unwrap();
+        // Process packets from the queue
+        loop {
+            let mut packets = MPEGTS_PACKETS.write().unwrap();
+            if packets.is_empty() {
+                break;
+            }
+
+            for packet in packets.drain(..) {
+                let buffer = gst::Buffer::from_slice(packet);
+                appsrc.push_buffer(buffer).unwrap();
+            }
         }
+
         appsrc.end_of_stream().unwrap();
 
-        // Retrieve the video frames from the appsink
-        while let Some(sample) = appsink.pull_sample().ok() {
-            if let Some(buffer) = sample.buffer() {
-                let map = buffer.map_readable().unwrap();
-                let data = map.as_slice().to_vec();
-                frame_data = Some(data);
-                break;
+        // Process messages and retrieve video frames
+        let bus = pipeline.bus().unwrap();
+        for msg in bus.iter_timed(gst::ClockTime::NONE) {
+            use gst::MessageView;
+
+            match msg.view() {
+                MessageView::Eos(..) => {
+                    break;
+                }
+                MessageView::Error(err) => {
+                    eprintln!(
+                        "Error from {:?}: {} ({:?})",
+                        err.src().map(|s| s.path_string()),
+                        err.error(),
+                        err.debug()
+                    );
+                    break;
+                }
+                MessageView::Element(element) => {
+                    if let Some(structure) = element.structure() {
+                        if structure.name() == "GstSample" {
+                            let sample = structure
+                                .get::<gst::Sample>("sample")
+                                .expect("sample field in GstSample");
+                            if let Some(buffer) = sample.buffer() {
+                                let map = buffer.map_readable().unwrap();
+                                let data = map.as_slice().to_vec();
+                                frame_data = Some(data);
+                                break;
+                            }
+                        }
+                    }
+                }
+                _ => (),
             }
         }
 
@@ -114,6 +147,13 @@ pub fn generate_images(stream_type_number: u8) {
             sender.send(image_data).unwrap();
         }
     });
+}
+
+fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
+    let pipeline = gst::parse_launch(desc)?
+        .downcast::<gst::Pipeline>()
+        .expect("Expected a gst::Pipeline");
+    Ok(pipeline)
 }
 
 #[cfg(feature = "gst")]

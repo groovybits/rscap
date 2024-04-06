@@ -1,7 +1,9 @@
 #!/bin/bash
 #
-sudo RUST_LOG=info \
-    target/release/probe \
+MODE=debug
+LOGLEVEL=info
+sudo RUST_BACKTRACE=full RUST_LOG=$LOGLEVEL \
+    target/$MODE/probe \
     --pcap-stats \
     --source-ip 224.0.0.200 \
     --source-port 10000 \
