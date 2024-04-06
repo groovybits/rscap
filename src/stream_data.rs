@@ -6,6 +6,9 @@
 
 use crate::current_unix_timestamp_ms;
 use ahash::AHashMap;
+use gstreamer as gst;
+use gstreamer_app as gst_app;
+use gstreamer_video as gst_video;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use rtp::RtpReader;
@@ -16,6 +19,7 @@ use std::{fmt, sync::Arc, sync::Mutex};
 // global variable to store the MpegTS PID Map (initially empty)
 lazy_static! {
     static ref PID_MAP: Mutex<AHashMap<u16, Arc<StreamData>>> = Mutex::new(AHashMap::new());
+    static ref MPEGTS_PACKETS: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
 }
 
 // constant for PAT PID

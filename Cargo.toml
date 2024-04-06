@@ -49,6 +49,9 @@ scte35-reader = "0.14.0"
 hex-slice = "0.1.4"
 chrono = "0.4.37"
 rdkafka = "0.36.2"
+gstreamer = "0.20"
+gstreamer-app = "0.20"
+gstreamer-video = "0.20"
 
 [build-dependencies]
 capnpc = "0.18.0"
