@@ -46,8 +46,8 @@ pub fn get_system_stats() -> SystemStats {
     let mut system_and_instant = SYSTEM.lock().unwrap();
     let (system, last_updated) = &mut *system_and_instant;
 
-    // Only refresh if it's been more than a second since the last update
-    if last_updated.elapsed() > Duration::from_secs(1) {
+    // Only refresh if it's been more than a N seconds since the last update
+    if last_updated.elapsed() > Duration::from_secs(60) {
         system.refresh_all();
         *last_updated = Instant::now();
     }
