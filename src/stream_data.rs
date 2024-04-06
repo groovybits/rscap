@@ -176,6 +176,7 @@ pub fn generate_images(stream_type_number: u8) {
 
                 match msg.view() {
                     MessageView::Eos(..) => {
+                        println!("End of stream reached");
                         break;
                     }
                     MessageView::Error(err) => {
@@ -186,6 +187,14 @@ pub fn generate_images(stream_type_number: u8) {
                             err.debug()
                         );
                         break;
+                    }
+                    MessageView::Warning(warning) => {
+                        eprintln!(
+                            "Warning from {:?}: {} ({:?})",
+                            warning.src().map(|s| s.path_string()),
+                            warning.error(),
+                            warning.debug()
+                        );
                     }
                     MessageView::Element(element) => {
                         if let Some(structure) = element.structure() {
