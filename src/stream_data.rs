@@ -51,7 +51,7 @@ pub fn generate_images(stream_type_number: u8) {
             0x02 => gst::parse_launch("appsrc name=src ! tsdemux ! mpeg2dec ! videoconvert ! appsink name=sink"),
             0x1B => gst::parse_launch("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink"),
             0x24 => gst::parse_launch("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videoconvert ! appsink name=sink"),
-            _ => panic!("Unsupported video stream type"),
+            _ => panic!("Unsupported video stream type {}", stream_type_number),
         }.unwrap();
 
         // Get references to the appsrc and appsink elements

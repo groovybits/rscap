@@ -49,6 +49,7 @@ use h264_reader::annexb::AnnexBReader;
 use h264_reader::nal::{pps, sei, slice, sps, Nal, RefNal, UnitType};
 use h264_reader::push::NalInterest;
 use h264_reader::Context;
+use image::GenericImageView;
 //use rscap::videodecoder::VideoProcessor;
 use rscap::stream_data::{process_mpegts_packet, process_smpte2110_packet};
 use tokio::task;
@@ -1546,19 +1547,50 @@ async fn rscap() {
                             stream_data_clone.packet_len = stream_data.packet_len;
                             stream_data_clone.packet = Arc::new(stream_data.packet.to_vec());
                             video_batch.push(stream_data_clone);
+                        }
+                    }
 
-                            // Store the video packet and stream type number
-                            if args.extract_images {
-                                let video_packet = stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len].to_vec();
-                                let stream_type_number = stream_data.stream_type_number;
-                                feed_mpegts_packets(vec![video_packet]);
-                                generate_images(stream_type_number);
-                            }
+                    // Store the video packet and stream type number
+                    if args.extract_images {
+                        let stream_type_number = stream_data.stream_type_number;
+                        if stream_type_number > 0 {
+                            let video_packet = stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len].to_vec();
+                            feed_mpegts_packets(vec![video_packet]);
+                            generate_images(stream_type_number);
                         }
                     }
                 }
             } else {
                 // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
+            }
+
+            if args.extract_images {
+                match get_image() {
+                    Some(image_data) => {
+                        // Process the image data here
+                        // For example, you can save it to a file or perform further analysis
+                        // ...
+                        println!("Received an image with size: {} bytes", image_data.len());
+
+                        // Attempt to decode the image to get its parameters
+                        match image::load_from_memory(&image_data) {
+                            Ok(img) => {
+                                println!("Image dimensions: {:?}", img.dimensions());
+                                println!("Image color type: {:?}", img.color());
+
+                                // Save the image data to a file named "image.jpg"
+                                let mut file = File::create("image.jpg").expect("Failed to create file.");
+                                file.write_all(&image_data).expect("Failed to write image data to file.");
+
+                                println!("Image saved as image.jpg");
+                            },
+                            Err(e) => println!("Failed to decode image data: {:?}", e),
+                        }
+                    }
+                    None => {
+                        // No images available, continue processing
+                    }
+                }
             }
 
             // release the packet Arc so it can be reused

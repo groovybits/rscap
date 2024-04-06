@@ -53,6 +53,7 @@ gstreamer = "0.20"
 gstreamer-app = "0.20"
 gstreamer-video = "0.20"
 crossbeam = "0.8.4"
+image = "0.25.1"
 
 [build-dependencies]
 capnpc = "0.18.0"
