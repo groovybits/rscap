@@ -406,6 +406,22 @@ fn flatten_streams(
             format!("{}.source_port", prefix),
             json!(stream_data.source_port),
         );
+
+        // Add system stats fields to the flattened structure
+        flat_structure.insert(format!("{}.total_memory", prefix), json!(stream_data.total_memory));
+        flat_structure.insert(format!("{}.used_memory", prefix), json!(stream_data.used_memory));
+        flat_structure.insert(format!("{}.total_swap", prefix), json!(stream_data.total_swap));
+        flat_structure.insert(format!("{}.used_swap", prefix), json!(stream_data.used_swap));
+        flat_structure.insert(format!("{}.cpu_usage", prefix), json!(stream_data.cpu_usage));
+        flat_structure.insert(format!("{}.cpu_count", prefix), json!(stream_data.cpu_count));
+        flat_structure.insert(format!("{}.core_count", prefix), json!(stream_data.core_count));
+        flat_structure.insert(format!("{}.boot_time", prefix), json!(stream_data.boot_time));
+        flat_structure.insert(format!("{}.load_avg_one", prefix), json!(stream_data.load_avg_one));
+        flat_structure.insert(format!("{}.load_avg_five", prefix), json!(stream_data.load_avg_five));
+        flat_structure.insert(format!("{}.load_avg_fifteen", prefix), json!(stream_data.load_avg_fifteen));
+        flat_structure.insert(format!("{}.host_name", prefix), json!(stream_data.host_name));
+        flat_structure.insert(format!("{}.kernel_version", prefix), json!(stream_data.kernel_version));
+        flat_structure.insert(format!("{}.os_version", prefix), json!(stream_data.os_version));
     }
 
     flat_structure
