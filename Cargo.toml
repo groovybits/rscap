@@ -55,6 +55,8 @@ gstreamer-app = { version = "0.20", optional = true }
 gstreamer-video = { version = "0.20", optional = true }
 crossbeam = "0.8.4"
 image = "0.25.1"
+num_cpus = "1.16.0"
+threadpool = "1.8.1"
 
 [build-dependencies]
 capnpc = "0.18.0"

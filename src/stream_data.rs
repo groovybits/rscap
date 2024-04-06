@@ -21,6 +21,7 @@ use rtp_rs as rtp;
 use serde::{Deserialize, Serialize};
 use std::sync::RwLock;
 use std::{fmt, sync::Arc, sync::Mutex};
+use threadpool::ThreadPool;
 
 // global variable to store the MpegTS PID Map (initially empty)
 lazy_static! {
@@ -42,111 +43,166 @@ pub fn feed_mpegts_packets(packets: Vec<Vec<u8>>) {
 pub fn generate_images(stream_type_number: u8) {
     let sender = IMAGE_CHANNEL.0.clone();
 
-    std::thread::spawn(move || {
-        let mut frame_data = None;
+    // Use a thread pool with a fixed number of worker threads
+    let pool = ThreadPool::new(num_cpus::get());
 
-        // Initialize GStreamer
-        gst::init().unwrap();
-
-        // Create a pipeline to extract video frames
-        let pipeline = match stream_type_number {
-            0x02 => create_pipeline("appsrc name=src ! tsdemux ! mpeg2dec ! videoconvert ! appsink name=sink"),
-            0x1B => create_pipeline("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink"),
-            0x24 => create_pipeline("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videoconvert ! appsink name=sink"),
-            _ => panic!("Unsupported video stream type {}", stream_type_number),
-        }.unwrap();
-
-        // Get references to the appsrc and appsink elements
-        let appsrc = pipeline
-            .clone()
-            .dynamic_cast::<gst::Bin>()
-            .unwrap()
-            .by_name("src")
-            .unwrap()
-            .downcast::<gst_app::AppSrc>()
-            .unwrap();
-
-        let appsink = pipeline
-            .clone()
-            .dynamic_cast::<gst::Bin>()
-            .unwrap()
-            .by_name("sink")
-            .unwrap()
-            .downcast::<gst_app::AppSink>()
-            .unwrap();
-
-        // Set the appsrc caps
-        let caps = gst::Caps::builder("video/mpegts")
-            .field("packetsize", 188)
-            .build();
-        appsrc.set_caps(Some(&caps));
-
-        // Configure the appsink
-        appsink.set_caps(Some(&gst::Caps::new_empty_simple("video/x-raw")));
-
-        // Start the pipeline
-        pipeline.set_state(gst::State::Playing).unwrap();
-
-        // Process packets from the queue
-        loop {
-            let mut packets = MPEGTS_PACKETS.write().unwrap();
-            if packets.is_empty() {
-                break;
-            }
-
-            for packet in packets.drain(..) {
-                let buffer = gst::Buffer::from_slice(packet);
-                appsrc.push_buffer(buffer).unwrap();
-            }
+    loop {
+        let mut packets = MPEGTS_PACKETS.write().unwrap();
+        if packets.is_empty() {
+            break;
         }
 
-        appsrc.end_of_stream().unwrap();
+        let packets_to_process = packets.split_off(0);
 
-        // Process messages and retrieve video frames
-        let bus = pipeline.bus().unwrap();
-        for msg in bus.iter_timed(gst::ClockTime::NONE) {
-            use gst::MessageView;
+        let sender_clone = sender.clone();
+        pool.execute(move || {
+            let mut frame_data = None;
 
-            match msg.view() {
-                MessageView::Eos(..) => {
+            // Initialize GStreamer
+            match gst::init() {
+                Ok(_) => {}
+                Err(err) => {
+                    eprintln!("Failed to initialize GStreamer: {}", err);
+                    return;
+                }
+            }
+
+            // Create a pipeline to extract video frames
+            let pipeline = match stream_type_number {
+                0x02 => create_pipeline("appsrc name=src ! tsdemux ! mpeg2dec ! videoconvert ! appsink name=sink"),
+                0x1B => create_pipeline("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink"),
+                0x24 => create_pipeline("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videoconvert ! appsink name=sink"),
+                _ => {
+                    eprintln!("Unsupported video stream type {}", stream_type_number);
+                    return;
+                }
+            };
+
+            let pipeline = match pipeline {
+                Ok(pipeline) => pipeline,
+                Err(err) => {
+                    eprintln!("Failed to create GStreamer pipeline: {}", err);
+                    return;
+                }
+            };
+
+            // Get references to the appsrc and appsink elements
+            let appsrc = match pipeline
+                .clone()
+                .dynamic_cast::<gst::Bin>()
+                .unwrap()
+                .by_name("src")
+                .unwrap()
+                .downcast::<gst_app::AppSrc>()
+            {
+                Ok(appsrc) => appsrc,
+                Err(err) => {
+                    eprintln!("Failed to get appsrc element: {:?}", err);
+                    return;
+                }
+            };
+
+            let appsink = match pipeline
+                .clone()
+                .dynamic_cast::<gst::Bin>()
+                .unwrap()
+                .by_name("sink")
+                .unwrap()
+                .downcast::<gst_app::AppSink>()
+            {
+                Ok(appsink) => appsink,
+                Err(err) => {
+                    eprintln!("Failed to get appsink element: {:?}", err);
+                    return;
+                }
+            };
+
+            // Set the appsrc caps
+            let caps = gst::Caps::builder("video/mpegts")
+                .field("packetsize", 188)
+                .build();
+            appsrc.set_caps(Some(&caps));
+
+            // Configure the appsink
+            appsink.set_caps(Some(&gst::Caps::new_empty_simple("video/x-raw")));
+
+            // Push MPEG-TS packets to the appsrc
+            for packet in packets_to_process {
+                let buffer = gst::Buffer::from_slice(packet);
+                if let Err(err) = appsrc.push_buffer(buffer) {
+                    eprintln!("Failed to push buffer to appsrc: {}", err);
                     break;
                 }
-                MessageView::Error(err) => {
-                    eprintln!(
-                        "Error from {:?}: {} ({:?})",
-                        err.src().map(|s| s.path_string()),
-                        err.error(),
-                        err.debug()
-                    );
-                    break;
+            }
+            appsrc.end_of_stream().unwrap();
+
+            // Start the pipeline
+            if let Err(err) = pipeline.set_state(gst::State::Playing) {
+                eprintln!("Failed to set pipeline state to Playing: {}", err);
+                return;
+            }
+
+            // Process messages and retrieve video frames
+            let bus = match pipeline.bus() {
+                Some(bus) => bus,
+                None => {
+                    eprintln!("Failed to get pipeline bus");
+                    return;
                 }
-                MessageView::Element(element) => {
-                    if let Some(structure) = element.structure() {
-                        if structure.name() == "GstSample" {
-                            let sample = structure
-                                .get::<gst::Sample>("sample")
-                                .expect("sample field in GstSample");
-                            if let Some(buffer) = sample.buffer() {
-                                let map = buffer.map_readable().unwrap();
-                                let data = map.as_slice().to_vec();
-                                frame_data = Some(data);
-                                break;
+            };
+
+            for msg in bus.iter_timed(gst::ClockTime::NONE) {
+                use gst::MessageView;
+
+                match msg.view() {
+                    MessageView::Eos(..) => {
+                        break;
+                    }
+                    MessageView::Error(err) => {
+                        eprintln!(
+                            "Error from {:?}: {} ({:?})",
+                            err.src().map(|s| s.path_string()),
+                            err.error(),
+                            err.debug()
+                        );
+                        break;
+                    }
+                    MessageView::Element(element) => {
+                        if let Some(structure) = element.structure() {
+                            if structure.name() == "GstSample" {
+                                match structure.get::<gst::Sample>("sample") {
+                                    Ok(sample) => {
+                                        if let Some(buffer) = sample.buffer() {
+                                            let map = buffer.map_readable().unwrap();
+                                            let data = map.as_slice().to_vec();
+                                            frame_data = Some(data);
+                                            break;
+                                        }
+                                    }
+                                    Err(err) => {
+                                        eprintln!("Failed to get sample from structure: {}", err);
+                                    }
+                                }
                             }
                         }
                     }
+                    _ => (),
                 }
-                _ => (),
             }
-        }
 
-        // Stop the pipeline
-        pipeline.set_state(gst::State::Null).unwrap();
+            // Stop the pipeline
+            if let Err(err) = pipeline.set_state(gst::State::Null) {
+                eprintln!("Failed to set pipeline state to Null: {}", err);
+            }
 
-        // Send the extracted image through the channel
-        if let Some(image_data) = frame_data {
-            sender.send(image_data).unwrap();
-        }
-    });
+            // Send the extracted image through the channel
+            if let Some(image_data) = frame_data {
+                if let Err(err) = sender_clone.send(image_data) {
+                    eprintln!("Failed to send image data through channel: {}", err);
+                }
+            }
+        });
+    }
 }
 
 fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
@@ -828,11 +884,15 @@ pub fn process_packet(
             }
 
             // calculate uptime using the arrival time as SystemTime and start_time as u64
-            let uptime = stream_data.capture_time - stream_data.start_time;
+            //let uptime = stream_data.capture_time - stream_data.start_time;
 
             // print out each field of structure
             debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {} packet_offset: {}, packet_len: {}",
-                stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, uptime, stream_data_packet.packet_start, stream_data_packet.packet_len);
+                stream_data.pid, stream_data.pid, stream_data.stream_type,
+                stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min,
+                stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min,
+                stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter,
+                stream_data.timestamp, 0/*uptime*/, stream_data_packet.packet_start, stream_data_packet.packet_len);
 
             stream_data_packet.bitrate = stream_data.bitrate;
             stream_data_packet.bitrate_avg = stream_data.bitrate_avg;
