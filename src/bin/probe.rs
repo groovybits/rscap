@@ -1394,6 +1394,48 @@ async fn rscap() {
         }
     });
 
+    // Create a channel for sending video packets to the image extraction thread/task
+    let (video_packet_sender, mut video_packet_receiver) = mpsc::channel(1024);
+
+    // Create a separate thread for image extraction and processing
+    let image_extraction_thread = tokio::spawn(async move {
+        // Continuously listen for incoming video packets
+        while let Some((video_packet, stream_type_number)) = video_packet_receiver.recv().await {
+
+            // Process the video packet and extract images
+            feed_mpegts_packets(vec![video_packet]);
+            generate_images(stream_type_number);
+
+            // Process the extracted images asynchronously
+            match get_image() {
+                Some(image_data) => {
+                    // Process the image data here
+                    println!("Received an image with size: {} bytes", image_data.len());
+
+                    // Attempt to decode the image to get its parameters
+                    match image::load_from_memory(&image_data) {
+                        Ok(img) => {
+                            println!("Image dimensions: {:?}", img.dimensions());
+                            println!("Image color type: {:?}", img.color());
+
+                            // Save the image data to a file with a unique name
+                            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S_%f").to_string();
+                            let filename = format!("image_{}.jpg", timestamp);
+                            let mut file = std::fs::File::create(&filename).expect("Failed to create file.");
+                            file.write_all(&image_data).expect("Failed to write image data to file.");
+
+                            println!("Image saved as {}", filename);
+                        },
+                        Err(e) => println!("Failed to decode image data: {:?}", e),
+                    }
+                }
+                None => {
+                    // No images available, continue processing
+                }
+            }
+        }
+    });
+
     // Perform TR 101 290 checks
     let mut tr101290_errors = Tr101290Errors::new();
 
@@ -1553,49 +1595,23 @@ async fn rscap() {
                         }
                     }
 
-                    // Store the video packet and stream type number
                     #[cfg(feature = "gst")]
                     if args.extract_images {
                         let stream_type_number = stream_data.stream_type_number;
                         if stream_type_number > 0 {
                             let video_packet = stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len].to_vec();
-                            feed_mpegts_packets(vec![video_packet]);
-                            generate_images(stream_type_number);
+
+                            // Send the video packet and stream type number to the image extraction thread/task
+                            if let Err(e) = video_packet_sender.send((video_packet, stream_type_number)).await {
+                                // Handle the case when the channel is full or disconnected
+                                eprintln!("Failed to send video packet to image extraction thread: {:?}", e);
+                                // You can choose to drop the packet, log an error, or take appropriate action
+                            }
                         }
                     }
                 }
             } else {
                 // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
-            }
-
-            #[cfg(feature = "gst")]
-            if args.extract_images {
-                match get_image() {
-                    Some(image_data) => {
-                        // Process the image data here
-                        // For example, you can save it to a file or perform further analysis
-                        // ...
-                        println!("Received an image with size: {} bytes", image_data.len());
-
-                        // Attempt to decode the image to get its parameters
-                        match image::load_from_memory(&image_data) {
-                            Ok(img) => {
-                                println!("Image dimensions: {:?}", img.dimensions());
-                                println!("Image color type: {:?}", img.color());
-
-                                // Save the image data to a file named "image.jpg"
-                                let mut file = File::create("image.jpg").expect("Failed to create file.");
-                                file.write_all(&image_data).expect("Failed to write image data to file.");
-
-                                println!("Image saved as image.jpg");
-                            },
-                            Err(e) => println!("Failed to decode image data: {:?}", e),
-                        }
-                    }
-                    None => {
-                        // No images available, continue processing
-                    }
-                }
             }
 
             // release the packet Arc so it can be reused
@@ -1666,6 +1682,9 @@ async fn rscap() {
     zmq_thread.await.unwrap();
     demuxer_thread.await.unwrap();
     decoder_thread.await.unwrap();
+
+    // Wait for the image extraction thread/task to finish
+    image_extraction_thread.await.unwrap();
 
     println!("\nThreads finished, exiting rscap probe");
 }
