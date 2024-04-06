@@ -9,5 +9,4 @@ sudo RUST_LOG=info \
     --target-ip 0.0.0.0 \
     --send-null-packets \
     --target-port 5556 \
-    --extract-images \
     --zmq-batch-size 10000 $@

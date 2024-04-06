@@ -25,9 +25,10 @@ use rscap::mpegts;
 use rscap::system_stats::get_system_stats;
 use rscap::stream_data::{
     identify_video_pid, is_mpegts_or_smpte2110, parse_and_store_pat, process_packet,
-    update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
-    generate_images, feed_mpegts_packets, get_image
+    update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID
 };
+#[cfg(feature = "gst")]
+use rscap::stream_data::{generate_images, feed_mpegts_packets, get_image };
 use rscap::{current_unix_timestamp_ms, hexdump};
 use std::{
     error::Error as StdError,
@@ -49,6 +50,7 @@ use h264_reader::annexb::AnnexBReader;
 use h264_reader::nal::{pps, sei, slice, sps, Nal, RefNal, UnitType};
 use h264_reader::push::NalInterest;
 use h264_reader::Context;
+#[cfg(feature = "gst")]
 use image::GenericImageView;
 //use rscap::videodecoder::VideoProcessor;
 use rscap::stream_data::{process_mpegts_packet, process_smpte2110_packet};
@@ -633,6 +635,7 @@ struct Args {
     mpegts_reader_sampling_time: u64,
 
     /// Extract Images from the video stream
+    #[cfg(feature = "gst")]
     #[clap(long, env = "EXTRACT_IMAGES", default_value_t = false)]
     extract_images: bool,
 }
@@ -1551,6 +1554,7 @@ async fn rscap() {
                     }
 
                     // Store the video packet and stream type number
+                    #[cfg(feature = "gst")]
                     if args.extract_images {
                         let stream_type_number = stream_data.stream_type_number;
                         if stream_type_number > 0 {
@@ -1564,6 +1568,7 @@ async fn rscap() {
                 // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
             }
 
+            #[cfg(feature = "gst")]
             if args.extract_images {
                 match get_image() {
                     Some(image_data) => {

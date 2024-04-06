@@ -127,9 +127,13 @@ echo "Downloading and compiling NASM (Netwide Assembler)..."
 echo "---"
 
 # Download
-wget https://www.nasm.us/pub/nasm/releasebuilds/$NASM_VERSION/nasm-$NASM_VERSION.tar.gz
+if [ ! -f nasm-$NASM_VERSION.tar.gz ]; then
+    wget https://www.nasm.us/pub/nasm/releasebuilds/$NASM_VERSION/nasm-$NASM_VERSION.tar.gz
+fi
 # Extract
-tar -xzf nasm-$NASM_VERSION.tar.gz
+if [ ! -d nasm-$NASM_VERSION ]; then
+    tar -xzf nasm-$NASM_VERSION.tar.gz
+fi
 cd nasm-$NASM_VERSION
 # Compile and install
 ./autogen.sh

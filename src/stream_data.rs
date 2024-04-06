@@ -8,8 +8,11 @@ use crate::current_unix_timestamp_ms;
 use crate::system_stats::get_system_stats;
 use crate::system_stats::SystemStats;
 use ahash::AHashMap;
+#[cfg(feature = "gst")]
 use gstreamer as gst;
+#[cfg(feature = "gst")]
 use gstreamer::prelude::*;
+#[cfg(feature = "gst")]
 use gstreamer_app as gst_app;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
@@ -29,11 +32,13 @@ lazy_static! {
     ) = crossbeam::channel::bounded(1);
 }
 
+#[cfg(feature = "gst")]
 pub fn feed_mpegts_packets(packets: Vec<Vec<u8>>) {
     let mut mpegts_packets = MPEGTS_PACKETS.write().unwrap();
     mpegts_packets.extend(packets);
 }
 
+#[cfg(feature = "gst")]
 pub fn generate_images(stream_type_number: u8) {
     let sender = IMAGE_CHANNEL.0.clone();
     let packets = MPEGTS_PACKETS.read().unwrap().clone();
@@ -111,6 +116,7 @@ pub fn generate_images(stream_type_number: u8) {
     });
 }
 
+#[cfg(feature = "gst")]
 pub fn get_image() -> Option<Vec<u8>> {
     IMAGE_CHANNEL.1.try_recv().ok()
 }
