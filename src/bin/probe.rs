@@ -1401,7 +1401,7 @@ async fn rscap() {
     let image_extraction_thread = tokio::spawn(async move {
         // Continuously listen for incoming video packets
         while let Some((video_packet, stream_type_number)) = video_packet_receiver.recv().await {
-
+            log::debug!("image_extraction_thread: Received video packet.");
             // Process the video packet and extract images
             feed_mpegts_packets(vec![video_packet]);
             generate_images(stream_type_number);
@@ -1410,7 +1410,7 @@ async fn rscap() {
             match get_image() {
                 Some(image_data) => {
                     // Process the image data here
-                    println!("Received an image with size: {} bytes", image_data.len());
+                    println!("\nReceived an image with size: {} bytes", image_data.len());
 
                     // Attempt to decode the image to get its parameters
                     match image::load_from_memory(&image_data) {
@@ -1545,13 +1545,16 @@ async fn rscap() {
                             if let Some((new_pid, new_codec)) = identify_video_pid(&packet_chunk) {
                                 if video_pid.map_or(true, |vp| vp != new_pid) {
                                     video_pid = Some(new_pid);
+                                    let old_stream_type = video_stream_type;
                                     video_stream_type = stream_data.stream_type_number;
                                     info!(
-                                        "STATUS::VIDEO_PID:CHANGE: to {}/{} from {}/{}",
+                                        "STATUS::VIDEO_PID:CHANGE: to {}/{}/{} from {}/{}/{}",
                                         new_pid,
                                         new_codec.clone(),
+                                        video_stream_type,
                                         video_pid.unwrap(),
-                                        video_codec.unwrap()
+                                        video_codec.unwrap(),
+                                        old_stream_type
                                     );
                                     video_codec = Some(new_codec.clone());
                                     // Reset video frame as the video stream has changed
@@ -1570,6 +1573,21 @@ async fn rscap() {
                         }
                     }
                 }
+            }
+
+            if video_pid < Some(0x1FFF) && video_pid > Some(0)
+                    && stream_data.pid == video_pid.unwrap()
+                    && video_stream_type != stream_data.stream_type_number
+            {
+                let old_stream_type = video_stream_type;
+                video_stream_type = stream_data.stream_type_number;
+                log::info!(
+                    "STATUS::VIDEO_STREAM:FOUND: to {}/{} from {}/{}",
+                    video_pid.unwrap(),
+                    video_stream_type,
+                    video_pid.unwrap(),
+                    old_stream_type
+                );
             }
 
             // Check for TR 101 290 errors

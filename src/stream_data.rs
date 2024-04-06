@@ -36,11 +36,19 @@ lazy_static! {
 #[cfg(feature = "gst")]
 pub fn feed_mpegts_packets(packets: Vec<Vec<u8>>) {
     let mut mpegts_packets = MPEGTS_PACKETS.write().unwrap();
+    log::debug!(
+        "feed_mpegts_packets Added {} packets to MPEGTS_PACKETS queue",
+        packets.len()
+    );
     mpegts_packets.extend(packets);
 }
 
 #[cfg(feature = "gst")]
 pub fn generate_images(stream_type_number: u8) {
+    log::debug!(
+        "generate_images called with stream_type_number: {}",
+        stream_type_number
+    );
     let sender = IMAGE_CHANNEL.0.clone();
 
     // Use a thread pool with a fixed number of worker threads
@@ -49,6 +57,7 @@ pub fn generate_images(stream_type_number: u8) {
     loop {
         let mut packets = MPEGTS_PACKETS.write().unwrap();
         if packets.is_empty() {
+            log::debug!("generate_images No MPEG-TS packets to process");
             break;
         }
 
@@ -219,13 +228,22 @@ pub fn generate_images(stream_type_number: u8) {
 fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
     let pipeline = gst::parse_launch(desc)?
         .downcast::<gst::Pipeline>()
-        .expect("Expected a gst::Pipeline");
+        .expect("create_pipeline: Expected a gst::Pipeline");
     Ok(pipeline)
 }
 
 #[cfg(feature = "gst")]
 pub fn get_image() -> Option<Vec<u8>> {
-    IMAGE_CHANNEL.1.try_recv().ok()
+    match IMAGE_CHANNEL.1.try_recv() {
+        Ok(image_data) => {
+            log::debug!("get_image: Received image data through IMAGE_CHANNEL");
+            Some(image_data)
+        }
+        Err(_) => {
+            log::debug!("get_image: No image data available in IMAGE_CHANNEL");
+            None
+        }
+    }
 }
 
 // constant for PAT PID
