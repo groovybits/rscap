@@ -52,6 +52,7 @@ rdkafka = "0.36.2"
 gstreamer = "0.20"
 gstreamer-app = "0.20"
 gstreamer-video = "0.20"
+crossbeam = "0.8.4"
 
 [build-dependencies]
 capnpc = "0.18.0"
