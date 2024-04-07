@@ -54,93 +54,95 @@ pub fn generate_images(stream_type_number: u8) {
     // Use a thread pool with a fixed number of worker threads
     let pool = ThreadPool::new(num_cpus::get());
 
-    loop {
-        let mut packets = MPEGTS_PACKETS.write().unwrap();
-        if packets.is_empty() {
-            log::debug!("generate_images No MPEG-TS packets to process");
-            break;
+    let sender_clone = sender.clone();
+    pool.execute(move || {
+        let mut frame_data = None;
+
+        // Initialize GStreamer
+        match gst::init() {
+            Ok(_) => {}
+            Err(err) => {
+                eprintln!("Failed to initialize GStreamer: {}", err);
+                return;
+            }
         }
 
-        let packets_to_process = packets.split_off(0);
-
-        let sender_clone = sender.clone();
-        pool.execute(move || {
-            let mut frame_data = None;
-
-            // Initialize GStreamer
-            match gst::init() {
-                Ok(_) => {}
-                Err(err) => {
-                    eprintln!("Failed to initialize GStreamer: {}", err);
-                    return;
-                }
+        // Create a pipeline to extract video frames
+        let pipeline = match stream_type_number {
+            0x1B => create_pipeline("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink"),
+            _ => {
+                eprintln!("Unsupported video stream type {}", stream_type_number);
+                return;
             }
+        };
 
-            // Create a pipeline to extract video frames
-            let pipeline = match stream_type_number {
-                0x1B => create_pipeline("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! capsfilter caps=video/x-raw,format=I420,width=1920,height=1080,framerate=60/1 ! queue ! appsink name=sink"),
-                _ => {
-                    eprintln!("Unsupported video stream type {}", stream_type_number);
-                    return;
+        let pipeline = match pipeline {
+            Ok(pipeline) => pipeline,
+            Err(err) => {
+                eprintln!("Failed to create GStreamer pipeline: {}", err);
+                return;
+            }
+        };
+
+        // Get references to the appsrc and appsink elements
+        let appsrc = match pipeline
+            .clone()
+            .dynamic_cast::<gst::Bin>()
+            .unwrap()
+            .by_name("src")
+            .unwrap()
+            .downcast::<gst_app::AppSrc>()
+        {
+            Ok(appsrc) => appsrc,
+            Err(err) => {
+                eprintln!("Failed to get appsrc element: {:?}", err);
+                return;
+            }
+        };
+
+        let appsink = match pipeline
+            .clone()
+            .dynamic_cast::<gst::Bin>()
+            .unwrap()
+            .by_name("sink")
+            .unwrap()
+            .downcast::<gst_app::AppSink>()
+        {
+            Ok(appsink) => appsink,
+            Err(err) => {
+                eprintln!("Failed to get appsink element: {:?}", err);
+                return;
+            }
+        };
+
+        // Set the appsrc caps
+        let caps = gst::Caps::builder("video/mpegts")
+            .field("packetsize", 188)
+            .build();
+        appsrc.set_caps(Some(&caps));
+
+        // Configure the appsink
+        let caps = gst::Caps::builder("video/x-raw").build();
+        appsink.set_caps(Some(&caps));
+
+        // Start the pipeline
+        if let Err(err) = pipeline.set_state(gst::State::Playing) {
+            eprintln!("Failed to set pipeline state to Playing: {}", err);
+            return;
+        }
+
+        loop {
+            let packets = {
+                let mut packets = MPEGTS_PACKETS.write().unwrap();
+                if packets.is_empty() {
+                    log::debug!("generate_images No MPEG-TS packets to process");
+                    break;
                 }
+                packets.split_off(0)
             };
-
-            let pipeline = match pipeline {
-                Ok(pipeline) => pipeline,
-                Err(err) => {
-                    eprintln!("Failed to create GStreamer pipeline: {}", err);
-                    return;
-                }
-            };
-
-            // Get references to the appsrc and appsink elements
-            let appsrc = match pipeline
-                .clone()
-                .dynamic_cast::<gst::Bin>()
-                .unwrap()
-                .by_name("src")
-                .unwrap()
-                .downcast::<gst_app::AppSrc>()
-            {
-                Ok(appsrc) => appsrc,
-                Err(err) => {
-                    eprintln!("Failed to get appsrc element: {:?}", err);
-                    return;
-                }
-            };
-
-            let appsink = match pipeline
-                .clone()
-                .dynamic_cast::<gst::Bin>()
-                .unwrap()
-                .by_name("sink")
-                .unwrap()
-                .downcast::<gst_app::AppSink>()
-            {
-                Ok(appsink) => appsink,
-                Err(err) => {
-                    eprintln!("Failed to get appsink element: {:?}", err);
-                    return;
-                }
-            };
-
-            // Set the appsrc caps
-            let caps = gst::Caps::builder("video/mpegts")
-                .field("packetsize", 188)
-                .build();
-            appsrc.set_caps(Some(&caps));
-
-            // Configure the appsink
-            let caps = gst::Caps::builder("video/x-raw")
-                .field("format", "I420")
-                .field("width", 1920)
-                .field("height", 1080)
-                .field("framerate", gst::Fraction::new(60, 1))
-                .build();
-            appsink.set_caps(Some(&caps));
 
             // Push MPEG-TS packets to the appsrc
-            for packet in packets_to_process {
+            for packet in packets {
                 let buffer = gst::Buffer::from_slice(packet);
                 match appsrc.push_buffer(buffer) {
                     Ok(gst::FlowSuccess::Ok) => {}
@@ -154,20 +156,13 @@ pub fn generate_images(stream_type_number: u8) {
                     }
                 }
             }
-            appsrc.end_of_stream().unwrap();
-
-            // Start the pipeline
-            if let Err(err) = pipeline.set_state(gst::State::Playing) {
-                eprintln!("Failed to set pipeline state to Playing: {}", err);
-                return;
-            }
 
             // Process messages and retrieve video frames
             let bus = match pipeline.bus() {
                 Some(bus) => bus,
                 None => {
                     eprintln!("Failed to get pipeline bus");
-                    return;
+                    break;
                 }
             };
 
@@ -219,19 +214,24 @@ pub fn generate_images(stream_type_number: u8) {
                 }
             }
 
-            // Stop the pipeline
-            if let Err(err) = pipeline.set_state(gst::State::Null) {
-                eprintln!("Failed to set pipeline state to Null: {}", err);
+            // Check if an image frame was extracted
+            if frame_data.is_some() {
+                break;
             }
+        }
 
-            // Send the extracted image through the channel
-            if let Some(image_data) = frame_data {
-                if let Err(err) = sender_clone.send(image_data) {
-                    eprintln!("Failed to send image data through channel: {}", err);
-                }
+        // Stop the pipeline
+        if let Err(err) = pipeline.set_state(gst::State::Null) {
+            eprintln!("Failed to set pipeline state to Null: {}", err);
+        }
+
+        // Send the extracted image through the channel
+        if let Some(image_data) = frame_data {
+            if let Err(err) = sender_clone.send(image_data) {
+                eprintln!("Failed to send image data through channel: {}", err);
             }
-        });
-    }
+        }
+    });
 }
 
 fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
