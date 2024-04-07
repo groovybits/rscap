@@ -122,14 +122,25 @@ pub fn generate_images(stream_type_number: u8) {
         appsrc.set_caps(Some(&caps));
 
         // Configure the appsink
-        let caps = gst::Caps::builder("video/x-raw").build();
+        let caps = gst::Caps::builder("video/x-raw")
+            .field("format", "RGB")
+            .field("width", 640)
+            .field("height", 480)
+            .field("framerate", gst::Fraction::new(30, 1))
+            .build();
         appsink.set_caps(Some(&caps));
+
+        // Set appsink to drop old buffers and only keep the most recent one
+        appsink.set_drop(true);
+        appsink.set_max_buffers(1);
 
         // Start the pipeline
         if let Err(err) = pipeline.set_state(gst::State::Playing) {
             eprintln!("Failed to set pipeline state to Playing: {}", err);
             return;
         }
+
+        let frame_interval = std::time::Duration::from_millis(1000); // Sample every 1 second
 
         loop {
             let packets = {
@@ -156,6 +167,9 @@ pub fn generate_images(stream_type_number: u8) {
                     }
                 }
             }
+
+            // Wait for the specified frame interval
+            std::thread::sleep(frame_interval);
 
             // Process messages and retrieve video frames
             let bus = match pipeline.bus() {
