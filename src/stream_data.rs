@@ -23,10 +23,9 @@ use std::sync::RwLock;
 use std::{fmt, sync::Arc, sync::Mutex};
 use threadpool::ThreadPool;
 
-// global variable to store the MpegTS PID Map (initially empty)
 lazy_static! {
     static ref PID_MAP: Mutex<AHashMap<u16, Arc<StreamData>>> = Mutex::new(AHashMap::new());
-    static ref MPEGTS_PACKETS: RwLock<Vec<Vec<u8>>> = RwLock::new(Vec::new());
+    static ref MPEGTS_PACKETS: RwLock<Vec<Arc<Vec<u8>>>> = RwLock::new(Vec::new());
     static ref IMAGE_CHANNEL: (
         crossbeam::channel::Sender<Vec<u8>>,
         crossbeam::channel::Receiver<Vec<u8>>
@@ -34,114 +33,84 @@ lazy_static! {
 }
 
 #[cfg(feature = "gst")]
-pub fn feed_mpegts_packets(packets: Vec<Vec<u8>>) {
-    let mut mpegts_packets = MPEGTS_PACKETS.write().unwrap();
-    log::debug!(
-        "feed_mpegts_packets Added {} packets to MPEGTS_PACKETS queue",
-        packets.len()
-    );
-    mpegts_packets.extend(packets);
+pub fn initialize_pipeline(
+    stream_type_number: u8,
+) -> Result<(gst::Pipeline, gst_app::AppSrc, gst_app::AppSink), anyhow::Error> {
+    // Initialize GStreamer
+    match gst::init() {
+        Ok(_) => {}
+        Err(err) => {
+            return Err(anyhow::anyhow!("Failed to initialize GStreamer: {}", err));
+        }
+    }
+
+    // Create a pipeline to extract video frames
+    let pipeline = match stream_type_number {
+        0x1B => create_pipeline(
+            "appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink",
+        ),
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Unsupported video stream type {}",
+                stream_type_number
+            ));
+        }
+    }?;
+
+    // Get references to the appsrc and appsink elements
+    let appsrc = pipeline
+        .clone()
+        .dynamic_cast::<gst::Bin>()
+        .unwrap()
+        .by_name("src")
+        .unwrap()
+        .downcast::<gst_app::AppSrc>()
+        .map_err(|_| anyhow::anyhow!("Failed to get appsrc element"))?;
+
+    let appsink = pipeline
+        .clone()
+        .dynamic_cast::<gst::Bin>()
+        .unwrap()
+        .by_name("sink")
+        .unwrap()
+        .downcast::<gst_app::AppSink>()
+        .map_err(|_| anyhow::anyhow!("Failed to get appsink element"))?;
+
+    // Set the appsrc caps
+    let caps = gst::Caps::builder("video/mpegts")
+        .field("packetsize", 188)
+        .build();
+    appsrc.set_caps(Some(&caps));
+
+    // Configure the appsink
+    let caps = gst::Caps::builder("video/x-raw")
+        .field("format", "RGB")
+        .field("width", 640)
+        .field("height", 480)
+        .field("framerate", gst::Fraction::new(30, 1))
+        .build();
+    appsink.set_caps(Some(&caps));
+
+    // Set appsink to drop old buffers and only keep the most recent one
+    appsink.set_drop(true);
+    appsink.set_max_buffers(1);
+
+    Ok((pipeline, appsrc, appsink))
 }
 
 #[cfg(feature = "gst")]
-pub fn generate_images(stream_type_number: u8) {
-    log::debug!(
-        "generate_images called with stream_type_number: {}",
-        stream_type_number
-    );
+pub fn generate_images(appsrc: &gst_app::AppSrc, appsink: &gst_app::AppSink) {
+    log::debug!("generate_images called");
     let sender = IMAGE_CHANNEL.0.clone();
+
+    let sender_clone = sender.clone();
+    let appsrc_clone = appsrc.clone();
+    let appsink_clone = appsink.clone();
 
     // Use a thread pool with a fixed number of worker threads
     let pool = ThreadPool::new(num_cpus::get());
 
-    let sender_clone = sender.clone();
     pool.execute(move || {
-        let mut frame_data = None;
-
-        // Initialize GStreamer
-        match gst::init() {
-            Ok(_) => {}
-            Err(err) => {
-                eprintln!("Failed to initialize GStreamer: {}", err);
-                return;
-            }
-        }
-
-        // Create a pipeline to extract video frames
-        let pipeline = match stream_type_number {
-            0x1B => create_pipeline("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink"),
-            _ => {
-                eprintln!("Unsupported video stream type {}", stream_type_number);
-                return;
-            }
-        };
-
-        let pipeline = match pipeline {
-            Ok(pipeline) => pipeline,
-            Err(err) => {
-                eprintln!("Failed to create GStreamer pipeline: {}", err);
-                return;
-            }
-        };
-
-        // Get references to the appsrc and appsink elements
-        let appsrc = match pipeline
-            .clone()
-            .dynamic_cast::<gst::Bin>()
-            .unwrap()
-            .by_name("src")
-            .unwrap()
-            .downcast::<gst_app::AppSrc>()
-        {
-            Ok(appsrc) => appsrc,
-            Err(err) => {
-                eprintln!("Failed to get appsrc element: {:?}", err);
-                return;
-            }
-        };
-
-        let appsink = match pipeline
-            .clone()
-            .dynamic_cast::<gst::Bin>()
-            .unwrap()
-            .by_name("sink")
-            .unwrap()
-            .downcast::<gst_app::AppSink>()
-        {
-            Ok(appsink) => appsink,
-            Err(err) => {
-                eprintln!("Failed to get appsink element: {:?}", err);
-                return;
-            }
-        };
-
-        // Set the appsrc caps
-        let caps = gst::Caps::builder("video/mpegts")
-            .field("packetsize", 188)
-            .build();
-        appsrc.set_caps(Some(&caps));
-
-        // Configure the appsink
-        let caps = gst::Caps::builder("video/x-raw")
-            .field("format", "RGB")
-            .field("width", 640)
-            .field("height", 480)
-            .field("framerate", gst::Fraction::new(30, 1))
-            .build();
-        appsink.set_caps(Some(&caps));
-
-        // Set appsink to drop old buffers and only keep the most recent one
-        appsink.set_drop(true);
-        appsink.set_max_buffers(1);
-
-        // Start the pipeline
-        if let Err(err) = pipeline.set_state(gst::State::Playing) {
-            eprintln!("Failed to set pipeline state to Playing: {}", err);
-            return;
-        }
-
-        let frame_interval = std::time::Duration::from_millis(1000); // Sample every 1 second
-
         loop {
             let packets = {
                 let mut packets = MPEGTS_PACKETS.write().unwrap();
@@ -154,11 +123,14 @@ pub fn generate_images(stream_type_number: u8) {
 
             // Push MPEG-TS packets to the appsrc
             for packet in packets {
-                let buffer = gst::Buffer::from_slice(packet);
-                match appsrc.push_buffer(buffer) {
+                let buffer = gst::Buffer::from_mut_slice(Arc::clone(&packet).to_vec());
+                match appsrc_clone.push_buffer(buffer) {
                     Ok(gst::FlowSuccess::Ok) => {}
                     Ok(flow_return) => {
-                        eprintln!("Unexpected flow return while pushing buffer: {:?}", flow_return);
+                        eprintln!(
+                            "Unexpected flow return while pushing buffer: {:?}",
+                            flow_return
+                        );
                         break;
                     }
                     Err(err) => {
@@ -168,84 +140,35 @@ pub fn generate_images(stream_type_number: u8) {
                 }
             }
 
-            // Wait for the specified frame interval
-            std::thread::sleep(frame_interval);
+            // Pull the video frame from appsink
+            match appsink_clone.try_pull_sample(gst::ClockTime::NONE) {
+                Some(sample) => {
+                    if let Some(buffer) = sample.buffer() {
+                        let map = buffer.map_readable().unwrap();
+                        let data = map.as_slice().to_vec();
 
-            // Process messages and retrieve video frames
-            let bus = match pipeline.bus() {
-                Some(bus) => bus,
-                None => {
-                    eprintln!("Failed to get pipeline bus");
-                    break;
-                }
-            };
-
-            for msg in bus.iter_timed(gst::ClockTime::NONE) {
-                use gst::MessageView;
-
-                match msg.view() {
-                    MessageView::Eos(..) => {
-                        println!("End of stream reached");
-                        break;
-                    }
-                    MessageView::Error(err) => {
-                        eprintln!(
-                            "Error from {:?}: {} ({:?})",
-                            err.src().map(|s| s.path_string()),
-                            err.error(),
-                            err.debug()
-                        );
-                        break;
-                    }
-                    MessageView::Warning(warning) => {
-                        eprintln!(
-                            "Warning from {:?}: {} ({:?})",
-                            warning.src().map(|s| s.path_string()),
-                            warning.error(),
-                            warning.debug()
-                        );
-                    }
-                    MessageView::Element(element) => {
-                        if let Some(structure) = element.structure() {
-                            if structure.name() == "GstSample" {
-                                match structure.get::<gst::Sample>("sample") {
-                                    Ok(sample) => {
-                                        if let Some(buffer) = sample.buffer() {
-                                            let map = buffer.map_readable().unwrap();
-                                            let data = map.as_slice().to_vec();
-                                            frame_data = Some(data);
-                                            break;
-                                        }
-                                    }
-                                    Err(err) => {
-                                        eprintln!("Failed to get sample from structure: {}", err);
-                                    }
-                                }
-                            }
+                        if let Err(err) = sender_clone.send(data) {
+                            eprintln!("Failed to send image data through channel: {}", err);
                         }
                     }
-                    _ => (),
                 }
-            }
-
-            // Check if an image frame was extracted
-            if frame_data.is_some() {
-                break;
-            }
-        }
-
-        // Stop the pipeline
-        if let Err(err) = pipeline.set_state(gst::State::Null) {
-            eprintln!("Failed to set pipeline state to Null: {}", err);
-        }
-
-        // Send the extracted image through the channel
-        if let Some(image_data) = frame_data {
-            if let Err(err) = sender_clone.send(image_data) {
-                eprintln!("Failed to send image data through channel: {}", err);
+                None => {
+                    // No sample available, continue the loop
+                }
             }
         }
     });
+}
+
+#[cfg(feature = "gst")]
+pub fn feed_mpegts_packets(packets: Vec<Vec<u8>>) {
+    let packets: Vec<Arc<Vec<u8>>> = packets.into_iter().map(Arc::new).collect();
+    let mut mpegts_packets = MPEGTS_PACKETS.write().unwrap();
+    log::debug!(
+        "feed_mpegts_packets Added {} packets to MPEGTS_PACKETS queue",
+        packets.len()
+    );
+    mpegts_packets.extend(packets);
 }
 
 fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {

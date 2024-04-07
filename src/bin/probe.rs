@@ -9,6 +9,10 @@
 
 use async_zmq;
 use capnp;
+#[cfg(feature = "gst")]
+use gstreamer as gst;
+#[cfg(feature = "gst")]
+use gstreamer::prelude::*;
 use capnp::message::{Builder, HeapAllocator};
 #[cfg(feature = "dpdk_enabled")]
 use capsule::config::{load_config, DPDKConfig};
@@ -25,10 +29,10 @@ use rscap::mpegts;
 use rscap::system_stats::get_system_stats;
 use rscap::stream_data::{
     identify_video_pid, is_mpegts_or_smpte2110, parse_and_store_pat, process_packet,
-    update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID
+    update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID, initialize_pipeline
 };
 #[cfg(feature = "gst")]
-use rscap::stream_data::{generate_images, feed_mpegts_packets, get_image };
+use rscap::stream_data::{generate_images, feed_mpegts_packets };
 use rscap::{current_unix_timestamp_ms, hexdump};
 use std::{
     error::Error as StdError,
@@ -50,8 +54,6 @@ use h264_reader::annexb::AnnexBReader;
 use h264_reader::nal::{pps, sei, slice, sps, Nal, RefNal, UnitType};
 use h264_reader::push::NalInterest;
 use h264_reader::Context;
-#[cfg(feature = "gst")]
-use image::GenericImageView;
 //use rscap::videodecoder::VideoProcessor;
 use rscap::stream_data::{process_mpegts_packet, process_smpte2110_packet};
 use tokio::task;
@@ -1399,40 +1401,33 @@ async fn rscap() {
 
     // Create a separate thread for image extraction and processing
     let image_extraction_thread = tokio::spawn(async move {
-        // Continuously listen for incoming video packets
-        while let Some((video_packet, stream_type_number)) = video_packet_receiver.recv().await {
-            log::debug!("image_extraction_thread: Received video packet.");
-            // Process the video packet and extract images
-            feed_mpegts_packets(vec![video_packet]);
-            generate_images(stream_type_number);
-
-            // Process the extracted images asynchronously
-            match get_image() {
-                Some(image_data) => {
-                    // Process the image data here
-                    println!("\nReceived an image with size: {} bytes", image_data.len());
-
-                    // Attempt to decode the image to get its parameters
-                    match image::load_from_memory(&image_data) {
-                        Ok(img) => {
-                            println!("Image dimensions: {:?}", img.dimensions());
-                            println!("Image color type: {:?}", img.color());
-
-                            // Save the image data to a file with a unique name
-                            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S_%f").to_string();
-                            let filename = format!("image_{}.jpg", timestamp);
-                            let mut file = std::fs::File::create(&filename).expect("Failed to create file.");
-                            file.write_all(&image_data).expect("Failed to write image data to file.");
-
-                            println!("Image saved as {}", filename);
-                        },
-                        Err(e) => println!("Failed to decode image data: {:?}", e),
-                    }
-                }
-                None => {
-                    // No images available, continue processing
-                }
+        // Initialize the pipeline
+        let (pipeline, appsrc, appsink) = match initialize_pipeline(0x1B) {
+            Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
+            Err(err) => {
+                eprintln!("Failed to initialize GStreamer pipeline: {}", err);
+                return;
             }
+        };
+
+        // Start the pipeline
+        if let Err(err) = pipeline.set_state(gst::State::Playing) {
+            eprintln!("Failed to set pipeline state to Playing: {}", err);
+            return;
+        }
+
+        // Continuously listen for incoming video packets
+        while let Some(video_packet) = video_packet_receiver.recv().await {
+            log::debug!("image_extraction_thread: Received video packet.");
+
+            // Feed the MPEG-TS packet to the generate_images function
+            feed_mpegts_packets(vec![video_packet]);
+            generate_images(&appsrc, &appsink);
+        }
+
+        // Stop the pipeline
+        if let Err(err) = pipeline.set_state(gst::State::Null) {
+            eprintln!("Failed to set pipeline state to Null: {}", err);
         }
     });
 
@@ -1617,16 +1612,16 @@ async fn rscap() {
                     }
                 }
 
+                // In the main loop where you process the video packets
                 #[cfg(feature = "gst")]
                 if args.extract_images {
                     if video_stream_type > 0 {
                         let video_packet = stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len].to_vec();
 
-                        // Send the video packet and stream type number to the image extraction thread/task
-                        if let Err(e) = video_packet_sender.send((video_packet, video_stream_type)).await {
-                            // Handle the case when the channel is full or disconnected
-                            eprintln!("Failed to send video packet to image extraction thread: {:?}", e);
-                            // You can choose to drop the packet, log an error, or take appropriate action
+                        // Send the video packet to the image extraction thread/task
+                        if let Err(_) = video_packet_sender.try_send(video_packet) {
+                            // If the channel is full, drop the packet
+                            log::warn!("Video packet channel is full. Dropping packet.");
                         }
                     }
                 }
