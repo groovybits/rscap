@@ -14,48 +14,38 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 #[cfg(feature = "gst")]
 use gstreamer_app as gst_app;
+#[cfg(feature = "gst")]
+use gst_app::{AppSrc, AppSink};
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use rtp::RtpReader;
 use rtp_rs as rtp;
 use serde::{Deserialize, Serialize};
-use std::sync::RwLock;
 use std::{fmt, sync::Arc, sync::Mutex};
-use threadpool::ThreadPool;
+use tokio::sync::mpsc;
 
 lazy_static! {
     static ref PID_MAP: Mutex<AHashMap<u16, Arc<StreamData>>> = Mutex::new(AHashMap::new());
-    static ref MPEGTS_PACKETS: RwLock<Vec<Arc<Vec<u8>>>> = RwLock::new(Vec::new());
-    static ref IMAGE_CHANNEL: (
-        crossbeam::channel::Sender<Vec<u8>>,
-        crossbeam::channel::Receiver<Vec<u8>>
-    ) = crossbeam::channel::bounded(1);
 }
 
 #[cfg(feature = "gst")]
-pub fn initialize_pipeline(
-    stream_type_number: u8,
-) -> Result<(gst::Pipeline, gst_app::AppSrc, gst_app::AppSink), anyhow::Error> {
+fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
+    let pipeline = gst::parse_launch(desc)?
+        .downcast::<gst::Pipeline>()
+        .expect("Expected a gst::Pipeline");
+    Ok(pipeline)
+}
+
+#[cfg(feature = "gst")]
+pub fn initialize_pipeline(stream_type_number: u8) -> Result<(gst::Pipeline, AppSrc, AppSink), anyhow::Error> {
     // Initialize GStreamer
-    match gst::init() {
-        Ok(_) => {}
-        Err(err) => {
-            return Err(anyhow::anyhow!("Failed to initialize GStreamer: {}", err));
-        }
-    }
+    gst::init()?;
 
     // Create a pipeline to extract video frames
     let pipeline = match stream_type_number {
-        0x1B => create_pipeline(
-            "appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink",
-        ),
-        _ => {
-            return Err(anyhow::anyhow!(
-                "Unsupported video stream type {}",
-                stream_type_number
-            ));
-        }
-    }?;
+        0x1B => create_pipeline("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink")?,
+        _ => return Err(anyhow::anyhow!("Unsupported video stream type {}", stream_type_number)),
+    };
 
     // Get references to the appsrc and appsink elements
     let appsrc = pipeline
@@ -64,8 +54,8 @@ pub fn initialize_pipeline(
         .unwrap()
         .by_name("src")
         .unwrap()
-        .downcast::<gst_app::AppSrc>()
-        .map_err(|_| anyhow::anyhow!("Failed to get appsrc element"))?;
+        .downcast::<AppSrc>()
+        .unwrap();
 
     let appsink = pipeline
         .clone()
@@ -73,8 +63,8 @@ pub fn initialize_pipeline(
         .unwrap()
         .by_name("sink")
         .unwrap()
-        .downcast::<gst_app::AppSink>()
-        .map_err(|_| anyhow::anyhow!("Failed to get appsink element"))?;
+        .downcast::<AppSink>()
+        .unwrap();
 
     // Set the appsrc caps
     let caps = gst::Caps::builder("video/mpegts")
@@ -99,97 +89,33 @@ pub fn initialize_pipeline(
 }
 
 #[cfg(feature = "gst")]
-pub fn generate_images(appsrc: &gst_app::AppSrc, appsink: &gst_app::AppSink) {
-    log::debug!("generate_images called");
-    let sender = IMAGE_CHANNEL.0.clone();
-
-    let sender_clone = sender.clone();
-    let appsrc_clone = appsrc.clone();
-    let appsink_clone = appsink.clone();
-
-    // Use a thread pool with a fixed number of worker threads
-    let pool = ThreadPool::new(num_cpus::get());
-
-    pool.execute(move || {
-        loop {
-            let packets = {
-                let mut packets = MPEGTS_PACKETS.write().unwrap();
-                if packets.is_empty() {
-                    log::debug!("generate_images No MPEG-TS packets to process");
-                    break;
-                }
-                packets.split_off(0)
-            };
-
-            // Push MPEG-TS packets to the appsrc
-            for packet in packets {
-                let buffer = gst::Buffer::from_mut_slice(Arc::clone(&packet).to_vec());
-                match appsrc_clone.push_buffer(buffer) {
-                    Ok(gst::FlowSuccess::Ok) => {}
-                    Ok(flow_return) => {
-                        eprintln!(
-                            "Unexpected flow return while pushing buffer: {:?}",
-                            flow_return
-                        );
-                        break;
-                    }
-                    Err(err) => {
-                        eprintln!("Failed to push buffer to appsrc: {}", err);
-                        break;
-                    }
-                }
-            }
-
-            // Pull the video frame from appsink
-            match appsink_clone.try_pull_sample(gst::ClockTime::NONE) {
-                Some(sample) => {
-                    if let Some(buffer) = sample.buffer() {
-                        let map = buffer.map_readable().unwrap();
-                        let data = map.as_slice().to_vec();
-
-                        if let Err(err) = sender_clone.send(data) {
-                            eprintln!("Failed to send image data through channel: {}", err);
-                        }
-                    }
-                }
-                None => {
-                    // No sample available, continue the loop
-                }
+pub fn process_video_packets(appsrc: AppSrc, mut video_packet_receiver: mpsc::Receiver<Vec<u8>>) {
+    tokio::spawn(async move {
+        while let Some(packet) = video_packet_receiver.recv().await {
+            let buffer = gst::Buffer::from_slice(packet);
+            if let Err(err) = appsrc.push_buffer(buffer) {
+                eprintln!("Failed to push buffer to appsrc: {}", err);
             }
         }
     });
 }
 
 #[cfg(feature = "gst")]
-pub fn feed_mpegts_packets(packets: Vec<Vec<u8>>) {
-    let packets: Vec<Arc<Vec<u8>>> = packets.into_iter().map(Arc::new).collect();
-    let mut mpegts_packets = MPEGTS_PACKETS.write().unwrap();
-    log::debug!(
-        "feed_mpegts_packets Added {} packets to MPEGTS_PACKETS queue",
-        packets.len()
-    );
-    mpegts_packets.extend(packets);
-}
-
-fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
-    let pipeline = gst::parse_launch(desc)?
-        .downcast::<gst::Pipeline>()
-        .expect("create_pipeline: Expected a gst::Pipeline");
-    Ok(pipeline)
-}
-
-#[cfg(feature = "gst")]
-pub fn get_image() -> Option<Vec<u8>> {
-    match IMAGE_CHANNEL.1.try_recv() {
-        Ok(image_data) => {
-            log::debug!("get_image: Received image data through IMAGE_CHANNEL");
-            Some(image_data)
+pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>) {
+    tokio::spawn(async move {
+        loop {
+            let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
+            if let Some(sample) = sample {
+                if let Some(buffer) = sample.buffer() {
+                    let map = buffer.map_readable().unwrap();
+                    let data = map.as_slice().to_vec();
+                    if let Err(err) = image_sender.send(data).await {
+                        eprintln!("Failed to send image data through channel: {}", err);
+                    }
+                }
+            }
         }
-        Err(_) => {
-            log::debug!("get_image: No image data available in IMAGE_CHANNEL");
-            None
-        }
-    }
+    });
 }
 
 // constant for PAT PID

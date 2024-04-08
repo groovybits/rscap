@@ -29,10 +29,10 @@ use rscap::mpegts;
 use rscap::system_stats::get_system_stats;
 use rscap::stream_data::{
     identify_video_pid, is_mpegts_or_smpte2110, parse_and_store_pat, process_packet,
-    update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID, initialize_pipeline
+    update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID
 };
 #[cfg(feature = "gst")]
-use rscap::stream_data::{generate_images, feed_mpegts_packets };
+use rscap::stream_data::{initialize_pipeline, pull_images, process_video_packets};
 use rscap::{current_unix_timestamp_ms, hexdump};
 use std::{
     error::Error as StdError,
@@ -1396,40 +1396,31 @@ async fn rscap() {
         }
     });
 
-    // Create a channel for sending video packets to the image extraction thread/task
-    let (video_packet_sender, mut video_packet_receiver) = mpsc::channel(10000);
+    // Create channels for sending video packets and receiving images
+    let (video_packet_sender, video_packet_receiver) = mpsc::channel(10000);
+    let (image_sender, mut image_receiver) = mpsc::channel(10000);
 
-    // Create a separate thread for image extraction and processing
-    let image_extraction_thread = tokio::spawn(async move {
-        // Initialize the pipeline
-        let (pipeline, appsrc, appsink) = match initialize_pipeline(0x1B) {
-            Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
-            Err(err) => {
-                eprintln!("Failed to initialize GStreamer pipeline: {}", err);
-                return;
-            }
-        };
-
-        // Start the pipeline
-        if let Err(err) = pipeline.set_state(gst::State::Playing) {
-            eprintln!("Failed to set pipeline state to Playing: {}", err);
+    // Initialize the pipeline
+    let (pipeline, appsrc, appsink) = match initialize_pipeline(0x1B) {
+        Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
+        Err(err) => {
+            eprintln!("Failed to initialize the pipeline: {}", err);
             return;
         }
+    };
 
-        // Continuously listen for incoming video packets
-        while let Some(video_packet) = video_packet_receiver.recv().await {
-            log::debug!("image_extraction_thread: Received video packet.");
-
-            // Feed the MPEG-TS packet to the generate_images function
-            feed_mpegts_packets(vec![video_packet]);
-            generate_images(&appsrc, &appsink);
+    // Start the pipeline
+    match pipeline.set_state(gst::State::Playing) {
+        Ok(_) => (),
+        Err(err) => {
+            eprintln!("Failed to set the pipeline state to Playing: {}", err);
+            return;
         }
+    }
 
-        // Stop the pipeline
-        if let Err(err) = pipeline.set_state(gst::State::Null) {
-            eprintln!("Failed to set pipeline state to Null: {}", err);
-        }
-    });
+    // Spawn separate tasks for processing video packets and pulling images
+    process_video_packets(appsrc, video_packet_receiver);
+    pull_images(appsink, image_sender);
 
     // Perform TR 101 290 checks
     let mut tr101290_errors = Tr101290Errors::new();
@@ -1612,17 +1603,24 @@ async fn rscap() {
                     }
                 }
 
-                // In the main loop where you process the video packets
+                // Process video packets
                 #[cfg(feature = "gst")]
                 if args.extract_images {
                     if video_stream_type > 0 {
-                        let video_packet = stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len].to_vec();
+                        let video_packet = Arc::new(stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len].to_vec());
 
-                        // Send the video packet to the image extraction thread/task
-                        if let Err(_) = video_packet_sender.try_send(video_packet) {
+                        // Send the video packet to the processing task
+                        if let Err(_) = video_packet_sender.try_send(Arc::try_unwrap(video_packet).unwrap_or_default()) {
                             // If the channel is full, drop the packet
                             log::warn!("Video packet channel is full. Dropping packet.");
                         }
+                    }
+
+                    // Receive and process images
+                    if let Ok(image_data) = image_receiver.try_recv() {
+                        // Process the received image data
+                        println!("Received an image with size: {} bytes", image_data.len());
+                        // Perform further processing or send the image data to ZMQ
                     }
                 }
             } else {
@@ -1678,6 +1676,14 @@ async fn rscap() {
 
     println!("\nSending stop signals to threads...");
 
+    // Stop the pipeline when done
+    match pipeline.set_state(gst::State::Null) {
+        Ok(_) => (),
+        Err(err) => {
+            eprintln!("Failed to set the pipeline state to Null: {}", err);
+        }
+    }
+
     // Send ZMQ stop signal
     tx.send(Vec::new()).await.unwrap();
     drop(tx);
@@ -1697,9 +1703,6 @@ async fn rscap() {
     zmq_thread.await.unwrap();
     demuxer_thread.await.unwrap();
     decoder_thread.await.unwrap();
-
-    // Wait for the image extraction thread/task to finish
-    image_extraction_thread.await.unwrap();
 
     println!("\nThreads finished, exiting rscap probe");
 }
