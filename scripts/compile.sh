@@ -8,7 +8,7 @@ if [ "$1" != "" ]; then
     FEATURES="--features $1"
 fi
 
-MODE=release
+BUILD=release-with-debug
 
 # Function to prompt for installation
 prompt_install() {
@@ -71,7 +71,9 @@ if [ "$OS" = "Linux" ]; then
 
             # Build with SCL
             echo "Building project (CentOS 7)..."
-            if [ "$MODE" = "release" ]; then
+            if [ "$BUILD" = "release" ]; then
+                run_with_scl cargo build $FEATURES --release
+            elif [ "$BUILD" = "release-with-debug" ]; then
                 run_with_scl cargo build $FEATURES --profile=release-with-debug
             else
                 run_with_scl cargo build $FEATURES
@@ -84,9 +86,10 @@ elif [ "$OS" = "Darwin" ]; then
     # macOS specific setup
     # Build on macOS
     echo "Building project (macOS)..."
-    cargo build $FEATURES
-    if [ "$MODE" = "release" ]; then
+    if [ "$BUILD" = "release" ]; then
         cargo build $FEATURES --profile=release-with-debug
+    elif [ "$BUILD" == "release-with-debug" ]; then
+        cargo build $FEATURES --release
     else
         cargo build $FEATURES
     fi
@@ -95,7 +98,9 @@ else
     # Generic Unix/Linux setup
     # Build for generic Unix/Linux
     echo "Building project..."
-    if [ "$MODE" = "release" ]; then
+    if [ "$BUILD" = "release" ]; then
+        cargo build $FEATURES --release
+    elif [ "$BUILD" == "release-with-debug" ]; then
         cargo build $FEATURES --profile=release-with-debug
     else
         cargo build $FEATURES
