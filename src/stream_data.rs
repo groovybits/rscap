@@ -67,7 +67,7 @@ pub fn initialize_pipeline(stream_type_number: u8) -> Result<(gst::Pipeline, App
         .unwrap();
 
     // Set the appsrc caps
-    let caps = gst::Caps::builder("video/mpegts")
+    /*let caps = gst::Caps::builder("video/mpegts")
         .field("packetsize", 188)
         .build();
     appsrc.set_caps(Some(&caps));
@@ -80,6 +80,7 @@ pub fn initialize_pipeline(stream_type_number: u8) -> Result<(gst::Pipeline, App
         .field("framerate", gst::Fraction::new(30, 1))
         .build();
     appsink.set_caps(Some(&caps));
+    */
 
     // Set appsink to drop old buffers and only keep the most recent one
     appsink.set_drop(true);

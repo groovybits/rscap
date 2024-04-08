@@ -1619,7 +1619,7 @@ async fn rscap() {
                     // Receive and process images
                     if let Ok(image_data) = image_receiver.try_recv() {
                         // Process the received image data
-                        println!("Received an image with size: {} bytes", image_data.len());
+                        log::debug!("Received an image with size: {} bytes", image_data.len());
                         // Perform further processing or send the image data to ZMQ
                     }
                 }
