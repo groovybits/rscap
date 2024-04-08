@@ -140,6 +140,57 @@ fn i420_to_rgb(width: usize, height: usize, i420_data: &[u8]) -> Vec<u8> {
 }
 
 #[cfg(feature = "gst")]
+fn i422_10le_to_rgb(width: usize, height: usize, i422_data: &[u8]) -> Vec<u8> {
+    let mut rgb_data = Vec::with_capacity(width * height * 3);
+
+    let y_plane_size = width * height * 2; // Y plane uses 2 bytes per pixel
+    let u_plane_offset = y_plane_size;
+    let v_plane_offset = u_plane_offset + (width / 2) * height * 2; // U plane uses 2 bytes per value, half the width
+
+    for j in 0..height {
+        for i in 0..width {
+            let y_index = j * width * 2 + i * 2;
+            let uv_horizontal_index = (i / 2) * 2;
+            let u_index = u_plane_offset + j * (width / 2) * 2 + uv_horizontal_index;
+            let v_index = v_plane_offset + j * (width / 2) * 2 + uv_horizontal_index;
+
+            // Unpacking the 10-bit YUV values, shifting to the right by 6 to get the value in the lower bits
+            // and scaling to the full 8-bit range (0-255)
+            let y = (((i422_data[y_index] as u16) | ((i422_data[y_index + 1] as u16) << 8))
+                & 0x03FF) as f32
+                * 255.0
+                / 1023.0;
+            let u = (((i422_data[u_index] as u16) | ((i422_data[u_index + 1] as u16) << 8))
+                & 0x03FF) as f32
+                * 255.0
+                / 1023.0
+                - 128.0;
+            let v = (((i422_data[v_index] as u16) | ((i422_data[v_index + 1] as u16) << 8))
+                & 0x03FF) as f32
+                * 255.0
+                / 1023.0
+                - 128.0;
+
+            // Convert to RGB using the YUV to RGB conversion formula
+            let r = y + 1.402 * v;
+            let g = y - 0.344136 * u - 0.714136 * v;
+            let b = y + 1.772 * u;
+
+            // Clamping the RGB values to the 0-255 range after conversion
+            let r = r.clamp(0.0, 255.0) as u8;
+            let g = g.clamp(0.0, 255.0) as u8;
+            let b = b.clamp(0.0, 255.0) as u8;
+
+            rgb_data.push(r);
+            rgb_data.push(g);
+            rgb_data.push(b);
+        }
+    }
+
+    rgb_data
+}
+
+#[cfg(feature = "gst")]
 pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>, save_images: bool) {
     tokio::spawn(async move {
         let mut frame_count = 0;
@@ -160,6 +211,8 @@ pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>, save_i
                     let map = buffer.map_readable().unwrap();
                     let data = if info.format() == VideoFormat::I420 {
                         i420_to_rgb(width as usize, height as usize, &map.as_slice())
+                    } else if info.format() == VideoFormat::I42210le {
+                        i422_10le_to_rgb(width as usize, height as usize, &map.as_slice())
                     } else {
                         map.as_slice().to_vec()
                     };
