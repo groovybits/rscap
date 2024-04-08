@@ -636,8 +636,7 @@ struct Args {
     #[clap(long, env = "MPEGTS_READER_SAMPLING_TIME", default_value_t = 1_000)]
     mpegts_reader_sampling_time: u64,
 
-    /// Extract Images from the video stream
-    #[cfg(feature = "gst")]
+    /// Extract Images from the video stream (requires feature gst)
     #[clap(long, env = "EXTRACT_IMAGES", default_value_t = false)]
     extract_images: bool,
 

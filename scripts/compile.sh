@@ -8,6 +8,8 @@ if [ "$1" != "" ]; then
     FEATURES="--features $1"
 fi
 
+MODE=release
+
 # Function to prompt for installation
 prompt_install() {
     while true; do
@@ -69,9 +71,11 @@ if [ "$OS" = "Linux" ]; then
 
             # Build with SCL
             echo "Building project (CentOS 7)..."
-            run_with_scl cargo build $FEATURES
-            run_with_scl cargo build $FEATURES --release
-            run_with_scl cargo build $FEATURES --profile=release-with-debug
+            if [ "$MODE" = "release" ]; then
+                run_with_scl cargo build $FEATURES --profile=release-with-debug
+            else
+                run_with_scl cargo build $FEATURES
+            fi
         fi
     fi
     # Add elif blocks here for other specific Linux distributions
@@ -81,16 +85,21 @@ elif [ "$OS" = "Darwin" ]; then
     # Build on macOS
     echo "Building project (macOS)..."
     cargo build $FEATURES
-    cargo build $FEATURES --release
-    cargo build $FEATURES --profile=release-with-debug
+    if [ "$MODE" = "release" ]; then
+        cargo build $FEATURES --profile=release-with-debug
+    else
+        cargo build $FEATURES
+    fi
 else
     echo "Generic Unix-like OS detected."
     # Generic Unix/Linux setup
     # Build for generic Unix/Linux
     echo "Building project..."
-    cargo build $FEATURES
-    cargo build $FEATURES --release
-    cargo build $FEATURES --profile=release-with-debug
+    if [ "$MODE" = "release" ]; then
+        cargo build $FEATURES --profile=release-with-debug
+    else
+        cargo build $FEATURES
+    fi
 fi
 
 echo "Build completed successfully."

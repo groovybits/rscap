@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-MODE=release
+MODE=release-with-debug
 LOGLEVEL=info
 GST_DEBUG_LEVEL=1
 BACKTRACE=full
