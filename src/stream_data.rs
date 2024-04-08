@@ -134,7 +134,7 @@ fn i420_to_rgb(width: usize, height: usize, i420_data: &[u8]) -> Vec<u8> {
 }
 
 #[cfg(feature = "gst")]
-pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>) {
+pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>, save_images: bool) {
     tokio::spawn(async move {
         let mut frame_count = 0;
 
@@ -176,15 +176,17 @@ pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>) {
                                 image::imageops::FilterType::Triangle,
                             );
 
-                            // Save the resized image as a JPEG file
-                            let filename = format!("images/frame_{:04}.jpg", frame_count);
-                            if let Err(err) = resized_image.save(filename) {
-                                log::error!("Failed to save image: {}", err);
-                            } else {
-                                frame_count += 1;
+                            if save_images {
+                                // Save the resized image as a JPEG file
+                                let filename = format!("images/frame_{:04}.jpg", frame_count);
+                                if let Err(err) = resized_image.save(filename) {
+                                    log::error!("Failed to save image: {}", err);
+                                } else {
+                                    frame_count += 1;
+                                }
                             }
 
-                            if let Err(err) = image_sender.send(data).await {
+                            if let Err(err) = image_sender.send(resized_image.to_vec()).await {
                                 log::error!("Failed to send image data through channel: {}", err);
                             }
                         } else {

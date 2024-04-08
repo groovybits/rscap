@@ -640,6 +640,11 @@ struct Args {
     #[cfg(feature = "gst")]
     #[clap(long, env = "EXTRACT_IMAGES", default_value_t = false)]
     extract_images: bool,
+
+    /// Save Images to disk
+    #[cfg(feature = "gst")]
+    #[clap(long, env = "SAVE_IMAGES", default_value_t = false)]
+    save_images: bool,
 }
 
 // MAIN Function
@@ -1426,7 +1431,7 @@ async fn rscap() {
     #[cfg(feature = "gst")]
     process_video_packets(appsrc, video_packet_receiver);
     #[cfg(feature = "gst")]
-    pull_images(appsink, image_sender);
+    pull_images(appsink, image_sender, args.save_images);
 
     // Perform TR 101 290 checks
     let mut tr101290_errors = Tr101290Errors::new();
@@ -1608,6 +1613,7 @@ async fn rscap() {
             );
 
             // If MpegTS, Check if this is a video PID and if so parse NALS and decode video
+            let mut got_image = false;
             if is_mpegts {
                 // Check if this is a video PID or if demuxing all PIDs
                 if pid == video_pid.unwrap_or(0xFFFF) || args.mpegts_reader {
@@ -1652,26 +1658,23 @@ async fn rscap() {
                         // Process the received image data
                         log::debug!("Received an image with size: {} bytes", image_data.len());
 
-                        // Save to disk with the frame number as the filename
-                        /*let frame_number = image_data[0] as u64
-                            | (image_data[1] as u64) << 8
-                            | (image_data[2] as u64) << 16
-                            | (image_data[3] as u64) << 24;
-                        let filename = format!("images/frame_{}.jpg", frame_number);
+                        // Flag that an image was received
+                        got_image = true;
 
-                        // Save the image to disk
-                        let mut file = File::create(filename.clone()).unwrap();
-                        file.write_all(&image_data[4..]).unwrap();
-
-                        log::info!("Saved image to disk: {}", filename);*/
+                        // attach image to the stream_data.packet arc, clearing the current arc value
+                        stream_data.packet_start = 0;
+                        stream_data.packet_len = image_data.len();
+                        stream_data.packet = Arc::new(image_data);
                     }
                 }
             } else {
                 // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
             }
 
-            // release the packet Arc so it can be reused
-            if !send_raw_stream && stream_data.packet_len > 0 {
+            if got_image {
+                // do nothing
+            } else if !send_raw_stream && stream_data.packet_len > 0 {
+                // release the packet Arc so it can be reused
                 stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
                 stream_data.packet_len = 0;
                 stream_data.packet_start = 0;
