@@ -1169,6 +1169,68 @@ async fn main() {
         // Deserialize the received message into StreamData
         match capnp_to_stream_data(&header_msg) {
             Ok(stream_data) => {
+                // print the structure of the packet
+                log::debug!("MONITOR::PACKET:RECEIVE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {}",
+                    counter + 1,
+                    stream_data.pid,
+                    stream_data.stream_type,
+                    stream_data.bitrate,
+                    stream_data.bitrate_max,
+                    stream_data.bitrate_min,
+                    stream_data.bitrate_avg,
+                    stream_data.iat,
+                    stream_data.iat_max,
+                    stream_data.iat_min,
+                    stream_data.iat_avg,
+                    stream_data.error_count,
+                    stream_data.continuity_counter,
+                    stream_data.timestamp,
+                );
+
+                // get data message
+                let data_msg = packet_msg[1].clone();
+
+                // Process raw data packet
+                total_bytes += data_msg.len();
+                debug!(
+                    "Monitor: #{} Received {}/{} bytes",
+                    counter,
+                    data_msg.len(),
+                    total_bytes
+                );
+
+                if debug_on {
+                    let data_msg_arc = Arc::new(data_msg.to_vec());
+                    hexdump(&data_msg_arc, 0, data_msg.len());
+                }
+
+                // Check if Decoding or if Demuxing
+                if args.recv_raw_stream {
+                    if args.decode_video || args.mpegts_reader {
+                        if video_batch.len() >= args.decode_video_batch_size {
+                            dtx.send(video_batch).await.unwrap(); // Clone if necessary
+                            video_batch = Vec::new();
+                        } else {
+                            let mut stream_data_clone = stream_data.clone();
+                            stream_data_clone.packet_start = 0;
+                            stream_data_clone.packet_len = data_msg.len();
+                            stream_data_clone.packet = Arc::new(data_msg.to_vec());
+                            video_batch.push(stream_data_clone);
+                        }
+                    }
+                }
+
+                // Write to file if output_file is provided
+                if let Some(file) = file.as_mut() {
+                    if !no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
+                        dot_last_file_write = Instant::now();
+                        print!("*");
+                        // flush stdout
+                        std::io::stdout().flush().unwrap();
+                    }
+                    file.write_all(&data_msg).unwrap();
+                }
+
                 let pid = stream_data.pid;
                 {
                     let mut stream_groupings = STREAM_GROUPINGS.write().unwrap();
@@ -1287,68 +1349,6 @@ async fn main() {
 
                     // Await the future for sending the message
                     future.await;
-                }
-
-                // print the structure of the packet
-                debug!("MONITOR::PACKET:RECEIVE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {}",
-                    counter + 1,
-                    stream_data.pid,
-                    stream_data.stream_type,
-                    stream_data.bitrate,
-                    stream_data.bitrate_max,
-                    stream_data.bitrate_min,
-                    stream_data.bitrate_avg,
-                    stream_data.iat,
-                    stream_data.iat_max,
-                    stream_data.iat_min,
-                    stream_data.iat_avg,
-                    stream_data.error_count,
-                    stream_data.continuity_counter,
-                    stream_data.timestamp,
-                );
-
-                // get data message
-                let data_msg = packet_msg[1].clone();
-
-                // Process raw data packet
-                total_bytes += data_msg.len();
-                debug!(
-                    "Monitor: #{} Received {}/{} bytes",
-                    counter,
-                    data_msg.len(),
-                    total_bytes
-                );
-
-                if debug_on {
-                    let data_msg_arc = Arc::new(data_msg.to_vec());
-                    hexdump(&data_msg_arc, 0, data_msg.len());
-                }
-
-                // Check if Decoding or if Demuxing
-                if args.recv_raw_stream {
-                    if args.decode_video || args.mpegts_reader {
-                        if video_batch.len() >= args.decode_video_batch_size {
-                            dtx.send(video_batch).await.unwrap(); // Clone if necessary
-                            video_batch = Vec::new();
-                        } else {
-                            let mut stream_data_clone = stream_data.clone();
-                            stream_data_clone.packet_start = 0;
-                            stream_data_clone.packet_len = data_msg.len();
-                            stream_data_clone.packet = Arc::new(data_msg.to_vec());
-                            video_batch.push(stream_data_clone);
-                        }
-                    }
-                }
-
-                // Write to file if output_file is provided
-                if let Some(file) = file.as_mut() {
-                    if !no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
-                        dot_last_file_write = Instant::now();
-                        print!("*");
-                        // flush stdout
-                        std::io::stdout().flush().unwrap();
-                    }
-                    file.write_all(&data_msg).unwrap();
                 }
             }
             Err(e) => {
