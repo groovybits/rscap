@@ -1662,7 +1662,7 @@ async fn rscap() {
                         stream_data.packet_len = image_data.len();
 
                         // Process the received image data
-                        log::info!("Received an image with size: {} bytes", image_data.len());
+                        log::debug!("Probe: Received a jpeg image with size: {} bytes", image_data.len());
 
                     } else {
                         // zero out the packet data
