@@ -6,6 +6,12 @@ run_with_scl() {
     scl enable devtoolset-11 -- "$@"
 }
 
+BUILD_DIR=$(pwd)/build
+if [ ! -d $BUILD_DIR ]; then
+    mkdir -p $BUILD_DIR
+fi
+cd $BUILD_DIR
+
 # Define versions for dependencies and GStreamer
 GLIB_VERSION=2.56.4
 ORC_VERSION=0.4.31

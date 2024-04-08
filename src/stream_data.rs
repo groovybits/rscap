@@ -9,7 +9,7 @@ use crate::system_stats::get_system_stats;
 use crate::system_stats::SystemStats;
 use ahash::AHashMap;
 #[cfg(feature = "gst")]
-use image::{ImageBuffer, Rgb};
+use gst_app::{AppSink, AppSrc};
 #[cfg(feature = "gst")]
 use gstreamer as gst;
 #[cfg(feature = "gst")]
@@ -17,13 +17,14 @@ use gstreamer::prelude::*;
 #[cfg(feature = "gst")]
 use gstreamer_app as gst_app;
 #[cfg(feature = "gst")]
-use gst_app::{AppSrc, AppSink};
+use image::{ImageBuffer, Rgb};
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use rtp::RtpReader;
 use rtp_rs as rtp;
 use serde::{Deserialize, Serialize};
 use std::{fmt, sync::Arc, sync::Mutex};
+#[cfg(feature = "gst")]
 use tokio::sync::mpsc;
 
 lazy_static! {
@@ -39,14 +40,23 @@ fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
 }
 
 #[cfg(feature = "gst")]
-pub fn initialize_pipeline(stream_type_number: u8) -> Result<(gst::Pipeline, AppSrc, AppSink), anyhow::Error> {
+pub fn initialize_pipeline(
+    stream_type_number: u8,
+) -> Result<(gst::Pipeline, AppSrc, AppSink), anyhow::Error> {
     // Initialize GStreamer
     gst::init()?;
 
     // Create a pipeline to extract video frames
     let pipeline = match stream_type_number {
-        0x1B => create_pipeline("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink")?,
-        _ => return Err(anyhow::anyhow!("Unsupported video stream type {}", stream_type_number)),
+        0x1B => create_pipeline(
+            "appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink",
+        )?,
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Unsupported video stream type {}",
+                stream_type_number
+            ))
+        }
     };
 
     // Get references to the appsrc and appsink elements
@@ -68,21 +78,14 @@ pub fn initialize_pipeline(stream_type_number: u8) -> Result<(gst::Pipeline, App
         .downcast::<AppSink>()
         .unwrap();
 
-    // Set the appsrc caps
-    /*let caps = gst::Caps::builder("video/mpegts")
-        .field("packetsize", 188)
-        .build();
-    appsrc.set_caps(Some(&caps));
-
     // Configure the appsink
-    let caps = gst::Caps::builder("video/x-raw")
-        .field("format", "RGB")
-        .field("width", 640)
-        .field("height", 480)
-        .field("framerate", gst::Fraction::new(30, 1))
-        .build();
-    appsink.set_caps(Some(&caps));
-    */
+    /*let caps = gst::Caps::builder("video/x-raw")
+    .field("format", "RGB")
+    .field("width", 1920)
+    .field("height", 1080)
+    .field("framerate", gst::Fraction::new(30, 1))
+    .build();
+    appsink.set_caps(Some(&caps));*/
 
     // Set appsink to drop old buffers and only keep the most recent one
     appsink.set_drop(true);
@@ -115,18 +118,20 @@ pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>) {
                     let data = map.as_slice().to_vec();
 
                     // Create an ImageBuffer from the received image data
-                    let width = 1920;
-                    let height = 1080;
-                    let image: ImageBuffer<Rgb<u8>, _> = ImageBuffer::from_raw(width, height, data.clone()).unwrap();
+                    let width = 640;
+                    let height = 480;
+                    let image: ImageBuffer<Rgb<u8>, _> =
+                        ImageBuffer::from_raw(width, height, data.clone()).unwrap();
 
                     // Save the image as a JPEG file
-                    let filename = format!("frame_{:04}.jpg", frame_count);
+                    let filename = format!("images/frame_{:04}.jpg", frame_count);
                     image.save(filename).unwrap();
 
                     frame_count += 1;
 
-                    if let Err(err) = image_sender.send(data).await {
-                        eprintln!("Failed to send image data through channel: {}", err);
+                    // Send the compressed image data through the channel
+                    if let Err(err) = image_sender.send(image.into_raw()).await {
+                        log::error!("Failed to send image data through channel: {}", err);
                     }
                 }
             }

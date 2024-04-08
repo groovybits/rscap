@@ -9,10 +9,6 @@
 
 use async_zmq;
 use capnp;
-#[cfg(feature = "gst")]
-use gstreamer as gst;
-#[cfg(feature = "gst")]
-use gstreamer::prelude::*;
 use capnp::message::{Builder, HeapAllocator};
 #[cfg(feature = "dpdk_enabled")]
 use capsule::config::{load_config, DPDKConfig};
@@ -22,17 +18,21 @@ use capsule::dpdk;
 use capsule::prelude::*;
 use clap::Parser;
 use futures::stream::StreamExt;
+#[cfg(feature = "gst")]
+use gstreamer as gst;
+#[cfg(feature = "gst")]
+use gstreamer::prelude::*;
 use log::{debug, error, info};
 use mpeg2ts_reader::demultiplex;
 use pcap::{Active, Capture, Device, PacketCodec};
 use rscap::mpegts;
-use rscap::system_stats::get_system_stats;
 use rscap::stream_data::{
     identify_video_pid, is_mpegts_or_smpte2110, parse_and_store_pat, process_packet,
-    update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID
+    update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
 };
 #[cfg(feature = "gst")]
-use rscap::stream_data::{initialize_pipeline, pull_images, process_video_packets};
+use rscap::stream_data::{initialize_pipeline, process_video_packets, pull_images};
+use rscap::system_stats::get_system_stats;
 use rscap::{current_unix_timestamp_ms, hexdump};
 use std::{
     error::Error as StdError,
@@ -1397,10 +1397,13 @@ async fn rscap() {
     });
 
     // Create channels for sending video packets and receiving images
+    #[cfg(feature = "gst")]
     let (video_packet_sender, video_packet_receiver) = mpsc::channel(10000);
+    #[cfg(feature = "gst")]
     let (image_sender, mut image_receiver) = mpsc::channel(10000);
 
     // Initialize the pipeline
+    #[cfg(feature = "gst")]
     let (pipeline, appsrc, appsink) = match initialize_pipeline(0x1B) {
         Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
         Err(err) => {
@@ -1410,6 +1413,7 @@ async fn rscap() {
     };
 
     // Start the pipeline
+    #[cfg(feature = "gst")]
     match pipeline.set_state(gst::State::Playing) {
         Ok(_) => (),
         Err(err) => {
@@ -1419,7 +1423,9 @@ async fn rscap() {
     }
 
     // Spawn separate tasks for processing video packets and pulling images
+    #[cfg(feature = "gst")]
     process_video_packets(appsrc, video_packet_receiver);
+    #[cfg(feature = "gst")]
     pull_images(appsink, image_sender);
 
     // Perform TR 101 290 checks
@@ -1442,7 +1448,7 @@ async fn rscap() {
     };
 
     // OS and Network stats
-    let system_stats =  get_system_stats();
+    let system_stats = get_system_stats();
 
     let mut video_stream_type = 0;
 
@@ -1478,7 +1484,16 @@ async fn rscap() {
         }
 
         let chunks = if is_mpegts {
-            process_mpegts_packet(payload_offset, packet, packet_size, start_time, timestamp, iat, args.source_ip.clone(), args.source_port)
+            process_mpegts_packet(
+                payload_offset,
+                packet,
+                packet_size,
+                start_time,
+                timestamp,
+                iat,
+                args.source_ip.clone(),
+                args.source_port,
+            )
         } else {
             process_smpte2110_packet(
                 payload_offset,
@@ -1526,7 +1541,14 @@ async fn rscap() {
                         if pid == pmt_info.pid {
                             debug!("ProcessPacket: PMT packet detected with PID {}", pid);
                             // Update PID_MAP with new stream types
-                            update_pid_map(&packet_chunk, &pmt_info.packet, timestamp, iat, args.source_ip.clone(), args.source_port);
+                            update_pid_map(
+                                &packet_chunk,
+                                &pmt_info.packet,
+                                timestamp,
+                                iat,
+                                args.source_ip.clone(),
+                                args.source_port,
+                            );
                             // Identify the video PID (if not already identified)
                             if let Some((new_pid, new_codec)) = identify_video_pid(&packet_chunk) {
                                 if video_pid.map_or(true, |vp| vp != new_pid) {
@@ -1561,9 +1583,10 @@ async fn rscap() {
                 }
             }
 
-            if video_pid < Some(0x1FFF) && video_pid > Some(0)
-                    && stream_data.pid == video_pid.unwrap()
-                    && video_stream_type != stream_data.stream_type_number
+            if video_pid < Some(0x1FFF)
+                && video_pid > Some(0)
+                && stream_data.pid == video_pid.unwrap()
+                && video_stream_type != stream_data.stream_type_number
             {
                 let old_stream_type = video_stream_type;
                 video_stream_type = stream_data.stream_type_number;
@@ -1606,21 +1629,41 @@ async fn rscap() {
                 // Process video packets
                 #[cfg(feature = "gst")]
                 if args.extract_images {
+                    #[cfg(feature = "gst")]
                     if video_stream_type > 0 {
-                        let video_packet = Arc::new(stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len].to_vec());
+                        let video_packet = Arc::new(
+                            stream_data.packet[stream_data.packet_start
+                                ..stream_data.packet_start + stream_data.packet_len]
+                                .to_vec(),
+                        );
 
                         // Send the video packet to the processing task
-                        if let Err(_) = video_packet_sender.try_send(Arc::try_unwrap(video_packet).unwrap_or_default()) {
+                        if let Err(_) = video_packet_sender
+                            .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
+                        {
                             // If the channel is full, drop the packet
                             log::warn!("Video packet channel is full. Dropping packet.");
                         }
                     }
 
                     // Receive and process images
+                    #[cfg(feature = "gst")]
                     if let Ok(image_data) = image_receiver.try_recv() {
                         // Process the received image data
                         log::debug!("Received an image with size: {} bytes", image_data.len());
-                        // Perform further processing or send the image data to ZMQ
+
+                        // Save to disk with the frame number as the filename
+                        /*let frame_number = image_data[0] as u64
+                            | (image_data[1] as u64) << 8
+                            | (image_data[2] as u64) << 16
+                            | (image_data[3] as u64) << 24;
+                        let filename = format!("images/frame_{}.jpg", frame_number);
+
+                        // Save the image to disk
+                        let mut file = File::create(filename.clone()).unwrap();
+                        file.write_all(&image_data[4..]).unwrap();
+
+                        log::info!("Saved image to disk: {}", filename);*/
                     }
                 }
             } else {
@@ -1677,6 +1720,7 @@ async fn rscap() {
     println!("\nSending stop signals to threads...");
 
     // Stop the pipeline when done
+    #[cfg(feature = "gst")]
     match pipeline.set_state(gst::State::Null) {
         Ok(_) => (),
         Err(err) => {

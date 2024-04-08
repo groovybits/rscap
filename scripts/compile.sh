@@ -3,7 +3,10 @@
 # Exit immediately if a command exits with a non-zero status.
 set -e
 
-FEATURES="--features gst"
+FEATURES=
+if [ "$1" != "" ]; then
+    FEATURES="--features $1"
+fi
 
 # Function to prompt for installation
 prompt_install() {
