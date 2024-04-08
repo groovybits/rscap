@@ -9,6 +9,8 @@ use crate::system_stats::get_system_stats;
 use crate::system_stats::SystemStats;
 use ahash::AHashMap;
 #[cfg(feature = "gst")]
+use image::{ImageBuffer, Rgb};
+#[cfg(feature = "gst")]
 use gstreamer as gst;
 #[cfg(feature = "gst")]
 use gstreamer::prelude::*;
@@ -104,12 +106,25 @@ pub fn process_video_packets(appsrc: AppSrc, mut video_packet_receiver: mpsc::Re
 #[cfg(feature = "gst")]
 pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>) {
     tokio::spawn(async move {
+        let mut frame_count = 0;
         loop {
             let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
             if let Some(sample) = sample {
                 if let Some(buffer) = sample.buffer() {
                     let map = buffer.map_readable().unwrap();
                     let data = map.as_slice().to_vec();
+
+                    // Create an ImageBuffer from the received image data
+                    let width = 1920;
+                    let height = 1080;
+                    let image: ImageBuffer<Rgb<u8>, _> = ImageBuffer::from_raw(width, height, data.clone()).unwrap();
+
+                    // Save the image as a JPEG file
+                    let filename = format!("frame_{:04}.jpg", frame_count);
+                    image.save(filename).unwrap();
+
+                    frame_count += 1;
+
                     if let Err(err) = image_sender.send(data).await {
                         eprintln!("Failed to send image data through channel: {}", err);
                     }
