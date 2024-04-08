@@ -245,7 +245,18 @@ pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>, save_i
                                 }
                             }
 
-                            if let Err(err) = image_sender.send(resized_image.to_vec()).await {
+                            // Convert the resized image to a JPEG vector
+                            let mut jpeg_data = Vec::new();
+                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+                                &mut jpeg_data,
+                                80,
+                            );
+
+                            encoder
+                                .encode_image(&resized_image)
+                                .expect("JPEG encoding failed");
+
+                            if let Err(err) = image_sender.send(jpeg_data).await {
                                 log::error!("Failed to send image data through channel: {}", err);
                                 // exit the loop if the receiver is gone
                                 break;
@@ -359,6 +370,7 @@ pub struct StreamData {
     pub host_name: String,
     pub kernel_version: String,
     pub os_version: String,
+    pub has_image: u8,
 }
 
 impl Clone for StreamData {
@@ -418,6 +430,7 @@ impl Clone for StreamData {
             host_name: self.host_name.clone(),
             kernel_version: self.kernel_version.clone(),
             os_version: self.os_version.clone(),
+            has_image: self.has_image,
         }
     }
 }
@@ -500,6 +513,7 @@ impl StreamData {
             host_name: system_stats.host_name,
             kernel_version: system_stats.kernel_version,
             os_version: system_stats.os_version,
+            has_image: 0,
         }
     }
     // set RTP fields

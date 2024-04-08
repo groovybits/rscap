@@ -51,4 +51,5 @@ struct StreamDataCapnp {
     hostName @47 :Text;
     kernelVersion @48 :Text;
     osVersion @49 :Text;
+    hasImage @50 :UInt8;
 }

@@ -227,6 +227,7 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
         stream_data_msg.set_host_name(stream_data.host_name.as_str().into());
         stream_data_msg.set_kernel_version(stream_data.kernel_version.as_str().into());
         stream_data_msg.set_os_version(stream_data.os_version.as_str().into());
+        stream_data_msg.set_has_image(stream_data.has_image);
     }
 
     Ok(message)
@@ -1654,13 +1655,15 @@ async fn rscap() {
                     // Receive and process images
                     #[cfg(feature = "gst")]
                     if let Ok(image_data) = image_receiver.try_recv() {
-                        // Process the received image data
-                        log::debug!("Received an image with size: {} bytes", image_data.len());
-
                         // attach image to the stream_data.packet arc, clearing the current arc value
+                        stream_data.packet = Arc::new(image_data.clone());
+                        stream_data.has_image = image_data.len() as u8;
                         stream_data.packet_start = 0;
                         stream_data.packet_len = image_data.len();
-                        stream_data.packet = Arc::new(image_data);
+
+                        // Process the received image data
+                        log::info!("Received an image with size: {} bytes", image_data.len());
+
                     } else {
                         // zero out the packet data
                         stream_data.packet_start = 0;

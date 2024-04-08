@@ -229,6 +229,7 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         host_name: reader.get_host_name()?.to_string()?,
         kernel_version: reader.get_kernel_version()?.to_string()?,
         os_version: reader.get_os_version()?.to_string()?,
+        has_image: reader.get_has_image(),
     };
 
     Ok(stream_data)
@@ -463,6 +464,10 @@ fn flatten_streams(
         flat_structure.insert(
             format!("{}.os_version", prefix),
             json!(stream_data.os_version),
+        );
+        flat_structure.insert(
+            format!("{}.has_image", prefix),
+            json!(stream_data.has_image),
         );
     }
 
@@ -1106,13 +1111,6 @@ async fn main() {
     let mut total_bytes = 0;
     let mut counter = 0;
 
-    // Initialize an Option<File> to None
-    let mut file = if !output_file.is_empty() {
-        Some(File::create(&output_file).unwrap())
-    } else {
-        None
-    };
-
     let mut video_batch = Vec::new();
 
     let mut dot_last_file_write = Instant::now();
@@ -1140,6 +1138,8 @@ async fn main() {
     if system_stats_json != json!({}) {
         info!("Startup System OS Stats:\n{:?}", system_stats_json);
     }
+
+    let mut output_file_counter = 0;
 
     loop {
         // check for packet count
@@ -1206,6 +1206,13 @@ async fn main() {
 
                 // Check if Decoding or if Demuxing
                 if args.recv_raw_stream {
+                    // Initialize an Option<File> to None
+                    let mut output_file_mut = if !output_file.is_empty() {
+                        Some(File::create(&output_file).unwrap())
+                    } else {
+                        None
+                    };
+
                     if args.decode_video || args.mpegts_reader {
                         if video_batch.len() >= args.decode_video_batch_size {
                             dtx.send(video_batch).await.unwrap(); // Clone if necessary
@@ -1218,17 +1225,50 @@ async fn main() {
                             video_batch.push(stream_data_clone);
                         }
                     }
-                }
 
-                // Write to file if output_file is provided
-                if let Some(file) = file.as_mut() {
-                    if !no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
-                        dot_last_file_write = Instant::now();
-                        print!("*");
-                        // flush stdout
-                        std::io::stdout().flush().unwrap();
+                    // Write to file if output_file is provided
+                    if let Some(file) = output_file_mut.as_mut() {
+                        output_file_counter += 1;
+                        if !no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
+                            dot_last_file_write = Instant::now();
+                            print!("*");
+                            // flush stdout
+                            std::io::stdout().flush().unwrap();
+                        }
+                        file.write_all(&data_msg).unwrap();
                     }
-                    file.write_all(&data_msg).unwrap();
+                } else {
+                    // change output_file_name_mut to contain an incrementing _00000000.jpg ending
+                    // use output_file_counter to increment the file name
+                    // example output_file_name_mut = "output_{:08}.jpg", output_file_counter
+                    // remove existing .jpg if given first
+                    let output_file_without_jpg = output_file.replace(".jpg", "");
+                    if data_msg.len() > 0 && stream_data.has_image > 0 {
+                        log::info!("Data msg is {} size", data_msg.len());
+                        let output_file_incremental = format!(
+                            "{}_{:08}.jpg",
+                            output_file_without_jpg,
+                            output_file_counter
+                        );
+
+                        let mut output_file_mut = if !output_file.is_empty() {
+                            Some(File::create(&output_file_incremental).unwrap())
+                        } else {
+                            None
+                        };
+
+                        // Write to file if output_file is provided
+                        if let Some(file) = output_file_mut.as_mut() {
+                            output_file_counter += 1;
+                            if !no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
+                                dot_last_file_write = Instant::now();
+                                print!("*");
+                                // flush stdout
+                                std::io::stdout().flush().unwrap();
+                            }
+                            file.write_all(&data_msg).unwrap();
+                        }
+                    }
                 }
 
                 let pid = stream_data.pid;
