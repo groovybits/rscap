@@ -17,6 +17,8 @@ use gstreamer::prelude::*;
 #[cfg(feature = "gst")]
 use gstreamer_app as gst_app;
 #[cfg(feature = "gst")]
+use gstreamer_video::VideoFormat;
+#[cfg(feature = "gst")]
 use gstreamer_video::VideoInfo;
 #[cfg(feature = "gst")]
 use image::imageops::resize;
@@ -82,18 +84,9 @@ pub fn initialize_pipeline(
         .downcast::<AppSink>()
         .unwrap();
 
-    // Configure the appsink
-    /*let caps = gst::Caps::builder("video/x-raw")
-    .field("format", "RGB")
-    .field("width", 1920)
-    .field("height", 1080)
-    .field("framerate", gst::Fraction::new(30, 1))
-    .build();
-    appsink.set_caps(Some(&caps));*/
-
     // Set appsink to drop old buffers and only keep the most recent one
     appsink.set_drop(true);
-    appsink.set_max_buffers(1);
+    appsink.set_max_buffers(188);
 
     Ok((pipeline, appsrc, appsink))
 }
@@ -108,6 +101,36 @@ pub fn process_video_packets(appsrc: AppSrc, mut video_packet_receiver: mpsc::Re
             }
         }
     });
+}
+
+#[cfg(feature = "gst")]
+fn i420_to_rgb(width: usize, height: usize, i420_data: &[u8]) -> Vec<u8> {
+    let mut rgb_data = Vec::with_capacity(width * height * 3);
+
+    let y_plane_size = width * height;
+    let uv_plane_size = y_plane_size / 4;
+    let u_offset = y_plane_size;
+    let v_offset = u_offset + uv_plane_size;
+
+    for j in 0..height {
+        for i in 0..width {
+            let y = i420_data[j * width + i] as f32;
+            let u = i420_data[u_offset + (j / 2) * (width / 2) + (i / 2)] as f32;
+            let v = i420_data[v_offset + (j / 2) * (width / 2) + (i / 2)] as f32;
+
+            let r = (y + 1.402 * (v - 128.0)).max(0.0).min(255.0);
+            let g = (y - 0.344136 * (u - 128.0) - 0.714136 * (v - 128.0))
+                .max(0.0)
+                .min(255.0);
+            let b = (y + 1.772 * (u - 128.0)).max(0.0).min(255.0);
+
+            rgb_data.push(r as u8);
+            rgb_data.push(g as u8);
+            rgb_data.push(b as u8);
+        }
+    }
+
+    rgb_data
 }
 
 #[cfg(feature = "gst")]
@@ -129,7 +152,11 @@ pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>) {
                     let height = info.height();
 
                     let map = buffer.map_readable().unwrap();
-                    let data = map.as_slice().to_vec();
+                    let data = if info.format() == VideoFormat::I420 {
+                        i420_to_rgb(width as usize, height as usize, &map.as_slice())
+                    } else {
+                        map.as_slice().to_vec()
+                    };
 
                     // Check if the data length matches the expected dimensions
                     let expected_length = width as usize * height as usize * 3; // Assuming RGB format
