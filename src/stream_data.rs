@@ -9,116 +9,268 @@ use crate::system_stats::get_system_stats;
 use crate::system_stats::SystemStats;
 use ahash::AHashMap;
 #[cfg(feature = "gst")]
+use gst_app::{AppSink, AppSrc};
+#[cfg(feature = "gst")]
 use gstreamer as gst;
 #[cfg(feature = "gst")]
 use gstreamer::prelude::*;
 #[cfg(feature = "gst")]
 use gstreamer_app as gst_app;
+#[cfg(feature = "gst")]
+use gstreamer_video::VideoFormat;
+#[cfg(feature = "gst")]
+use gstreamer_video::VideoInfo;
+#[cfg(feature = "gst")]
+use image::imageops::resize;
+#[cfg(feature = "gst")]
+use image::{ImageBuffer, Rgb};
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use rtp::RtpReader;
 use rtp_rs as rtp;
 use serde::{Deserialize, Serialize};
-use std::sync::RwLock;
 use std::{fmt, sync::Arc, sync::Mutex};
+#[cfg(feature = "gst")]
+use tokio::sync::mpsc;
 
-// global variable to store the MpegTS PID Map (initially empty)
 lazy_static! {
     static ref PID_MAP: Mutex<AHashMap<u16, Arc<StreamData>>> = Mutex::new(AHashMap::new());
-    static ref MPEGTS_PACKETS: RwLock<Vec<Vec<u8>>> = RwLock::new(Vec::new());
-    static ref IMAGE_CHANNEL: (
-        crossbeam::channel::Sender<Vec<u8>>,
-        crossbeam::channel::Receiver<Vec<u8>>
-    ) = crossbeam::channel::bounded(1);
 }
 
 #[cfg(feature = "gst")]
-pub fn feed_mpegts_packets(packets: Vec<Vec<u8>>) {
-    let mut mpegts_packets = MPEGTS_PACKETS.write().unwrap();
-    mpegts_packets.extend(packets);
+fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
+    let pipeline = gst::parse_launch(desc)?
+        .downcast::<gst::Pipeline>()
+        .expect("Expected a gst::Pipeline");
+    Ok(pipeline)
 }
 
 #[cfg(feature = "gst")]
-pub fn generate_images(stream_type_number: u8) {
-    let sender = IMAGE_CHANNEL.0.clone();
-    let packets = MPEGTS_PACKETS.read().unwrap().clone();
+pub fn initialize_pipeline(
+    stream_type_number: u8,
+) -> Result<(gst::Pipeline, AppSrc, AppSink), anyhow::Error> {
+    // Initialize GStreamer
+    gst::init()?;
 
-    // copy packets into a new vector for the thread
-    let packets_clone = packets.iter().map(|x| x.clone()).collect::<Vec<Vec<u8>>>();
-    std::thread::spawn(move || {
-        let mut frame_data = None;
+    // Create a pipeline to extract video frames
+    let pipeline = match stream_type_number {
+        0x02 => create_pipeline(
+            "appsrc name=src ! tsdemux ! mpeg2dec ! videoconvert ! appsink name=sink",
+        )?,
+        0x1B => create_pipeline(
+            "appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink",
+        )?,
+        0x24 => create_pipeline(
+            "appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videoconvert ! appsink name=sink",
+        )?,
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Unsupported video stream type {}",
+                stream_type_number
+            ))
+        }
+    };
 
-        // Initialize GStreamer
-        gst::init().unwrap();
+    // Get references to the appsrc and appsink elements
+    let appsrc = pipeline
+        .clone()
+        .dynamic_cast::<gst::Bin>()
+        .unwrap()
+        .by_name("src")
+        .unwrap()
+        .downcast::<AppSrc>()
+        .unwrap();
 
-        // Create a pipeline to extract video frames
-        let pipeline = match stream_type_number {
-            0x02 => gst::parse_launch("appsrc name=src ! tsdemux ! mpeg2dec ! videoconvert ! appsink name=sink"),
-            0x1B => gst::parse_launch("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink"),
-            0x24 => gst::parse_launch("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videoconvert ! appsink name=sink"),
-            _ => panic!("Unsupported video stream type {}", stream_type_number),
-        }.unwrap();
+    let appsink = pipeline
+        .clone()
+        .dynamic_cast::<gst::Bin>()
+        .unwrap()
+        .by_name("sink")
+        .unwrap()
+        .downcast::<AppSink>()
+        .unwrap();
 
-        // Get references to the appsrc and appsink elements
-        let appsrc = pipeline
-            .clone()
-            .dynamic_cast::<gst::Bin>()
-            .unwrap()
-            .by_name("src")
-            .unwrap()
-            .downcast::<gst_app::AppSrc>()
-            .unwrap();
-        let appsink = pipeline
-            .clone()
-            .dynamic_cast::<gst::Bin>()
-            .unwrap()
-            .by_name("sink")
-            .unwrap()
-            .downcast::<gst_app::AppSink>()
-            .unwrap();
+    // Set appsink to drop old buffers and only keep the most recent one
+    appsink.set_drop(true);
+    appsink.set_max_buffers(188);
 
-        // Set the appsrc caps
-        let caps = gst::Caps::builder("video/mpegts")
-            .field("packetsize", 188)
-            .build();
-        appsrc.set_caps(Some(&caps));
+    Ok((pipeline, appsrc, appsink))
+}
 
-        // Configure the appsink
-        appsink.set_caps(Some(&gst::Caps::new_empty_simple("video/x-raw")));
-
-        // Start the pipeline
-        pipeline.set_state(gst::State::Playing).unwrap();
-
-        // Push MPEG-TS packets to the appsrc
-        for packet in packets_clone.into_iter() {
+#[cfg(feature = "gst")]
+pub fn process_video_packets(appsrc: AppSrc, mut video_packet_receiver: mpsc::Receiver<Vec<u8>>) {
+    tokio::spawn(async move {
+        while let Some(packet) = video_packet_receiver.recv().await {
             let buffer = gst::Buffer::from_slice(packet);
-            appsrc.push_buffer(buffer).unwrap();
-        }
-        appsrc.end_of_stream().unwrap();
-
-        // Retrieve the video frames from the appsink
-        while let Some(sample) = appsink.pull_sample().ok() {
-            if let Some(buffer) = sample.buffer() {
-                let map = buffer.map_readable().unwrap();
-                let data = map.as_slice().to_vec();
-                frame_data = Some(data);
-                break;
+            if let Err(err) = appsrc.push_buffer(buffer) {
+                eprintln!("Failed to push buffer to appsrc: {}", err);
             }
-        }
-
-        // Stop the pipeline
-        pipeline.set_state(gst::State::Null).unwrap();
-
-        // Send the extracted image through the channel
-        if let Some(image_data) = frame_data {
-            sender.send(image_data).unwrap();
         }
     });
 }
 
 #[cfg(feature = "gst")]
-pub fn get_image() -> Option<Vec<u8>> {
-    IMAGE_CHANNEL.1.try_recv().ok()
+fn i420_to_rgb(width: usize, height: usize, i420_data: &[u8]) -> Vec<u8> {
+    let mut rgb_data = Vec::with_capacity(width * height * 3);
+
+    let y_plane_size = width * height;
+    let uv_plane_size = y_plane_size / 4;
+    let u_offset = y_plane_size;
+    let v_offset = u_offset + uv_plane_size;
+
+    for j in 0..height {
+        for i in 0..width {
+            let y = i420_data[j * width + i] as f32;
+            let u = i420_data[u_offset + (j / 2) * (width / 2) + (i / 2)] as f32;
+            let v = i420_data[v_offset + (j / 2) * (width / 2) + (i / 2)] as f32;
+
+            let r = (y + 1.402 * (v - 128.0)).max(0.0).min(255.0);
+            let g = (y - 0.344136 * (u - 128.0) - 0.714136 * (v - 128.0))
+                .max(0.0)
+                .min(255.0);
+            let b = (y + 1.772 * (u - 128.0)).max(0.0).min(255.0);
+
+            rgb_data.push(r as u8);
+            rgb_data.push(g as u8);
+            rgb_data.push(b as u8);
+        }
+    }
+
+    rgb_data
+}
+
+#[cfg(feature = "gst")]
+fn i422_10le_to_rgb(width: usize, height: usize, i422_data: &[u8]) -> Vec<u8> {
+    let mut rgb_data = Vec::with_capacity(width * height * 3);
+
+    let y_plane_size = width * height * 2; // Y plane uses 2 bytes per pixel
+    let u_plane_offset = y_plane_size;
+    let v_plane_offset = u_plane_offset + (width / 2) * height * 2; // U plane uses 2 bytes per value, half the width
+
+    for j in 0..height {
+        for i in 0..width {
+            let y_index = j * width * 2 + i * 2;
+            let uv_horizontal_index = (i / 2) * 2;
+            let u_index = u_plane_offset + j * (width / 2) * 2 + uv_horizontal_index;
+            let v_index = v_plane_offset + j * (width / 2) * 2 + uv_horizontal_index;
+
+            // Unpacking the 10-bit YUV values, shifting to the right by 6 to get the value in the lower bits
+            // and scaling to the full 8-bit range (0-255)
+            let y = (((i422_data[y_index] as u16) | ((i422_data[y_index + 1] as u16) << 8))
+                & 0x03FF) as f32
+                * 255.0
+                / 1023.0;
+            let u = (((i422_data[u_index] as u16) | ((i422_data[u_index + 1] as u16) << 8))
+                & 0x03FF) as f32
+                * 255.0
+                / 1023.0
+                - 128.0;
+            let v = (((i422_data[v_index] as u16) | ((i422_data[v_index + 1] as u16) << 8))
+                & 0x03FF) as f32
+                * 255.0
+                / 1023.0
+                - 128.0;
+
+            // Convert to RGB using the YUV to RGB conversion formula
+            let r = y + 1.402 * v;
+            let g = y - 0.344136 * u - 0.714136 * v;
+            let b = y + 1.772 * u;
+
+            // Clamping the RGB values to the 0-255 range after conversion
+            let r = r.clamp(0.0, 255.0) as u8;
+            let g = g.clamp(0.0, 255.0) as u8;
+            let b = b.clamp(0.0, 255.0) as u8;
+
+            rgb_data.push(r);
+            rgb_data.push(g);
+            rgb_data.push(b);
+        }
+    }
+
+    rgb_data
+}
+
+#[cfg(feature = "gst")]
+pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>, save_images: bool) {
+    tokio::spawn(async move {
+        let mut frame_count = 0;
+
+        loop {
+            let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
+            if let Some(sample) = sample {
+                if let Some(buffer) = sample.buffer() {
+                    let caps = sample.caps().expect("Sample without caps");
+                    let info = VideoInfo::from_caps(&caps).expect("Failed to parse caps");
+
+                    // print entire videoinfo struct
+                    log::debug!("Video Frame Info: {:?}", info);
+
+                    let width = info.width();
+                    let height = info.height();
+
+                    let map = buffer.map_readable().unwrap();
+                    let data = if info.format() == VideoFormat::I420 {
+                        i420_to_rgb(width as usize, height as usize, &map.as_slice())
+                    } else if info.format() == VideoFormat::I42210le {
+                        i422_10le_to_rgb(width as usize, height as usize, &map.as_slice())
+                    } else {
+                        map.as_slice().to_vec()
+                    };
+
+                    // Check if the data length matches the expected dimensions
+                    let expected_length = width as usize * height as usize * 3; // Assuming RGB format
+                    if data.len() == expected_length {
+                        // Create an ImageBuffer from the received image data
+                        if let Some(image) =
+                            ImageBuffer::<Rgb<u8>, _>::from_raw(width, height, data.clone())
+                        {
+                            let scaled_height = 480;
+                            let scaled_width =
+                                (width as f32 / height as f32 * scaled_height as f32) as u32;
+
+                            let resized_image = resize(
+                                &image,
+                                scaled_width,
+                                scaled_height,
+                                image::imageops::FilterType::Triangle,
+                            );
+
+                            if save_images {
+                                // Save the resized JPEG image
+                                let filename = format!("images/frame_{:04}.jpg", frame_count);
+                                if let Err(err) = resized_image.save(filename) {
+                                    log::error!("Failed to save image: {}", err);
+                                } else {
+                                    frame_count += 1;
+                                }
+                            }
+
+                            // Convert the resized image to a JPEG vector
+                            let mut jpeg_data = Vec::new();
+                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+                                &mut jpeg_data,
+                                80,
+                            );
+
+                            encoder
+                                .encode_image(&resized_image)
+                                .expect("JPEG encoding failed");
+
+                            if let Err(err) = image_sender.send(jpeg_data).await {
+                                log::error!("Failed to send image data through channel: {}", err);
+                                // exit the loop if the receiver is gone
+                                break;
+                            }
+                        } else {
+                            log::error!("Failed to create ImageBuffer");
+                        }
+                    } else {
+                        log::error!("Received image data with unexpected length: {}", data.len());
+                    }
+                }
+            }
+        }
+    });
 }
 
 // constant for PAT PID
@@ -218,6 +370,7 @@ pub struct StreamData {
     pub host_name: String,
     pub kernel_version: String,
     pub os_version: String,
+    pub has_image: u8,
 }
 
 impl Clone for StreamData {
@@ -277,6 +430,7 @@ impl Clone for StreamData {
             host_name: self.host_name.clone(),
             kernel_version: self.kernel_version.clone(),
             os_version: self.os_version.clone(),
+            has_image: self.has_image,
         }
     }
 }
@@ -359,6 +513,7 @@ impl StreamData {
             host_name: system_stats.host_name,
             kernel_version: system_stats.kernel_version,
             os_version: system_stats.os_version,
+            has_image: 0,
         }
     }
     // set RTP fields
@@ -416,22 +571,21 @@ impl StreamData {
         // check for continuity continuous increment and wrap around from 0 to 15
         let previous_continuity_counter = self.continuity_counter;
         self.continuity_counter = continuity_counter & 0x0F;
+
         // check if we incremented without loss
-        if self.continuity_counter != previous_continuity_counter + 1
+        if self.continuity_counter != (previous_continuity_counter + 1) & 0x0F
             && self.continuity_counter != previous_continuity_counter
         {
-            // check if we wrapped around from 15 to 0
-            if self.continuity_counter == 0 {
-                // check if previous value was 15
-                if previous_continuity_counter == 15 {
-                    // no loss
-                    return;
-                }
-            }
             // increment the error count by the difference between the current and previous continuity counter
-            let error_count = (self.continuity_counter - previous_continuity_counter) as u32;
+            let error_count = if self.continuity_counter < previous_continuity_counter {
+                (self.continuity_counter + 16) - previous_continuity_counter
+            } else {
+                self.continuity_counter - previous_continuity_counter
+            } as u32;
+
             self.error_count += 1;
             self.current_error_count = error_count;
+
             error!(
                 "Continuity Counter Error: PID: {} Previous: {} Current: {} Loss: {} Total Loss: {}",
                 self.pid, previous_continuity_counter, self.continuity_counter, error_count, self.error_count
@@ -440,6 +594,7 @@ impl StreamData {
             // reset the error count
             self.current_error_count = 0;
         }
+
         self.continuity_counter = continuity_counter;
     }
     pub fn update_stats(&mut self, packet_size: usize) {
@@ -788,11 +943,15 @@ pub fn process_packet(
             }
 
             // calculate uptime using the arrival time as SystemTime and start_time as u64
-            let uptime = stream_data.capture_time - stream_data.start_time;
+            //let uptime = stream_data.capture_time - stream_data.start_time;
 
             // print out each field of structure
             debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {} packet_offset: {}, packet_len: {}",
-                stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, uptime, stream_data_packet.packet_start, stream_data_packet.packet_len);
+                stream_data.pid, stream_data.pid, stream_data.stream_type,
+                stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min,
+                stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min,
+                stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter,
+                stream_data.timestamp, 0/*uptime*/, stream_data_packet.packet_start, stream_data_packet.packet_len);
 
             stream_data_packet.bitrate = stream_data.bitrate;
             stream_data_packet.bitrate_avg = stream_data.bitrate_avg;

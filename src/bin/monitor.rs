@@ -229,6 +229,7 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         host_name: reader.get_host_name()?.to_string()?,
         kernel_version: reader.get_kernel_version()?.to_string()?,
         os_version: reader.get_os_version()?.to_string()?,
+        has_image: reader.get_has_image(),
     };
 
     Ok(stream_data)
@@ -408,20 +409,66 @@ fn flatten_streams(
         );
 
         // Add system stats fields to the flattened structure
-        flat_structure.insert(format!("{}.total_memory", prefix), json!(stream_data.total_memory));
-        flat_structure.insert(format!("{}.used_memory", prefix), json!(stream_data.used_memory));
-        flat_structure.insert(format!("{}.total_swap", prefix), json!(stream_data.total_swap));
-        flat_structure.insert(format!("{}.used_swap", prefix), json!(stream_data.used_swap));
-        flat_structure.insert(format!("{}.cpu_usage", prefix), json!(stream_data.cpu_usage));
-        flat_structure.insert(format!("{}.cpu_count", prefix), json!(stream_data.cpu_count));
-        flat_structure.insert(format!("{}.core_count", prefix), json!(stream_data.core_count));
-        flat_structure.insert(format!("{}.boot_time", prefix), json!(stream_data.boot_time));
-        flat_structure.insert(format!("{}.load_avg_one", prefix), json!(stream_data.load_avg_one));
-        flat_structure.insert(format!("{}.load_avg_five", prefix), json!(stream_data.load_avg_five));
-        flat_structure.insert(format!("{}.load_avg_fifteen", prefix), json!(stream_data.load_avg_fifteen));
-        flat_structure.insert(format!("{}.host_name", prefix), json!(stream_data.host_name));
-        flat_structure.insert(format!("{}.kernel_version", prefix), json!(stream_data.kernel_version));
-        flat_structure.insert(format!("{}.os_version", prefix), json!(stream_data.os_version));
+        flat_structure.insert(
+            format!("{}.total_memory", prefix),
+            json!(stream_data.total_memory),
+        );
+        flat_structure.insert(
+            format!("{}.used_memory", prefix),
+            json!(stream_data.used_memory),
+        );
+        flat_structure.insert(
+            format!("{}.total_swap", prefix),
+            json!(stream_data.total_swap),
+        );
+        flat_structure.insert(
+            format!("{}.used_swap", prefix),
+            json!(stream_data.used_swap),
+        );
+        flat_structure.insert(
+            format!("{}.cpu_usage", prefix),
+            json!(stream_data.cpu_usage),
+        );
+        flat_structure.insert(
+            format!("{}.cpu_count", prefix),
+            json!(stream_data.cpu_count),
+        );
+        flat_structure.insert(
+            format!("{}.core_count", prefix),
+            json!(stream_data.core_count),
+        );
+        flat_structure.insert(
+            format!("{}.boot_time", prefix),
+            json!(stream_data.boot_time),
+        );
+        flat_structure.insert(
+            format!("{}.load_avg_one", prefix),
+            json!(stream_data.load_avg_one),
+        );
+        flat_structure.insert(
+            format!("{}.load_avg_five", prefix),
+            json!(stream_data.load_avg_five),
+        );
+        flat_structure.insert(
+            format!("{}.load_avg_fifteen", prefix),
+            json!(stream_data.load_avg_fifteen),
+        );
+        flat_structure.insert(
+            format!("{}.host_name", prefix),
+            json!(stream_data.host_name),
+        );
+        flat_structure.insert(
+            format!("{}.kernel_version", prefix),
+            json!(stream_data.kernel_version),
+        );
+        flat_structure.insert(
+            format!("{}.os_version", prefix),
+            json!(stream_data.os_version),
+        );
+        flat_structure.insert(
+            format!("{}.has_image", prefix),
+            json!(stream_data.has_image),
+        );
     }
 
     flat_structure
@@ -435,7 +482,7 @@ async fn produce_message(
     key: String,
     _stream_data_timestamp: i64,
     producer: FutureProducer,
-    admin_client: &AdminClient<DefaultClientContext>
+    admin_client: &AdminClient<DefaultClientContext>,
 ) {
     debug!("Service {} sending message", kafka_topic);
     let kafka_topic = kafka_topic.replace(":", "_").replace(".", "_");
@@ -491,7 +538,7 @@ struct Args {
     #[clap(long, env = "SILENT", default_value_t = false)]
     silent: bool,
 
-    /// Sets if Raw Stream should be sent
+    /// Sets if Raw Stream will be received
     #[clap(long, env = "RECV_RAW_STREAM", default_value_t = false)]
     recv_raw_stream: bool,
 
@@ -1064,13 +1111,6 @@ async fn main() {
     let mut total_bytes = 0;
     let mut counter = 0;
 
-    // Initialize an Option<File> to None
-    let mut file = if !output_file.is_empty() {
-        Some(File::create(&output_file).unwrap())
-    } else {
-        None
-    };
-
     let mut video_batch = Vec::new();
 
     let mut dot_last_file_write = Instant::now();
@@ -1099,6 +1139,8 @@ async fn main() {
         info!("Startup System OS Stats:\n{:?}", system_stats_json);
     }
 
+    let mut output_file_counter = 0;
+
     loop {
         // check for packet count
         if packet_count > 0 && counter >= packet_count {
@@ -1117,7 +1159,7 @@ async fn main() {
             dot_last_sent_stats = Instant::now();
 
             // OS and Network stats
-            system_stats_json =  get_stats_as_json(StatsType::System).await;
+            system_stats_json = get_stats_as_json(StatsType::System).await;
 
             if show_os_stats && system_stats_json != json!({}) {
                 info!("System stats as JSON:\n{:?}", system_stats_json);
@@ -1127,6 +1169,108 @@ async fn main() {
         // Deserialize the received message into StreamData
         match capnp_to_stream_data(&header_msg) {
             Ok(stream_data) => {
+                // print the structure of the packet
+                log::debug!("MONITOR::PACKET:RECEIVE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {}",
+                    counter + 1,
+                    stream_data.pid,
+                    stream_data.stream_type,
+                    stream_data.bitrate,
+                    stream_data.bitrate_max,
+                    stream_data.bitrate_min,
+                    stream_data.bitrate_avg,
+                    stream_data.iat,
+                    stream_data.iat_max,
+                    stream_data.iat_min,
+                    stream_data.iat_avg,
+                    stream_data.error_count,
+                    stream_data.continuity_counter,
+                    stream_data.timestamp,
+                );
+
+                // get data message
+                let data_msg = packet_msg[1].clone();
+
+                // Process raw data packet
+                total_bytes += data_msg.len();
+                debug!(
+                    "Monitor: #{} Received {}/{} bytes",
+                    counter,
+                    data_msg.len(),
+                    total_bytes
+                );
+
+                if debug_on {
+                    let data_msg_arc = Arc::new(data_msg.to_vec());
+                    hexdump(&data_msg_arc, 0, data_msg.len());
+                }
+
+                // Check if Decoding or if Demuxing
+                if args.recv_raw_stream {
+                    // Initialize an Option<File> to None
+                    let mut output_file_mut = if !output_file.is_empty() {
+                        Some(File::create(&output_file).unwrap())
+                    } else {
+                        None
+                    };
+
+                    if args.decode_video || args.mpegts_reader {
+                        if video_batch.len() >= args.decode_video_batch_size {
+                            dtx.send(video_batch).await.unwrap(); // Clone if necessary
+                            video_batch = Vec::new();
+                        } else {
+                            let mut stream_data_clone = stream_data.clone();
+                            stream_data_clone.packet_start = 0;
+                            stream_data_clone.packet_len = data_msg.len();
+                            stream_data_clone.packet = Arc::new(data_msg.to_vec());
+                            video_batch.push(stream_data_clone);
+                        }
+                    }
+
+                    // Write to file if output_file is provided
+                    if let Some(file) = output_file_mut.as_mut() {
+                        output_file_counter += 1;
+                        if !no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
+                            dot_last_file_write = Instant::now();
+                            print!("*");
+                            // flush stdout
+                            std::io::stdout().flush().unwrap();
+                        }
+                        file.write_all(&data_msg).unwrap();
+                    }
+                } else {
+                    // change output_file_name_mut to contain an incrementing _00000000.jpg ending
+                    // use output_file_counter to increment the file name
+                    // example output_file_name_mut = "output_{:08}.jpg", output_file_counter
+                    // remove existing .jpg if given first
+                    let output_file_without_jpg = output_file.replace(".jpg", "");
+                    if data_msg.len() > 0 && stream_data.has_image > 0 {
+                        log::info!("Data msg is {} size", data_msg.len());
+                        let output_file_incremental = format!(
+                            "{}_{:08}.jpg",
+                            output_file_without_jpg,
+                            output_file_counter
+                        );
+
+                        let mut output_file_mut = if !output_file.is_empty() {
+                            Some(File::create(&output_file_incremental).unwrap())
+                        } else {
+                            None
+                        };
+
+                        // Write to file if output_file is provided
+                        if let Some(file) = output_file_mut.as_mut() {
+                            output_file_counter += 1;
+                            if !no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
+                                dot_last_file_write = Instant::now();
+                                print!("*");
+                                // flush stdout
+                                std::io::stdout().flush().unwrap();
+                            }
+                            file.write_all(&data_msg).unwrap();
+                        }
+                    }
+                }
+
                 let pid = stream_data.pid;
                 {
                     let mut stream_groupings = STREAM_GROUPINGS.write().unwrap();
@@ -1179,7 +1323,11 @@ async fn main() {
                     let global_cc_errors_current = total_cc_errors_current;
 
                     // avg IAT
-                    let global_iat_avg = if stream_count > 0 { total_iat_avg as f64 / stream_count as f64 } else { 0.0 };
+                    let global_iat_avg = if stream_count > 0 {
+                        total_iat_avg as f64 / stream_count as f64
+                    } else {
+                        0.0
+                    };
 
                     // Calculate global averages
                     let global_bitrate_avg = if stream_count > 0 {
@@ -1210,14 +1358,9 @@ async fn main() {
                         "timestamp".to_string(),
                         serde_json::json!(current_timestamp),
                     );
-                    flattened_data.insert(
-                        "source_ip".to_string(),
-                        serde_json::json!(source_ip),
-                    );
-                    flattened_data.insert(
-                        "source_port".to_string(),
-                        serde_json::json!(source_port),
-                    );
+                    flattened_data.insert("source_ip".to_string(), serde_json::json!(source_ip));
+                    flattened_data
+                        .insert("source_port".to_string(), serde_json::json!(source_port));
 
                     // Convert the Map directly to a Value for serialization
                     let combined_stats = serde_json::Value::Object(flattened_data);
@@ -1241,71 +1384,11 @@ async fn main() {
                         kafka_key.clone(),
                         current_unix_timestamp_ms().unwrap_or(0) as i64,
                         producer.clone(),
-                        &admin_client
+                        &admin_client,
                     );
 
                     // Await the future for sending the message
                     future.await;
-                }
-
-                // print the structure of the packet
-                debug!("MONITOR::PACKET:RECEIVE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {}",
-                    counter + 1,
-                    stream_data.pid,
-                    stream_data.stream_type,
-                    stream_data.bitrate,
-                    stream_data.bitrate_max,
-                    stream_data.bitrate_min,
-                    stream_data.bitrate_avg,
-                    stream_data.iat,
-                    stream_data.iat_max,
-                    stream_data.iat_min,
-                    stream_data.iat_avg,
-                    stream_data.error_count,
-                    stream_data.continuity_counter,
-                    stream_data.timestamp,
-                );
-
-                // get data message
-                let data_msg = packet_msg[1].clone();
-
-                // Process raw data packet
-                total_bytes += data_msg.len();
-                debug!(
-                    "Monitor: #{} Received {}/{} bytes",
-                    counter,
-                    data_msg.len(),
-                    total_bytes
-                );
-
-                if debug_on {
-                    let data_msg_arc = Arc::new(data_msg.to_vec());
-                    hexdump(&data_msg_arc, 0, data_msg.len());
-                }
-
-                // Check if Decoding or if Demuxing
-                if args.decode_video || args.mpegts_reader {
-                    if video_batch.len() >= args.decode_video_batch_size {
-                        dtx.send(video_batch).await.unwrap(); // Clone if necessary
-                        video_batch = Vec::new();
-                    } else {
-                        let mut stream_data_clone = stream_data.clone();
-                        stream_data_clone.packet_start = 0;
-                        stream_data_clone.packet_len = data_msg.len();
-                        stream_data_clone.packet = Arc::new(data_msg.to_vec());
-                        video_batch.push(stream_data_clone);
-                    }
-                }
-
-                // Write to file if output_file is provided
-                if let Some(file) = file.as_mut() {
-                    if !no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
-                        dot_last_file_write = Instant::now();
-                        print!("*");
-                        // flush stdout
-                        std::io::stdout().flush().unwrap();
-                    }
-                    file.write_all(&data_msg).unwrap();
                 }
             }
             Err(e) => {

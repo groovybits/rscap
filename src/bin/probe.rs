@@ -18,17 +18,21 @@ use capsule::dpdk;
 use capsule::prelude::*;
 use clap::Parser;
 use futures::stream::StreamExt;
+#[cfg(feature = "gst")]
+use gstreamer as gst;
+#[cfg(feature = "gst")]
+use gstreamer::prelude::*;
 use log::{debug, error, info};
 use mpeg2ts_reader::demultiplex;
 use pcap::{Active, Capture, Device, PacketCodec};
 use rscap::mpegts;
-use rscap::system_stats::get_system_stats;
 use rscap::stream_data::{
     identify_video_pid, is_mpegts_or_smpte2110, parse_and_store_pat, process_packet,
-    update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID
+    update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
 };
 #[cfg(feature = "gst")]
-use rscap::stream_data::{generate_images, feed_mpegts_packets, get_image };
+use rscap::stream_data::{initialize_pipeline, process_video_packets, pull_images};
+use rscap::system_stats::get_system_stats;
 use rscap::{current_unix_timestamp_ms, hexdump};
 use std::{
     error::Error as StdError,
@@ -50,8 +54,6 @@ use h264_reader::annexb::AnnexBReader;
 use h264_reader::nal::{pps, sei, slice, sps, Nal, RefNal, UnitType};
 use h264_reader::push::NalInterest;
 use h264_reader::Context;
-#[cfg(feature = "gst")]
-use image::GenericImageView;
 //use rscap::videodecoder::VideoProcessor;
 use rscap::stream_data::{process_mpegts_packet, process_smpte2110_packet};
 use tokio::task;
@@ -225,6 +227,7 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
         stream_data_msg.set_host_name(stream_data.host_name.as_str().into());
         stream_data_msg.set_kernel_version(stream_data.kernel_version.as_str().into());
         stream_data_msg.set_os_version(stream_data.os_version.as_str().into());
+        stream_data_msg.set_has_image(stream_data.has_image);
     }
 
     Ok(message)
@@ -634,10 +637,14 @@ struct Args {
     #[clap(long, env = "MPEGTS_READER_SAMPLING_TIME", default_value_t = 1_000)]
     mpegts_reader_sampling_time: u64,
 
-    /// Extract Images from the video stream
-    #[cfg(feature = "gst")]
+    /// Extract Images from the video stream (requires feature gst)
     #[clap(long, env = "EXTRACT_IMAGES", default_value_t = false)]
     extract_images: bool,
+
+    /// Save Images to disk
+    #[cfg(feature = "gst")]
+    #[clap(long, env = "SAVE_IMAGES", default_value_t = false)]
+    save_images: bool,
 }
 
 // MAIN Function
@@ -675,7 +682,6 @@ async fn rscap() {
     let debug_on = args.debug_on;
     let silent = args.silent;
     let use_wireless = args.use_wireless;
-    let send_raw_stream = args.send_raw_stream;
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
     let no_zmq = args.no_zmq;
@@ -1368,7 +1374,9 @@ async fn rscap() {
 
                     let packet_slice = &stream_data.packet[stream_data.packet_start
                         ..stream_data.packet_start + stream_data.packet_len];
-                    let packet_msg = if send_raw_stream {
+                    let packet_msg = if stream_data.packet_len > 0
+                        && (args.send_raw_stream || args.extract_images)
+                    {
                         // Write to file if output_file is provided
                         if let Some(file) = file.as_mut() {
                             if !no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
@@ -1394,6 +1402,38 @@ async fn rscap() {
         }
     });
 
+    // Create channels for sending video packets and receiving images
+    #[cfg(feature = "gst")]
+    let (video_packet_sender, video_packet_receiver) = mpsc::channel(10000);
+    #[cfg(feature = "gst")]
+    let (image_sender, mut image_receiver) = mpsc::channel(10000);
+
+    // Initialize the pipeline
+    #[cfg(feature = "gst")]
+    let (pipeline, appsrc, appsink) = match initialize_pipeline(0x1B) {
+        Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
+        Err(err) => {
+            eprintln!("Failed to initialize the pipeline: {}", err);
+            return;
+        }
+    };
+
+    // Start the pipeline
+    #[cfg(feature = "gst")]
+    match pipeline.set_state(gst::State::Playing) {
+        Ok(_) => (),
+        Err(err) => {
+            eprintln!("Failed to set the pipeline state to Playing: {}", err);
+            return;
+        }
+    }
+
+    // Spawn separate tasks for processing video packets and pulling images
+    #[cfg(feature = "gst")]
+    process_video_packets(appsrc, video_packet_receiver);
+    #[cfg(feature = "gst")]
+    pull_images(appsink, image_sender, args.save_images);
+
     // Perform TR 101 290 checks
     let mut tr101290_errors = Tr101290Errors::new();
 
@@ -1414,7 +1454,9 @@ async fn rscap() {
     };
 
     // OS and Network stats
-    let system_stats =  get_system_stats();
+    let system_stats = get_system_stats();
+
+    let mut video_stream_type = 0;
 
     info!("Startup System OS Stats:\n{:?}", system_stats);
 
@@ -1448,7 +1490,16 @@ async fn rscap() {
         }
 
         let chunks = if is_mpegts {
-            process_mpegts_packet(payload_offset, packet, packet_size, start_time, timestamp, iat, args.source_ip.clone(), args.source_port)
+            process_mpegts_packet(
+                payload_offset,
+                packet,
+                packet_size,
+                start_time,
+                timestamp,
+                iat,
+                args.source_ip.clone(),
+                args.source_port,
+            )
         } else {
             process_smpte2110_packet(
                 payload_offset,
@@ -1496,17 +1547,28 @@ async fn rscap() {
                         if pid == pmt_info.pid {
                             debug!("ProcessPacket: PMT packet detected with PID {}", pid);
                             // Update PID_MAP with new stream types
-                            update_pid_map(&packet_chunk, &pmt_info.packet, timestamp, iat, args.source_ip.clone(), args.source_port);
+                            update_pid_map(
+                                &packet_chunk,
+                                &pmt_info.packet,
+                                timestamp,
+                                iat,
+                                args.source_ip.clone(),
+                                args.source_port,
+                            );
                             // Identify the video PID (if not already identified)
                             if let Some((new_pid, new_codec)) = identify_video_pid(&packet_chunk) {
                                 if video_pid.map_or(true, |vp| vp != new_pid) {
                                     video_pid = Some(new_pid);
+                                    let old_stream_type = video_stream_type;
+                                    video_stream_type = stream_data.stream_type_number;
                                     info!(
-                                        "STATUS::VIDEO_PID:CHANGE: to {}/{} from {}/{}",
+                                        "STATUS::VIDEO_PID:CHANGE: to {}/{}/{} from {}/{}/{}",
                                         new_pid,
                                         new_codec.clone(),
+                                        video_stream_type,
                                         video_pid.unwrap(),
-                                        video_codec.unwrap()
+                                        video_codec.unwrap(),
+                                        old_stream_type
                                     );
                                     video_codec = Some(new_codec.clone());
                                     // Reset video frame as the video stream has changed
@@ -1525,6 +1587,22 @@ async fn rscap() {
                         }
                     }
                 }
+            }
+
+            if video_pid < Some(0x1FFF)
+                && video_pid > Some(0)
+                && stream_data.pid == video_pid.unwrap()
+                && video_stream_type != stream_data.stream_type_number
+            {
+                let old_stream_type = video_stream_type;
+                video_stream_type = stream_data.stream_type_number;
+                log::info!(
+                    "STATUS::VIDEO_STREAM:FOUND: to {}/{} from {}/{}",
+                    video_pid.unwrap(),
+                    video_stream_type,
+                    video_pid.unwrap(),
+                    old_stream_type
+                );
             }
 
             // Check for TR 101 290 errors
@@ -1552,54 +1630,53 @@ async fn rscap() {
                             video_batch.push(stream_data_clone);
                         }
                     }
+                }
 
-                    // Store the video packet and stream type number
+                // Process video packets
+                #[cfg(feature = "gst")]
+                if args.extract_images {
                     #[cfg(feature = "gst")]
-                    if args.extract_images {
-                        let stream_type_number = stream_data.stream_type_number;
-                        if stream_type_number > 0 {
-                            let video_packet = stream_data.packet[stream_data.packet_start..stream_data.packet_start + stream_data.packet_len].to_vec();
-                            feed_mpegts_packets(vec![video_packet]);
-                            generate_images(stream_type_number);
+                    if video_stream_type > 0 {
+                        let video_packet = Arc::new(
+                            stream_data.packet[stream_data.packet_start
+                                ..stream_data.packet_start + stream_data.packet_len]
+                                .to_vec(),
+                        );
+
+                        // Send the video packet to the processing task
+                        if let Err(_) = video_packet_sender
+                            .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
+                        {
+                            // If the channel is full, drop the packet
+                            log::warn!("Video packet channel is full. Dropping packet.");
                         }
+                    }
+
+                    // Receive and process images
+                    #[cfg(feature = "gst")]
+                    if let Ok(image_data) = image_receiver.try_recv() {
+                        // attach image to the stream_data.packet arc, clearing the current arc value
+                        stream_data.packet = Arc::new(image_data.clone());
+                        stream_data.has_image = image_data.len() as u8;
+                        stream_data.packet_start = 0;
+                        stream_data.packet_len = image_data.len();
+
+                        // Process the received image data
+                        log::info!("Received an image with size: {} bytes", image_data.len());
+
+                    } else {
+                        // zero out the packet data
+                        stream_data.packet_start = 0;
+                        stream_data.packet_len = 0;
+                        stream_data.packet = Arc::new(Vec::new());
                     }
                 }
             } else {
                 // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
             }
 
-            #[cfg(feature = "gst")]
-            if args.extract_images {
-                match get_image() {
-                    Some(image_data) => {
-                        // Process the image data here
-                        // For example, you can save it to a file or perform further analysis
-                        // ...
-                        println!("Received an image with size: {} bytes", image_data.len());
-
-                        // Attempt to decode the image to get its parameters
-                        match image::load_from_memory(&image_data) {
-                            Ok(img) => {
-                                println!("Image dimensions: {:?}", img.dimensions());
-                                println!("Image color type: {:?}", img.color());
-
-                                // Save the image data to a file named "image.jpg"
-                                let mut file = File::create("image.jpg").expect("Failed to create file.");
-                                file.write_all(&image_data).expect("Failed to write image data to file.");
-
-                                println!("Image saved as image.jpg");
-                            },
-                            Err(e) => println!("Failed to decode image data: {:?}", e),
-                        }
-                    }
-                    None => {
-                        // No images available, continue processing
-                    }
-                }
-            }
-
-            // release the packet Arc so it can be reused
-            if !send_raw_stream && stream_data.packet_len > 0 {
+            if !args.extract_images && !args.send_raw_stream && stream_data.packet_len > 0 {
+                // release the packet Arc so it can be reused
                 stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
                 stream_data.packet_len = 0;
                 stream_data.packet_start = 0;
@@ -1608,7 +1685,7 @@ async fn rscap() {
                         continue;
                     }
                 }
-            } else if send_raw_stream {
+            } else if !args.extract_images && args.send_raw_stream {
                 // Skip null packets
                 if !args.send_null_packets {
                     if pid == 0x1FFF && is_mpegts {
@@ -1646,6 +1723,15 @@ async fn rscap() {
     }
 
     println!("\nSending stop signals to threads...");
+
+    // Stop the pipeline when done
+    #[cfg(feature = "gst")]
+    match pipeline.set_state(gst::State::Null) {
+        Ok(_) => (),
+        Err(err) => {
+            eprintln!("Failed to set the pipeline state to Null: {}", err);
+        }
+    }
 
     // Send ZMQ stop signal
     tx.send(Vec::new()).await.unwrap();

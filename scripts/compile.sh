@@ -3,6 +3,13 @@
 # Exit immediately if a command exits with a non-zero status.
 set -e
 
+FEATURES=
+if [ "$1" != "" ]; then
+    FEATURES="--features $1"
+fi
+
+BUILD=release-with-debug
+
 # Function to prompt for installation
 prompt_install() {
     while true; do
@@ -64,9 +71,13 @@ if [ "$OS" = "Linux" ]; then
 
             # Build with SCL
             echo "Building project (CentOS 7)..."
-            run_with_scl cargo build
-            run_with_scl cargo build --release
-            run_with_scl cargo build --profile=release-with-debug
+            if [ "$BUILD" = "release" ]; then
+                run_with_scl cargo build $FEATURES --release
+            elif [ "$BUILD" = "release-with-debug" ]; then
+                run_with_scl cargo build $FEATURES --profile=release-with-debug
+            else
+                run_with_scl cargo build $FEATURES
+            fi
         fi
     fi
     # Add elif blocks here for other specific Linux distributions
@@ -75,17 +86,25 @@ elif [ "$OS" = "Darwin" ]; then
     # macOS specific setup
     # Build on macOS
     echo "Building project (macOS)..."
-    cargo build
-    cargo build --release
-    cargo build --profile=release-with-debug
+    if [ "$BUILD" = "release" ]; then
+        cargo build $FEATURES --profile=release-with-debug
+    elif [ "$BUILD" == "release-with-debug" ]; then
+        cargo build $FEATURES --release
+    else
+        cargo build $FEATURES
+    fi
 else
     echo "Generic Unix-like OS detected."
     # Generic Unix/Linux setup
     # Build for generic Unix/Linux
     echo "Building project..."
-    cargo build
-    cargo build --release
-    cargo build --profile=release-with-debug
+    if [ "$BUILD" = "release" ]; then
+        cargo build $FEATURES --release
+    elif [ "$BUILD" == "release-with-debug" ]; then
+        cargo build $FEATURES --profile=release-with-debug
+    else
+        cargo build $FEATURES
+    fi
 fi
 
 echo "Build completed successfully."
