@@ -17,6 +17,10 @@ use gstreamer::prelude::*;
 #[cfg(feature = "gst")]
 use gstreamer_app as gst_app;
 #[cfg(feature = "gst")]
+use gstreamer_video::VideoInfo;
+#[cfg(feature = "gst")]
+use image::imageops::resize;
+#[cfg(feature = "gst")]
 use image::{ImageBuffer, Rgb};
 use lazy_static::lazy_static;
 use log::{debug, error, info};
@@ -110,28 +114,57 @@ pub fn process_video_packets(appsrc: AppSrc, mut video_packet_receiver: mpsc::Re
 pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>) {
     tokio::spawn(async move {
         let mut frame_count = 0;
+
         loop {
             let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
             if let Some(sample) = sample {
                 if let Some(buffer) = sample.buffer() {
+                    let caps = sample.caps().expect("Sample without caps");
+                    let info = VideoInfo::from_caps(&caps).expect("Failed to parse caps");
+
+                    // print entire videoinfo struct
+                    log::debug!("Video Frame Info: {:?}", info);
+
+                    let width = info.width();
+                    let height = info.height();
+
                     let map = buffer.map_readable().unwrap();
                     let data = map.as_slice().to_vec();
 
-                    // Create an ImageBuffer from the received image data
-                    let width = 640;
-                    let height = 480;
-                    let image: ImageBuffer<Rgb<u8>, _> =
-                        ImageBuffer::from_raw(width, height, data.clone()).unwrap();
+                    // Check if the data length matches the expected dimensions
+                    let expected_length = width as usize * height as usize * 3; // Assuming RGB format
+                    if data.len() == expected_length {
+                        // Create an ImageBuffer from the received image data
+                        if let Some(image) =
+                            ImageBuffer::<Rgb<u8>, _>::from_raw(width, height, data.clone())
+                        {
+                            let scaled_height = 480;
+                            let scaled_width =
+                                (width as f32 / height as f32 * scaled_height as f32) as u32;
 
-                    // Save the image as a JPEG file
-                    let filename = format!("images/frame_{:04}.jpg", frame_count);
-                    image.save(filename).unwrap();
+                            let resized_image = resize(
+                                &image,
+                                scaled_width,
+                                scaled_height,
+                                image::imageops::FilterType::Triangle,
+                            );
 
-                    frame_count += 1;
+                            // Save the resized image as a JPEG file
+                            let filename = format!("images/frame_{:04}.jpg", frame_count);
+                            if let Err(err) = resized_image.save(filename) {
+                                log::error!("Failed to save image: {}", err);
+                            } else {
+                                frame_count += 1;
+                            }
 
-                    // Send the compressed image data through the channel
-                    if let Err(err) = image_sender.send(image.into_raw()).await {
-                        log::error!("Failed to send image data through channel: {}", err);
+                            if let Err(err) = image_sender.send(data).await {
+                                log::error!("Failed to send image data through channel: {}", err);
+                            }
+                        } else {
+                            log::error!("Failed to create ImageBuffer");
+                        }
+                    } else {
+                        log::error!("Received image data with unexpected length: {}", data.len());
                     }
                 }
             }
