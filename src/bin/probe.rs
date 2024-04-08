@@ -682,7 +682,6 @@ async fn rscap() {
     let debug_on = args.debug_on;
     let silent = args.silent;
     let use_wireless = args.use_wireless;
-    let send_raw_stream = args.send_raw_stream;
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
     let no_zmq = args.no_zmq;
@@ -1375,7 +1374,9 @@ async fn rscap() {
 
                     let packet_slice = &stream_data.packet[stream_data.packet_start
                         ..stream_data.packet_start + stream_data.packet_len];
-                    let packet_msg = if send_raw_stream {
+                    let packet_msg = if stream_data.packet_len > 0
+                        && (args.send_raw_stream || args.extract_images)
+                    {
                         // Write to file if output_file is provided
                         if let Some(file) = file.as_mut() {
                             if !no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
@@ -1613,7 +1614,6 @@ async fn rscap() {
             );
 
             // If MpegTS, Check if this is a video PID and if so parse NALS and decode video
-            let mut got_image = false;
             if is_mpegts {
                 // Check if this is a video PID or if demuxing all PIDs
                 if pid == video_pid.unwrap_or(0xFFFF) || args.mpegts_reader {
@@ -1658,22 +1658,22 @@ async fn rscap() {
                         // Process the received image data
                         log::debug!("Received an image with size: {} bytes", image_data.len());
 
-                        // Flag that an image was received
-                        got_image = true;
-
                         // attach image to the stream_data.packet arc, clearing the current arc value
                         stream_data.packet_start = 0;
                         stream_data.packet_len = image_data.len();
                         stream_data.packet = Arc::new(image_data);
+                    } else {
+                        // zero out the packet data
+                        stream_data.packet_start = 0;
+                        stream_data.packet_len = 0;
+                        stream_data.packet = Arc::new(Vec::new());
                     }
                 }
             } else {
                 // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
             }
 
-            if got_image {
-                // do nothing
-            } else if !send_raw_stream && stream_data.packet_len > 0 {
+            if !args.extract_images && !args.send_raw_stream && stream_data.packet_len > 0 {
                 // release the packet Arc so it can be reused
                 stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
                 stream_data.packet_len = 0;
@@ -1683,7 +1683,7 @@ async fn rscap() {
                         continue;
                     }
                 }
-            } else if send_raw_stream {
+            } else if !args.extract_images && args.send_raw_stream {
                 // Skip null packets
                 if !args.send_null_packets {
                     if pid == 0x1FFF && is_mpegts {

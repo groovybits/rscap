@@ -408,20 +408,62 @@ fn flatten_streams(
         );
 
         // Add system stats fields to the flattened structure
-        flat_structure.insert(format!("{}.total_memory", prefix), json!(stream_data.total_memory));
-        flat_structure.insert(format!("{}.used_memory", prefix), json!(stream_data.used_memory));
-        flat_structure.insert(format!("{}.total_swap", prefix), json!(stream_data.total_swap));
-        flat_structure.insert(format!("{}.used_swap", prefix), json!(stream_data.used_swap));
-        flat_structure.insert(format!("{}.cpu_usage", prefix), json!(stream_data.cpu_usage));
-        flat_structure.insert(format!("{}.cpu_count", prefix), json!(stream_data.cpu_count));
-        flat_structure.insert(format!("{}.core_count", prefix), json!(stream_data.core_count));
-        flat_structure.insert(format!("{}.boot_time", prefix), json!(stream_data.boot_time));
-        flat_structure.insert(format!("{}.load_avg_one", prefix), json!(stream_data.load_avg_one));
-        flat_structure.insert(format!("{}.load_avg_five", prefix), json!(stream_data.load_avg_five));
-        flat_structure.insert(format!("{}.load_avg_fifteen", prefix), json!(stream_data.load_avg_fifteen));
-        flat_structure.insert(format!("{}.host_name", prefix), json!(stream_data.host_name));
-        flat_structure.insert(format!("{}.kernel_version", prefix), json!(stream_data.kernel_version));
-        flat_structure.insert(format!("{}.os_version", prefix), json!(stream_data.os_version));
+        flat_structure.insert(
+            format!("{}.total_memory", prefix),
+            json!(stream_data.total_memory),
+        );
+        flat_structure.insert(
+            format!("{}.used_memory", prefix),
+            json!(stream_data.used_memory),
+        );
+        flat_structure.insert(
+            format!("{}.total_swap", prefix),
+            json!(stream_data.total_swap),
+        );
+        flat_structure.insert(
+            format!("{}.used_swap", prefix),
+            json!(stream_data.used_swap),
+        );
+        flat_structure.insert(
+            format!("{}.cpu_usage", prefix),
+            json!(stream_data.cpu_usage),
+        );
+        flat_structure.insert(
+            format!("{}.cpu_count", prefix),
+            json!(stream_data.cpu_count),
+        );
+        flat_structure.insert(
+            format!("{}.core_count", prefix),
+            json!(stream_data.core_count),
+        );
+        flat_structure.insert(
+            format!("{}.boot_time", prefix),
+            json!(stream_data.boot_time),
+        );
+        flat_structure.insert(
+            format!("{}.load_avg_one", prefix),
+            json!(stream_data.load_avg_one),
+        );
+        flat_structure.insert(
+            format!("{}.load_avg_five", prefix),
+            json!(stream_data.load_avg_five),
+        );
+        flat_structure.insert(
+            format!("{}.load_avg_fifteen", prefix),
+            json!(stream_data.load_avg_fifteen),
+        );
+        flat_structure.insert(
+            format!("{}.host_name", prefix),
+            json!(stream_data.host_name),
+        );
+        flat_structure.insert(
+            format!("{}.kernel_version", prefix),
+            json!(stream_data.kernel_version),
+        );
+        flat_structure.insert(
+            format!("{}.os_version", prefix),
+            json!(stream_data.os_version),
+        );
     }
 
     flat_structure
@@ -435,7 +477,7 @@ async fn produce_message(
     key: String,
     _stream_data_timestamp: i64,
     producer: FutureProducer,
-    admin_client: &AdminClient<DefaultClientContext>
+    admin_client: &AdminClient<DefaultClientContext>,
 ) {
     debug!("Service {} sending message", kafka_topic);
     let kafka_topic = kafka_topic.replace(":", "_").replace(".", "_");
@@ -491,7 +533,7 @@ struct Args {
     #[clap(long, env = "SILENT", default_value_t = false)]
     silent: bool,
 
-    /// Sets if Raw Stream should be sent
+    /// Sets if Raw Stream will be received
     #[clap(long, env = "RECV_RAW_STREAM", default_value_t = false)]
     recv_raw_stream: bool,
 
@@ -1117,7 +1159,7 @@ async fn main() {
             dot_last_sent_stats = Instant::now();
 
             // OS and Network stats
-            system_stats_json =  get_stats_as_json(StatsType::System).await;
+            system_stats_json = get_stats_as_json(StatsType::System).await;
 
             if show_os_stats && system_stats_json != json!({}) {
                 info!("System stats as JSON:\n{:?}", system_stats_json);
@@ -1179,7 +1221,11 @@ async fn main() {
                     let global_cc_errors_current = total_cc_errors_current;
 
                     // avg IAT
-                    let global_iat_avg = if stream_count > 0 { total_iat_avg as f64 / stream_count as f64 } else { 0.0 };
+                    let global_iat_avg = if stream_count > 0 {
+                        total_iat_avg as f64 / stream_count as f64
+                    } else {
+                        0.0
+                    };
 
                     // Calculate global averages
                     let global_bitrate_avg = if stream_count > 0 {
@@ -1210,14 +1256,9 @@ async fn main() {
                         "timestamp".to_string(),
                         serde_json::json!(current_timestamp),
                     );
-                    flattened_data.insert(
-                        "source_ip".to_string(),
-                        serde_json::json!(source_ip),
-                    );
-                    flattened_data.insert(
-                        "source_port".to_string(),
-                        serde_json::json!(source_port),
-                    );
+                    flattened_data.insert("source_ip".to_string(), serde_json::json!(source_ip));
+                    flattened_data
+                        .insert("source_port".to_string(), serde_json::json!(source_port));
 
                     // Convert the Map directly to a Value for serialization
                     let combined_stats = serde_json::Value::Object(flattened_data);
@@ -1241,7 +1282,7 @@ async fn main() {
                         kafka_key.clone(),
                         current_unix_timestamp_ms().unwrap_or(0) as i64,
                         producer.clone(),
-                        &admin_client
+                        &admin_client,
                     );
 
                     // Await the future for sending the message
@@ -1284,16 +1325,18 @@ async fn main() {
                 }
 
                 // Check if Decoding or if Demuxing
-                if args.decode_video || args.mpegts_reader {
-                    if video_batch.len() >= args.decode_video_batch_size {
-                        dtx.send(video_batch).await.unwrap(); // Clone if necessary
-                        video_batch = Vec::new();
-                    } else {
-                        let mut stream_data_clone = stream_data.clone();
-                        stream_data_clone.packet_start = 0;
-                        stream_data_clone.packet_len = data_msg.len();
-                        stream_data_clone.packet = Arc::new(data_msg.to_vec());
-                        video_batch.push(stream_data_clone);
+                if args.recv_raw_stream {
+                    if args.decode_video || args.mpegts_reader {
+                        if video_batch.len() >= args.decode_video_batch_size {
+                            dtx.send(video_batch).await.unwrap(); // Clone if necessary
+                            video_batch = Vec::new();
+                        } else {
+                            let mut stream_data_clone = stream_data.clone();
+                            stream_data_clone.packet_start = 0;
+                            stream_data_clone.packet_len = data_msg.len();
+                            stream_data_clone.packet = Arc::new(data_msg.to_vec());
+                            video_batch.push(stream_data_clone);
+                        }
                     }
                 }
 

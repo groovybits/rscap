@@ -235,14 +235,35 @@ pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>, save_i
                                 image::imageops::FilterType::Triangle,
                             );
 
+                            // Convert the resized image to a JPEG vector
+                            /*let mut jpeg_data = Vec::new();
+                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+                                &mut jpeg_data,
+                                80,
+                            );
+
+                            encoder
+                                .encode_image(&resized_image)
+                                .expect("JPEG encoding failed");
+                                */
+
                             if save_images {
-                                // Save the resized image as a JPEG file
+                                // Save the resized JPEG image
                                 let filename = format!("images/frame_{:04}.jpg", frame_count);
                                 if let Err(err) = resized_image.save(filename) {
                                     log::error!("Failed to save image: {}", err);
                                 } else {
                                     frame_count += 1;
                                 }
+                                /*match std::fs::write(&filename, &jpeg_data) {
+                                Ok(_) => {
+                                    log::debug!("Saved image: {}", filename);
+                                    frame_count += 1;
+                                }
+                                Err(err) => {
+                                    log::error!("Failed to save image {}: {}", filename, err);
+                                }
+                                }*/
                             }
 
                             if let Err(err) = image_sender.send(resized_image.to_vec()).await {
