@@ -193,7 +193,7 @@ fn i422_10le_to_rgb(width: usize, height: usize, i422_data: &[u8]) -> Vec<u8> {
 #[cfg(feature = "gst")]
 pub fn pull_images(
     appsink: AppSink,
-    image_sender: mpsc::Sender<Vec<u8>>,
+    image_sender: mpsc::Sender<Vec<u8>, u64>,
     save_images: bool,
     sample_interval: u64,
 ) {
@@ -207,6 +207,13 @@ pub fn pull_images(
                 if let Some(buffer) = sample.buffer() {
                     let caps = sample.caps().expect("Sample without caps");
                     let info = VideoInfo::from_caps(&caps).expect("Failed to parse caps");
+                    let pts = buffer.pts().unwrap();
+
+                    // Check if the sample interval is set and skip frames if necessary
+                    if pts.nseconds().unwrap() - last_processed_pts < sample_interval as i64 {
+                        continue;
+                    }
+                    last_processed_pts = pts.nseconds().unwrap();
 
                     // print entire videoinfo struct
                     log::debug!("Video Frame Info: {:?}", info);
@@ -377,6 +384,7 @@ pub struct StreamData {
     pub kernel_version: String,
     pub os_version: String,
     pub has_image: u8,
+    pub image_pts: u64,
 }
 
 impl Clone for StreamData {
@@ -437,6 +445,7 @@ impl Clone for StreamData {
             kernel_version: self.kernel_version.clone(),
             os_version: self.os_version.clone(),
             has_image: self.has_image,
+            image_pts: self.image_pts,
         }
     }
 }
@@ -520,6 +529,7 @@ impl StreamData {
             kernel_version: system_stats.kernel_version,
             os_version: system_stats.os_version,
             has_image: 0,
+            image_pts: 0,
         }
     }
     // set RTP fields
