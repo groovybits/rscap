@@ -301,10 +301,18 @@ echo "---"
 echo "Installing RsCap..."
 echo "---"
 
-# Copy RsCap to the RPM_BUILD_ROOT
+# Remove previous buildroot
 rm -rf %{buildroot}
-mkdir -p %{buildroot}/opt/rscap
-cp -R %{_builddir}/opt/rscap/* %{buildroot}/opt/rscap/
+
+# Create the necessary directories in the RPM build root
+mkdir -p %{buildroot}/opt/rscap/bin
+mkdir -p %{buildroot}/opt/rscap/lib
+mkdir -p %{buildroot}/opt/rscap/lib64
+
+# Copy only the desired directories to the RPM build root
+cp -R %{_builddir}/opt/rscap/bin/* %{buildroot}/opt/rscap/bin/
+cp -R %{_builddir}/opt/rscap/lib/* %{buildroot}/opt/rscap/lib/
+cp -R %{_builddir}/opt/rscap/lib64/* %{buildroot}/opt/rscap/lib64/
 
 echo "------------------------------------------------------------"
 echo "Finished installing RsCap."
