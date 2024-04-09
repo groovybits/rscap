@@ -23,8 +23,6 @@ TODO:
 - Add Network metrics via pcap potentially or Rust crate, have not located one yet.
 - Add HLS input support <https://github.com/dholroyd/hls_m3u8> for streams.
 
-![rscap](https://storage.googleapis.com/gaib/2/rscap/rscap.png)
-
 ## This consists of two programs, a probe and a monitor client.
 
 - The [src/bin/probe.rs](src/bin/probe.rs) takes MpegTS or SMPTE2110 via Packet Capture and publishes
