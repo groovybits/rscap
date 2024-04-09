@@ -207,7 +207,7 @@ pub fn pull_images(
                 if let Some(buffer) = sample.buffer() {
                     let caps = sample.caps().expect("Sample without caps");
                     let info = VideoInfo::from_caps(&caps).expect("Failed to parse caps");
-                    let pts = buffer.pts().unwrap().nanoseconds().unwrap();
+                    let pts = buffer.pts().unwrap().nseconds().unwrap();
 
                     // Check if the sample interval is set and skip frames if necessary
                     if pts - last_processed_pts < sample_interval as i64 {
@@ -269,7 +269,7 @@ pub fn pull_images(
                                 .encode_image(&resized_image)
                                 .expect("JPEG encoding failed");
 
-                            if let Err(err) = image_sender.send(jpeg_data).await {
+                            if let Err(err) = image_sender.send((jpeg_data, pts as u64)).await {
                                 log::error!("Failed to send image data through channel: {}", err);
                                 // exit the loop if the receiver is gone
                                 break;
