@@ -282,12 +282,10 @@ rm -rf $PREFIX/lib/pkgconfig
 rm -rf $PREFIX/lib64/*.a
 rm -rf $PREFIX/lib64/pkgconfig
 rm -rf $PREFIX/include
-strip $PREFIX/lib/*.so
 
 run_with_scl cargo build --features gst --release
 cp target/release/probe $PREFIX/bin/
 cp target/release/monitor $PREFIX/bin/
-strip $PREFIX/bin/*
 cd ..
 
 # cleanup rscap
