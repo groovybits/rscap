@@ -50,13 +50,13 @@ yum groupinstall -y "Development Tools"
 yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel
 
 # Download and extract Rust locally
-curl --proto '=https' --tlsv1.2 -sSf https://static.rust-lang.org/dist/rust-$RUST_VERSION-x86_64-unknown-linux-gnu.tar.gz | tar -xz --directory=$BUILD_DIR/rust
-mv $BUILD_DIR/rust-$RUST_VERSION-x86_64-unknown-linux-gnu $BUILD_DIR/rust
+curl --proto '=https' --tlsv1.2 -sSf https://static.rust-lang.org/dist/rust-$RUST_VERSION-x86_64-unknown-linux-gnu.tar.gz | tar -xz
+mv rust-$RUST_VERSION-x86_64-unknown-linux-gnu rust
 
 # Define the PATH to include the Rust binaries
-export PATH=$PREFIX/bin:$BUILD_DIR/rust/bin:$PATH
-export RUSTC=$BUILD_DIR/rust/bin/rustc
+export RUSTC=$BUILD_DIR/rust/rustc
 export CARGO_HOME=$BUILD_DIR/rust/cargo
+export PATH=$PREFIX/bin:$CARGO_HOME/bin:$RUSTC/bin:$PATH
 
 # For pkg-config to find .pc files
 export PKG_CONFIG_PATH=$PREFIX/lib64/pkgconfig:$PREFIX/lib/pkgconfig:/usr/lib64/pkgconfig:$PKG_CONFIG_PATH
