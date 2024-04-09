@@ -37,26 +37,15 @@ RUST_VERSION=1.77.1
 RSCAP_VERSION=0.5.0
 
 # Define the installation prefix
-PREFIX=/opt/rscap
-
-# Clone RsCap repository and checkout the specific tag
-git clone https://github.com/groovybits/rscap.git
-cd rscap
-git checkout $RSCAP_VERSION
-cd ..
+PREFIX=$BUILD_DIR/opt/rscap
 
 # Ensure the system has the basic build tools
 yum groupinstall -y "Development Tools"
 yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel
 
-# Download and extract Rust locally
-curl --proto '=https' --tlsv1.2 -sSf https://static.rust-lang.org/dist/rust-$RUST_VERSION-x86_64-unknown-linux-gnu.tar.gz | tar -xz
-mv rust-$RUST_VERSION-x86_64-unknown-linux-gnu rust
-
 # Define the PATH to include the Rust binaries
-export RUSTC=$BUILD_DIR/rust/rustc
-export CARGO_HOME=$BUILD_DIR/rust/cargo
-export PATH=$PREFIX/bin:$CARGO_HOME/bin:$RUSTC/bin:$PATH
+
+export PATH=$PREFIX/bin:$PATH
 
 # For pkg-config to find .pc files
 export PKG_CONFIG_PATH=$PREFIX/lib64/pkgconfig:$PREFIX/lib/pkgconfig:/usr/lib64/pkgconfig:$PKG_CONFIG_PATH
@@ -75,6 +64,14 @@ pip3 install ninja
 echo "------------------------------------------------------------"
 echo "Buidling and installing GStreamer with essential dependencies..."
 echo "------------------------------------------------------------"
+
+# Download and extract Rust locally
+curl --proto '=https' --tlsv1.2 -sSf https://static.rust-lang.org/dist/rust-$RUST_VERSION-x86_64-unknown-linux-gnu.tar.gz | tar -xz
+mv rust-$RUST_VERSION-x86_64-unknown-linux-gnu rust
+cd rust
+./install.sh --prefix=$PREFIX --without=rust-docs
+cd ..
+rm -rf rust
 
 # Install libFFI
 echo "---"
@@ -256,33 +253,44 @@ echo "------------------------------------------------------------"
 echo "Building RsCap..."
 echo "------------------------------------------------------------"
 
+# Set RUSTFLAGS for RPATH
+export RUSTFLAGS="-C link-args=-Wl,-rpath,/opt/rscap/lib:/opt/rscap/lib64"
+
+# Set environment variables for Rust
+export CARGO_HOME=$PREFIX/cargo
+export CARGO=$PREFIX/bin/cargo
+export RUSTC=$PREFIX/bin/rustc
+
 # Build RsCap
 echo "Building RsCap..."
+
+# Clone RsCap repository and checkout the specific tag
+git clone https://github.com/groovybits/rscap.git
 cd rscap
+git checkout $RSCAP_VERSION
+
 run_with_scl cargo build --features gst --release
-cp target/release/probe $BUILD_DIR/bin/
-cp target/release/monitor $BUILD_DIR/bin/
+cp target/release/probe $PREFIX/bin/
+cp target/release/monitor $PREFIX/bin/
 cd ..
 
 # cleanup rscap
-rm -rf $BUILD_DIR/rscap
-
-# cleanup rust
-rm -rf $BUILD_DIR/rust
+rm -rf rscap
 
 echo "------------------------------------------------------------"
 echo "Done building RsCap and all dependencies."
 echo "------------------------------------------------------------"
 
 %install
-rm -rf $RPM_BUILD_ROOT
-mkdir -p $RPM_BUILD_ROOT/opt/rscap
-cp -R $BUILD_DIR/* $RPM_BUILD_ROOT/opt/rscap/
-
-# Install the Rust program
 echo "---"
 echo "Installing RsCap..."
 echo "---"
+
+# Copy RsCap to the RPM_BUILD_ROOT
+rm -rf $RPM_BUILD_ROOT
+mkdir -p $RPM_BUILD_ROOT/opt/rscap
+cp -R $PREFIX/* $RPM_BUILD_ROOT/opt/rscap/
+rm -rf $PREFIX
 
 echo "------------------------------------------------------------"
 echo "Finished installing RsCap."
