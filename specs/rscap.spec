@@ -269,6 +269,10 @@ git clone https://github.com/groovybits/rscap.git
 cd rscap
 git checkout $RSCAP_VERSION
 
+## Build RsCap
+run_with_scl cargo build --features gst --release
+cd ..
+
 # Remove existing binaries, we do not need them
 rm -rf $PREFIX/cargo
 rm -rf $PREFIX/bin/*
@@ -283,10 +287,9 @@ rm -rf $PREFIX/lib64/*.a
 rm -rf $PREFIX/lib64/pkgconfig
 rm -rf $PREFIX/include
 
-run_with_scl cargo build --features gst --release
-cp target/release/probe $PREFIX/bin/
-cp target/release/monitor $PREFIX/bin/
-cd ..
+# Copy RsCap binaries to the installation directory
+cp rscap/target/release/probe $PREFIX/bin/
+cp rscap/target/release/monitor $PREFIX/bin/
 
 # cleanup rscap
 rm -rf rscap
@@ -312,6 +315,7 @@ echo "------------------------------------------------------------"
 %files
 %defattr(-,root,root,-)
 /opt/rscap/*
+%exclude /opt/rscap/share/*
 
 %changelog
 * Mon Apr 08 2024 Chris Kennedy <chris@rscap.com>
