@@ -276,10 +276,8 @@ cd ..
 # Remove existing binaries, we do not need them
 rm -rf $PREFIX/cargo
 rm -rf $PREFIX/bin/*
-rm -rf $PREFIX/share/doc
-rm -rf $PREFIX/share/gtk-doc
-rm -rf $PREFIX/share/man
-rm -rf $PREFIX/share/ffmpeg/examples
+rm -rf $PREFIX/share
+rm -rf $PREFIX/etc
 rm -rf $PREFIX/lib/rustlib
 rm -rf $PREFIX/lib/*.a
 rm -rf $PREFIX/lib/pkgconfig
@@ -313,10 +311,9 @@ echo "Finished installing RsCap."
 echo "------------------------------------------------------------"
 
 %files
-%defattr(-,root,root,-)
-/opt/rscap/bin/
-/opt/rscap/lib/
-/opt/rscap/lib64/
+/opt/rscap/bin/*
+/opt/rscap/lib/*
+/opt/rscap/lib64/*
 
 %changelog
 * Mon Apr 08 2024 Chris Kennedy <chris@rscap.com>
