@@ -16,6 +16,7 @@ use async_zmq;
 //use chrono::TimeZone;
 use clap::Parser;
 use log::{debug, error, info};
+use base64::{Engine as _, engine::general_purpose};
 use rdkafka::admin::{AdminClient, AdminOptions, NewTopic};
 use rdkafka::client::DefaultClientContext;
 use rdkafka::config::ClientConfig;
@@ -1272,7 +1273,7 @@ async fn main() {
                         }
 
                         // Encode the JPEG image as Base64
-                        base64_image = base64::encode(&data_msg);
+                        base64_image = general_purpose::STANDARD.encode(&data_msg);
                     }
                 }
 
