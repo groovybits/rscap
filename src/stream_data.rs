@@ -64,8 +64,8 @@ pub fn initialize_pipeline(
             "appsrc name=src ! tsdemux ! mpeg2dec ! videoconvert ! appsink name=sink",
         )?,
         0x1B => create_pipeline(
-            "appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert !   appsink name=sink",
-        )?,
+            "appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink",
+        )?h
         0x24 => create_pipeline(
             "appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videoconvert ! appsink name=sink",
         )?,
