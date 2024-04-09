@@ -14,9 +14,9 @@
 
 use async_zmq;
 //use chrono::TimeZone;
+use base64::{engine::general_purpose, Engine as _};
 use clap::Parser;
 use log::{debug, error, info};
-use base64::{Engine as _, engine::general_purpose};
 use rdkafka::admin::{AdminClient, AdminOptions, NewTopic};
 use rdkafka::client::DefaultClientContext;
 use rdkafka::config::ClientConfig;
@@ -231,6 +231,7 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         kernel_version: reader.get_kernel_version()?.to_string()?,
         os_version: reader.get_os_version()?.to_string()?,
         has_image: reader.get_has_image(),
+        image_pts: reader.get_image_pts(),
     };
 
     Ok(stream_data)
@@ -470,6 +471,10 @@ fn flatten_streams(
             format!("{}.has_image", prefix),
             json!(stream_data.has_image),
         );
+        flat_structure.insert(
+            format!("{}.image_pts", prefix),
+            json!(stream_data.image_pts),
+        );
     }
 
     flat_structure
@@ -515,7 +520,7 @@ async fn produce_message(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.0",
+    version = "0.5.1",
     about = "RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe."
 )]
 struct Args {
@@ -1247,12 +1252,13 @@ async fn main() {
                     // remove existing .jpg if given first
                     let output_file_without_jpg = output_file.replace(".jpg", "");
                     if data_msg.len() > 0 && stream_data.has_image > 0 {
-                        log::debug!("Monitor: Jpeg image received: {} size", data_msg.len());
-                        let output_file_incremental = format!(
-                            "{}_{:08}.jpg",
-                            output_file_without_jpg,
-                            output_file_counter
+                        log::debug!(
+                            "Monitor: Jpeg image received: {} size {} pts",
+                            data_msg.len(),
+                            stream_data.image_pts
                         );
+                        let output_file_incremental =
+                            format!("{}_{:08}.jpg", output_file_without_jpg, output_file_counter);
 
                         let mut output_file_mut = if !output_file.is_empty() {
                             Some(File::create(&output_file_incremental).unwrap())
@@ -1369,10 +1375,8 @@ async fn main() {
                         .insert("source_port".to_string(), serde_json::json!(source_port));
 
                     // Insert the base64_image field into the flattened_data map
-                    flattened_data.insert(
-                        "base64_image".to_string(),
-                        serde_json::json!(base64_image),
-                    );
+                    flattened_data
+                        .insert("base64_image".to_string(), serde_json::json!(base64_image));
 
                     // Convert the Map directly to a Value for serialization
                     let combined_stats = serde_json::Value::Object(flattened_data);

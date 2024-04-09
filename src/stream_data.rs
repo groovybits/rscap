@@ -191,9 +191,15 @@ fn i422_10le_to_rgb(width: usize, height: usize, i422_data: &[u8]) -> Vec<u8> {
 }
 
 #[cfg(feature = "gst")]
-pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>, save_images: bool) {
+pub fn pull_images(
+    appsink: AppSink,
+    image_sender: mpsc::Sender<(Vec<u8>, u64)>,
+    save_images: bool,
+    sample_interval: u64,
+) {
     tokio::spawn(async move {
         let mut frame_count = 0;
+        let mut last_processed_pts = 0;
 
         loop {
             let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
@@ -201,6 +207,13 @@ pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>, save_i
                 if let Some(buffer) = sample.buffer() {
                     let caps = sample.caps().expect("Sample without caps");
                     let info = VideoInfo::from_caps(&caps).expect("Failed to parse caps");
+                    let pts = buffer.pts().map_or(0, |pts| pts.nseconds());
+
+                    // Check if the sample interval is set and skip frames if necessary
+                    if pts - last_processed_pts < sample_interval as u64 {
+                        continue;
+                    }
+                    last_processed_pts = pts;
 
                     // print entire videoinfo struct
                     log::debug!("Video Frame Info: {:?}", info);
@@ -256,7 +269,7 @@ pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>, save_i
                                 .encode_image(&resized_image)
                                 .expect("JPEG encoding failed");
 
-                            if let Err(err) = image_sender.send(jpeg_data).await {
+                            if let Err(err) = image_sender.send((jpeg_data, pts as u64)).await {
                                 log::error!("Failed to send image data through channel: {}", err);
                                 // exit the loop if the receiver is gone
                                 break;
@@ -371,6 +384,7 @@ pub struct StreamData {
     pub kernel_version: String,
     pub os_version: String,
     pub has_image: u8,
+    pub image_pts: u64,
 }
 
 impl Clone for StreamData {
@@ -431,6 +445,7 @@ impl Clone for StreamData {
             kernel_version: self.kernel_version.clone(),
             os_version: self.os_version.clone(),
             has_image: self.has_image,
+            image_pts: self.image_pts,
         }
     }
 }
@@ -514,6 +529,7 @@ impl StreamData {
             kernel_version: system_stats.kernel_version,
             os_version: system_stats.os_version,
             has_image: 0,
+            image_pts: 0,
         }
     }
     // set RTP fields

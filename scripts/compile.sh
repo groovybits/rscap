@@ -48,6 +48,7 @@ echo "Detected OS: $OS"
 if ! command -v cargo &> /dev/null
 then
     install_rust
+    source ~/.profile
 fi
 
 # CentOS 7 specific setup
@@ -83,6 +84,27 @@ if [ "$OS" = "Linux" ]; then
     # Add elif blocks here for other specific Linux distributions
 elif [ "$OS" = "Darwin" ]; then
     echo "macOS detected."
+    # Brew RPMs
+    # check if brew binary exists
+    if ! command -v brew &> /dev/null; then
+        echo "Homebrew not found. Installing Homebrew..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    fi
+    # check if xcode-select is installed, if not install it
+    # Check if Xcode Command Line Tools are installed
+    xcode-select -p &> /dev/null
+
+    if [ $? -eq 0 ]; then
+        echo "Xcode Command Line Tools are installed."
+    else
+        echo "Xcode Command Line Tools are not installed."
+        echo "Installing Xcode Command Line Tools..."
+        xcode-select --install
+        # Note: The user will need to continue the installation process manually if required.
+    fi
+    brew install capnp zeromq
+    export CXXFLAGS="-stdlib=libc++"
+    export LDFLAGS="-lc++"
     # macOS specific setup
     # Build on macOS
     echo "Building project (macOS)..."

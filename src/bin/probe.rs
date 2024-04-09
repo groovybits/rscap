@@ -228,6 +228,7 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
         stream_data_msg.set_kernel_version(stream_data.kernel_version.as_str().into());
         stream_data_msg.set_os_version(stream_data.os_version.as_str().into());
         stream_data_msg.set_has_image(stream_data.has_image);
+        stream_data_msg.set_image_pts(stream_data.image_pts);
     }
 
     Ok(message)
@@ -460,7 +461,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.0",
+    version = "0.5.1",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {
@@ -645,6 +646,10 @@ struct Args {
     #[cfg(feature = "gst")]
     #[clap(long, env = "SAVE_IMAGES", default_value_t = false)]
     save_images: bool,
+
+    /// Image Sample Rate Ns - Image sample rate in nano seconds
+    #[clap(long, env = "IMAGE_SAMPLE_RATE_NS", default_value_t = 1_000_000_000)]
+    image_sample_rate_ns: u64,
 }
 
 // MAIN Function
@@ -1432,7 +1437,12 @@ async fn rscap() {
     #[cfg(feature = "gst")]
     process_video_packets(appsrc, video_packet_receiver);
     #[cfg(feature = "gst")]
-    pull_images(appsink, image_sender, args.save_images);
+    pull_images(
+        appsink,
+        image_sender,
+        args.save_images,
+        args.image_sample_rate_ns,
+    );
 
     // Perform TR 101 290 checks
     let mut tr101290_errors = Tr101290Errors::new();
@@ -1654,16 +1664,19 @@ async fn rscap() {
 
                     // Receive and process images
                     #[cfg(feature = "gst")]
-                    if let Ok(image_data) = image_receiver.try_recv() {
+                    if let Ok((image_data, pts)) = image_receiver.try_recv() {
                         // attach image to the stream_data.packet arc, clearing the current arc value
                         stream_data.packet = Arc::new(image_data.clone());
                         stream_data.has_image = image_data.len() as u8;
                         stream_data.packet_start = 0;
                         stream_data.packet_len = image_data.len();
+                        stream_data.image_pts = pts;
 
                         // Process the received image data
-                        log::debug!("Probe: Received a jpeg image with size: {} bytes", image_data.len());
-
+                        log::debug!(
+                            "Probe: Received a jpeg image with size: {} bytes",
+                            image_data.len()
+                        );
                     } else {
                         // zero out the packet data
                         stream_data.packet_start = 0;

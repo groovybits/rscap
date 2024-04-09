@@ -9,9 +9,13 @@ SOURCE_DEVICE=eth0
 SOURCE_PORT=10000
 TARGET_PORT=5556
 GST_PLUGIN_PATH=/opt/rscap/lib64/gstreamer-1.0
-PROBE_BIN=/target/$BUILD/probe
-if [ -f "/opt/rscap/bin/probe" ]; then
+if [ -f "target/$BUILD/probe" ]; then
+    PROBE_BIN=target/$BUILD/probe
+elif [ -f "/opt/rscap/bin/probe" ]; then
     PROBE_BIN=/opt/rscap/bin/probe
+else
+    echo "No probe binary found in /opt/rscap/bin or target/$BUILD/"
+    exit 1
 fi
 
 sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
