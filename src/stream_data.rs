@@ -191,9 +191,15 @@ fn i422_10le_to_rgb(width: usize, height: usize, i422_data: &[u8]) -> Vec<u8> {
 }
 
 #[cfg(feature = "gst")]
-pub fn pull_images(appsink: AppSink, image_sender: mpsc::Sender<Vec<u8>>, save_images: bool) {
+pub fn pull_images(
+    appsink: AppSink,
+    image_sender: mpsc::Sender<Vec<u8>>,
+    save_images: bool,
+    sample_interval: u64,
+) {
     tokio::spawn(async move {
         let mut frame_count = 0;
+        let mut last_processed_pts = 0;
 
         loop {
             let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);

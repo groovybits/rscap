@@ -645,6 +645,10 @@ struct Args {
     #[cfg(feature = "gst")]
     #[clap(long, env = "SAVE_IMAGES", default_value_t = false)]
     save_images: bool,
+
+    /// Image Sample Rate Ns - Image sample rate in nano seconds
+    #[clap(long, env = "IMAGE_SAMPLE_RATE_NS", default_value_t = 1_000_000_000)]
+    image_sample_rate_ns: u64,
 }
 
 // MAIN Function
@@ -1432,7 +1436,12 @@ async fn rscap() {
     #[cfg(feature = "gst")]
     process_video_packets(appsrc, video_packet_receiver);
     #[cfg(feature = "gst")]
-    pull_images(appsink, image_sender, args.save_images);
+    pull_images(
+        appsink,
+        image_sender,
+        args.save_images,
+        args.image_sample_rate_ns,
+    );
 
     // Perform TR 101 290 checks
     let mut tr101290_errors = Tr101290Errors::new();
@@ -1662,8 +1671,10 @@ async fn rscap() {
                         stream_data.packet_len = image_data.len();
 
                         // Process the received image data
-                        log::debug!("Probe: Received a jpeg image with size: {} bytes", image_data.len());
-
+                        log::debug!(
+                            "Probe: Received a jpeg image with size: {} bytes",
+                            image_data.len()
+                        );
                     } else {
                         // zero out the packet data
                         stream_data.packet_start = 0;
