@@ -1326,7 +1326,9 @@ async fn main() {
                             total_cc_errors_current += stream_data.current_error_count as u64;
                             source_port = stream_data.source_port as u32;
                             source_ip = stream_data.source_ip.clone();
-                            image_pts = stream_data.image_pts;
+                            if stream_data.has_image > 0 && stream_data.image_pts > 0 {
+                                image_pts = stream_data.image_pts;
+                            }
                             stream_count += 1;
                         }
                     }
