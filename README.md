@@ -38,6 +38,10 @@ TODO:
 
 Use .env and/or command line args to override the default/env variables.
 
+## RPM available for CentOS 7
+
+[specs/rscap.spec](specs/rscap.spec) Builds for CentOS 7 with all the Gstreamer build dependencies handled for you.
+
 ## Building and executing (see [scripts/compile.sh](scripts/compile.sh) for extensible setup Linux/MacOS)
 
 Install Rust via Homebrew on MacOS or from Rust main website (preferred from main website). Also the compile.sh script will install the necessary dependencies for CentOS 7.9 and MacOS.
