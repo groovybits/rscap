@@ -207,16 +207,10 @@ pub fn pull_images(
                 if let Some(buffer) = sample.buffer() {
                     let caps = sample.caps().expect("Sample without caps");
                     let info = VideoInfo::from_caps(&caps).expect("Failed to parse caps");
-                    let pts = match buffer.pts() {
-                        Some(pts) => match pts.nseconds() {
-                            Some(nseconds) => nseconds,
-                            None => 0,
-                        },
-                        None => 0,
-                    };
+                    let pts = buffer.pts().map_or(0, |pts| pts.nseconds());
 
                     // Check if the sample interval is set and skip frames if necessary
-                    if pts - last_processed_pts < sample_interval as i64 {
+                    if pts - last_processed_pts < sample_interval as u64 {
                         continue;
                     }
                     last_processed_pts = pts;
