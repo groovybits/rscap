@@ -314,8 +314,9 @@ echo "------------------------------------------------------------"
 
 %files
 %defattr(-,root,root,-)
-/opt/rscap/*
-%exclude /opt/rscap/share/*
+/opt/rscap/bin/
+/opt/rscap/lib/
+/opt/rscap/lib64/
 
 %changelog
 * Mon Apr 08 2024 Chris Kennedy <chris@rscap.com>
