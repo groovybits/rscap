@@ -16,6 +16,7 @@ use async_zmq;
 //use chrono::TimeZone;
 use clap::Parser;
 use log::{debug, error, info};
+use base64::{Engine as _, engine::general_purpose};
 use rdkafka::admin::{AdminClient, AdminOptions, NewTopic};
 use rdkafka::client::DefaultClientContext;
 use rdkafka::config::ClientConfig;
@@ -514,7 +515,7 @@ async fn produce_message(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.4.1",
+    version = "0.5.0",
     about = "RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe."
 )]
 struct Args {
@@ -1204,6 +1205,8 @@ async fn main() {
                     hexdump(&data_msg_arc, 0, data_msg.len());
                 }
 
+                let mut base64_image = String::new();
+
                 // Check if Decoding or if Demuxing
                 if args.recv_raw_stream {
                     // Initialize an Option<File> to None
@@ -1244,7 +1247,7 @@ async fn main() {
                     // remove existing .jpg if given first
                     let output_file_without_jpg = output_file.replace(".jpg", "");
                     if data_msg.len() > 0 && stream_data.has_image > 0 {
-                        log::info!("Data msg is {} size", data_msg.len());
+                        log::debug!("Monitor: Jpeg image received: {} size", data_msg.len());
                         let output_file_incremental = format!(
                             "{}_{:08}.jpg",
                             output_file_without_jpg,
@@ -1268,6 +1271,9 @@ async fn main() {
                             }
                             file.write_all(&data_msg).unwrap();
                         }
+
+                        // Encode the JPEG image as Base64
+                        base64_image = general_purpose::STANDARD.encode(&data_msg);
                     }
                 }
 
@@ -1361,6 +1367,12 @@ async fn main() {
                     flattened_data.insert("source_ip".to_string(), serde_json::json!(source_ip));
                     flattened_data
                         .insert("source_port".to_string(), serde_json::json!(source_port));
+
+                    // Insert the base64_image field into the flattened_data map
+                    flattened_data.insert(
+                        "base64_image".to_string(),
+                        serde_json::json!(base64_image),
+                    );
 
                     // Convert the Map directly to a Value for serialization
                     let combined_stats = serde_json::Value::Object(flattened_data);
