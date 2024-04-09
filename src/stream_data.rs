@@ -29,12 +29,18 @@ use log::{debug, error, info};
 use rtp::RtpReader;
 use rtp_rs as rtp;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::{fmt, sync::Arc, sync::Mutex};
 #[cfg(feature = "gst")]
 use tokio::sync::mpsc;
 
+const IAT_CAPTURE_WINDOW_SIZE: usize = 1000;
+
 lazy_static! {
     static ref PID_MAP: Mutex<AHashMap<u16, Arc<StreamData>>> = Mutex::new(AHashMap::new());
+    static ref IAT_CAPTURE_WINDOW: Mutex<VecDeque<u64>> =
+        Mutex::new(VecDeque::with_capacity(IAT_CAPTURE_WINDOW_SIZE));
+    static ref IAT_CAPTURE_PEAK: Mutex<u64> = Mutex::new(0);
 }
 
 #[cfg(feature = "gst")]
@@ -385,6 +391,7 @@ pub struct StreamData {
     pub os_version: String,
     pub has_image: u8,
     pub image_pts: u64,
+    pub capture_iat_max: u64,
 }
 
 impl Clone for StreamData {
@@ -446,6 +453,7 @@ impl Clone for StreamData {
             os_version: self.os_version.clone(),
             has_image: self.has_image,
             image_pts: self.image_pts,
+            capture_iat_max: self.capture_iat_max,
         }
     }
 }
@@ -530,6 +538,7 @@ impl StreamData {
             os_version: system_stats.os_version,
             has_image: 0,
             image_pts: 0,
+            capture_iat_max: capture_iat,
         }
     }
     // set RTP fields
@@ -573,6 +582,34 @@ impl StreamData {
     }
     pub fn update_capture_iat(&mut self, capture_iat: u64) {
         self.capture_iat = capture_iat;
+
+        // Store the IAT capture value in the global rolling window
+        let mut iat_capture_window = IAT_CAPTURE_WINDOW.lock().unwrap();
+        iat_capture_window.push_back(capture_iat);
+        if iat_capture_window.len() > IAT_CAPTURE_WINDOW_SIZE {
+            iat_capture_window.pop_front();
+        }
+
+        // Calculate the peak IAT within the global rolling window
+        let peak_iat = *iat_capture_window.iter().max().unwrap_or(&0);
+        *IAT_CAPTURE_PEAK.lock().unwrap() = peak_iat;
+
+        // Update the capture_iat_max field based on the peak IAT value
+        if peak_iat > self.capture_iat_max {
+            self.capture_iat_max = peak_iat;
+        } else if peak_iat < self.capture_iat_max {
+            // If the peak IAT value is less than the current capture_iat_max,
+            // update capture_iat_max to the new peak value
+            self.capture_iat_max = peak_iat;
+        }
+
+        // If the global rolling window is full and the oldest value is equal to capture_iat_max,
+        // recalculate capture_iat_max by finding the new maximum value in the window
+        if iat_capture_window.len() == IAT_CAPTURE_WINDOW_SIZE
+            && *iat_capture_window.front().unwrap() == self.capture_iat_max
+        {
+            self.capture_iat_max = *iat_capture_window.iter().max().unwrap_or(&0);
+        }
     }
     pub fn update_source_ip(&mut self, source_ip: String) {
         self.source_ip = source_ip;
@@ -1021,6 +1058,7 @@ pub fn process_packet(
                     system_stats,
                 ));
                 Arc::make_mut(&mut stream_data).update_stats(packet.len());
+                Arc::make_mut(&mut stream_data).update_capture_iat(stream_data_packet.capture_iat);
 
                 // print out each field of structure
                 info!("STATUS::PACKET:ADD[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
@@ -1132,6 +1170,7 @@ pub fn update_pid_map(
                     ));
                     // update stream_data stats
                     Arc::make_mut(&mut stream_data).update_stats(pmt_packet.len());
+                    Arc::make_mut(&mut stream_data).update_capture_iat(capture_iat);
 
                     // print out each field of structure
                     info!("STATUS::STREAM:CREATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
@@ -1333,6 +1372,7 @@ pub fn process_smpte2110_packet(
 
                 // Update StreamData stats and RTP fields
                 stream_data.update_stats(rtp_payload_length);
+                stream_data.update_capture_iat(capture_iat);
                 stream_data.set_rtp_fields(
                     timestamp,
                     payload_type,
@@ -1417,6 +1457,7 @@ pub fn process_mpegts_packet(
                 system_stats,
             );
             stream_data.update_stats(packet_size);
+            stream_data.update_capture_iat(capture_iat);
             streams.push(stream_data);
         } else {
             error!("ProcessPacket: Not MPEG-TS");

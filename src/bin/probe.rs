@@ -229,6 +229,7 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
         stream_data_msg.set_os_version(stream_data.os_version.as_str().into());
         stream_data_msg.set_has_image(stream_data.has_image);
         stream_data_msg.set_image_pts(stream_data.image_pts);
+        stream_data_msg.set_capture_iat_max(stream_data.capture_iat_max);
     }
 
     Ok(message)
@@ -461,7 +462,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.1",
+    version = "0.5.2",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {

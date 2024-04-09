@@ -1,5 +1,5 @@
 Name:           rscap
-Version:        0.5.1
+Version:        0.5.2
 Release:        1%{?dist}
 Summary:        RsCap and GStreamer with essential dependencies
 
@@ -25,6 +25,7 @@ run_with_scl() {
 BUILD_DIR=%{_builddir}
 mkdir -p $BUILD_DIR
 cd $BUILD_DIR
+rm -rf $BUILD_DIR/*
 
 # Define versions for dependencies of GStreamer
 GLIB_VERSION=2.56.4
@@ -34,7 +35,7 @@ LIBFFI_VERSION=3.3
 NASM_VERSION=2.15.05
 FFMPEG_VERSION=5.1.4
 RUST_VERSION=1.77.1
-RSCAP_VERSION=0.5.1
+RSCAP_VERSION=0.5.2
 
 # Define the installation prefix
 PREFIX=$BUILD_DIR/opt/rscap

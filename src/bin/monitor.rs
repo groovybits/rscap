@@ -232,6 +232,7 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         os_version: reader.get_os_version()?.to_string()?,
         has_image: reader.get_has_image(),
         image_pts: reader.get_image_pts(),
+        capture_iat_max: reader.get_capture_iat_max(),
     };
 
     Ok(stream_data)
@@ -402,12 +403,8 @@ fn flatten_streams(
             json!(stream_data.capture_iat),
         );
         flat_structure.insert(
-            format!("{}.source_ip", prefix),
-            json!(stream_data.source_ip),
-        );
-        flat_structure.insert(
-            format!("{}.source_port", prefix),
-            json!(stream_data.source_port),
+            format!("{}.capture_iat_max", prefix),
+            json!(stream_data.capture_iat_max),
         );
 
         // Add system stats fields to the flattened structure
@@ -520,7 +517,7 @@ async fn produce_message(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.1",
+    version = "0.5.2",
     about = "RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe."
 )]
 struct Args {
@@ -1311,21 +1308,27 @@ async fn main() {
                     // Initialize variables to accumulate global averages
                     let mut total_bitrate_avg: u64 = 0;
                     let mut total_iat_avg: u64 = 0;
+                    let mut total_iat_max: u64 = 0;
                     let mut total_cc_errors: u64 = 0;
                     let mut total_cc_errors_current: u64 = 0;
                     let mut stream_count: u64 = 0;
                     let mut source_ip: String = String::new();
                     let mut source_port: u32 = 0;
+                    let mut image_pts: u64 = 0;
 
                     // Process each stream to accumulate averages
                     for (_, grouping) in stream_groupings.iter() {
                         for stream_data in &grouping.stream_data_list {
                             total_bitrate_avg += stream_data.bitrate_avg as u64;
                             total_iat_avg += stream_data.capture_iat;
+                            total_iat_max += stream_data.capture_iat_max;
                             total_cc_errors += stream_data.error_count as u64;
                             total_cc_errors_current += stream_data.current_error_count as u64;
                             source_port = stream_data.source_port as u32;
                             source_ip = stream_data.source_ip.clone();
+                            if stream_data.has_image > 0 && stream_data.image_pts > 0 {
+                                image_pts = stream_data.image_pts;
+                            }
                             stream_count += 1;
                         }
                     }
@@ -1337,6 +1340,13 @@ async fn main() {
                     // avg IAT
                     let global_iat_avg = if stream_count > 0 {
                         total_iat_avg as f64 / stream_count as f64
+                    } else {
+                        0.0
+                    };
+
+                    // max IAT
+                    let global_iat_max = if stream_count > 0 {
+                        total_iat_max as f64 / stream_count as f64
                     } else {
                         0.0
                     };
@@ -1359,6 +1369,10 @@ async fn main() {
                         serde_json::json!(global_iat_avg),
                     );
                     flattened_data.insert(
+                        "iat_max_global".to_string(),
+                        serde_json::json!(global_iat_max),
+                    );
+                    flattened_data.insert(
                         "cc_errors_global".to_string(),
                         serde_json::json!(global_cc_errors),
                     );
@@ -1375,6 +1389,7 @@ async fn main() {
                         .insert("source_port".to_string(), serde_json::json!(source_port));
 
                     // Insert the base64_image field into the flattened_data map
+                    flattened_data.insert("image_pts".to_string(), serde_json::json!(image_pts));
                     flattened_data
                         .insert("base64_image".to_string(), serde_json::json!(base64_image));
 
