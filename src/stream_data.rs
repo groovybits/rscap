@@ -193,7 +193,7 @@ fn i422_10le_to_rgb(width: usize, height: usize, i422_data: &[u8]) -> Vec<u8> {
 #[cfg(feature = "gst")]
 pub fn pull_images(
     appsink: AppSink,
-    image_sender: mpsc::Sender<Vec<u8>, u64>,
+    image_sender: mpsc::Sender<(Vec<u8>, u64)>,
     save_images: bool,
     sample_interval: u64,
 ) {
@@ -207,13 +207,13 @@ pub fn pull_images(
                 if let Some(buffer) = sample.buffer() {
                     let caps = sample.caps().expect("Sample without caps");
                     let info = VideoInfo::from_caps(&caps).expect("Failed to parse caps");
-                    let pts = buffer.pts().unwrap();
+                    let pts = buffer.pts().unwrap().nanoseconds().unwrap();
 
                     // Check if the sample interval is set and skip frames if necessary
-                    if pts.nseconds().unwrap() - last_processed_pts < sample_interval as i64 {
+                    if pts - last_processed_pts < sample_interval as i64 {
                         continue;
                     }
-                    last_processed_pts = pts.nseconds().unwrap();
+                    last_processed_pts = pts;
 
                     // print entire videoinfo struct
                     log::debug!("Video Frame Info: {:?}", info);

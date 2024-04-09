@@ -1664,7 +1664,7 @@ async fn rscap() {
 
                     // Receive and process images
                     #[cfg(feature = "gst")]
-                    if let Ok(image_data, pts) = image_receiver.try_recv() {
+                    if let Ok((image_data, pts)) = image_receiver.try_recv() {
                         // attach image to the stream_data.packet arc, clearing the current arc value
                         stream_data.packet = Arc::new(image_data.clone());
                         stream_data.has_image = image_data.len() as u8;

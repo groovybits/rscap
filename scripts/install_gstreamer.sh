@@ -303,7 +303,9 @@ fi
             --extra-cflags="-I$PREFIX/include" --extra-ldflags="-L$PREFIX/lib"
         run_with_scl make
         make install
-        sudo ldconfig
+        if [ "$OS" = "Linux" ]; then
+            sudo ldconfig
+        fi
         cd ..
     fi
     touch ffmpeg-installed.done
