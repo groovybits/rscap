@@ -270,6 +270,7 @@ cd rscap
 git checkout $RSCAP_VERSION
 
 # Remove existing binaries, we do not need them
+rm -rf $PREFIX/cargo
 rm -rf $PREFIX/bin/*
 rm -rf $PREFIX/share/doc
 rm -rf $PREFIX/share/gtk-doc
@@ -277,7 +278,9 @@ rm -rf $PREFIX/share/man
 rm -rf $PREFIX/share/ffmpeg/examples
 rm -rf $PREFIX/lib/rustlib
 rm -rf $PREFIX/lib/*.a
+rm -rf $PREFIX/lib/pkgconfig
 rm -rf $PREFIX/lib64/*.a
+rm -rf $PREFIX/lib64/pkgconfig
 rm -rf $PREFIX/include
 strip $PREFIX/lib/*.so
 
@@ -310,6 +313,7 @@ echo "Finished installing RsCap."
 echo "------------------------------------------------------------"
 
 %files
+%defattr(-,root,root,-)
 /opt/rscap/*
 
 %changelog
