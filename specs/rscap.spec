@@ -274,6 +274,7 @@ rm -rf $PREFIX/bin/*
 rm -rf $PREFIX/share/doc
 rm -rf $PREFIX/share/gtk-doc
 rm -rf $PREFIX/share/man
+rm -rf $PREFIX/share/ffmpeg/examples
 rm -rf $PREFIX/lib/rustlib
 rm -rf $PREFIX/lib/*.a
 rm -rf $PREFIX/lib64/*.a
