@@ -289,8 +289,8 @@ echo "---"
 # Copy RsCap to the RPM_BUILD_ROOT
 rm -rf $RPM_BUILD_ROOT
 mkdir -p $RPM_BUILD_ROOT/opt/rscap
-cp -R $PREFIX/* $RPM_BUILD_ROOT/opt/rscap/
-rm -rf $PREFIX
+cp -R $BUILD_DIR/opt/rscap/* $RPM_BUILD_ROOT/opt/rscap/
+rm -rf $BUILD_DIR/opt
 
 echo "------------------------------------------------------------"
 echo "Finished installing RsCap."
