@@ -22,7 +22,7 @@ run_with_scl() {
     scl enable devtoolset-11 -- "$@"
 }
 
-BUILD_DIR=$(pwd)/build
+BUILD_DIR=%{_builddir}
 mkdir -p $BUILD_DIR
 cd $BUILD_DIR
 
@@ -303,10 +303,9 @@ echo "Installing RsCap..."
 echo "---"
 
 # Copy RsCap to the RPM_BUILD_ROOT
-rm -rf $RPM_BUILD_ROOT
-mkdir -p $RPM_BUILD_ROOT/opt/rscap
-cp -R $BUILD_DIR/opt/rscap/* $RPM_BUILD_ROOT/opt/rscap/
-rm -rf $BUILD_DIR/opt
+rm -rf %{buildroot}
+mkdir -p %{buildroot}/opt/rscap
+cp -R %{_builddir}/opt/rscap/* %{buildroot}/opt/rscap/
 
 echo "------------------------------------------------------------"
 echo "Finished installing RsCap."
