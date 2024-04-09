@@ -10,29 +10,31 @@ Send metrics to Kafka from the monitor process if requested for long-term storag
 
 Optionally the monitor process can output final json metrics to kafka for distributed probes sending to some kafka based centralized processing system for the data collected.
 
-Uses H264_Reader <https://github.com/dholroyd/h264-reader> for NAL parsing.
+Gstreamer support with --features gst `make build_gst` for using Gstreamer for stream demuxing/decoding. Currently `--extract-images` will extract images from the stream and save them to disk or send them off to a kafka feed as base64 with json metadata. See the scripts/monitor.sh and scripts/probe.sh for examples of how to use RsCap in a common use case.
+
+Can enable MPEG2TS_Reader and H264_Reader crates from <https://github.com/dholroyd> for NAL parsing. The information from the SPS/PPS and other NAL data isn't currently used but will be added to the monitor process eventually to allow for a more detailed analysis of the stream.
 
 TODO:
+
 - Add AAC Parsing support <https://github.com/dholroyd/adts-reader> for Audio analysis.
 - Add SCTE35 Trigger support <https://github.com/m2amedia/scte35dump> for Ad Cues.
 - Integrate usage of MpegTS-Reader support <https://github.com/dholroyd/mpeg2ts-reader> for more advanced demuxing.
 - Add System metrics <https://github.com/dholroyd/nix/tree/master> for view of OS health and load.
 - Add Network metrics via pcap potentially or Rust crate, have not located one yet.
 - Add HLS input support <https://github.com/dholroyd/hls_m3u8> for streams.
-- Add decoder for viewing thumbnail of stream, potentially using <https://github.com/rust-av/rust-av> Rust AV pure rust, else binding libav C.
 
 ![rscap](https://storage.googleapis.com/gaib/2/rscap/rscap.png)
 
 ## This consists of two programs, a probe and a monitor client.
 
 - The [src/bin/probe.rs](src/bin/probe.rs) takes MpegTS or SMPTE2110 via Packet Capture and publishes
-batches of the MpegTS 188 / SMPTE2110 sized byte packets to a ZeroMQ output.
+  batches of the MpegTS 188 / SMPTE2110 sized byte packets to a ZeroMQ output.
 
 - The [src/bin/probe.rs](src/bin/probe.rs) has zero copy of the pcap buffers for the life cycle. They are passed through to the monitor module with Cap'n Proto allowing highly efficient capture and processing of both MpegTS and SMPTE2110 streams (WIP: needs work and testing to completely optimize the behavior).
 
 - The [src/bin/monitor.rs](src/bin/monitor.rs) client reads from the ZeroMQ socket and writes out a
-a file containing the MpegTS stream matching the one
-captured by the probe.
+  a file containing the MpegTS stream matching the one
+  captured by the probe.
 
 ## Configuration with environment variables using [.env](.env.example)
 
@@ -40,25 +42,10 @@ Use .env and/or command line args to override the default/env variables.
 
 ## Building and executing (see [scripts/compile.sh](scripts/compile.sh) for extensible setup Linux/MacOS)
 
-Install Rust via Homebrew on MacOS or from Rust main website (preferred from main website)...
-
-<https://www.rust-lang.org/tools/install>
+Install Rust via Homebrew on MacOS or from Rust main website (preferred from main website). Also the compile.sh script will install the necessary dependencies for CentOS 7.9 and MacOS.
 
 ```text
-## How to install Rust ##
-
-# --- CentOS 7.9
-sudo yum group install "Development Tools"
-sudo yum install centos-release-scl
-sudo yum install devtoolset-11
-scl enable devtoolset-11 bash
-# --- End of CentOS 7.9
-
-# --- MacOS Brew
-brew install rust
-
-# --- BEST OPTION...
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+scripts/compile.sh gst # for Gstreamer support
 ```
 
 On Linux update libpcap to the newest version (optional)...
@@ -84,18 +71,11 @@ sudo make install
 Build and run the pcap stream probe [./scripts/compile.sh](scripts/compile.sh) (script takes care of most issues)
 
 ```text
-# Compile release,release-with-debug, and release  versions in target/ directories.
+# Compile the probe and monitor
 ./scripts/compile.sh
 
-# Use ENV Variable RUST_LOG= for logging level and cmdline args
-sudo RUST_LOG=info target/release/probe \
-         --source-ip 224.0.0.1 \
-         --source-port 10000 \
-         --target-ip 127.0.0.1 \
-         --target-port 5556 \
-         --source-device eth0 \
-         --debug
-
+# Run the probe
+./scripts/probe.sh
 ```
 
 Output by default is the original data packet, you can add the json header with --send-json-header.
@@ -103,147 +83,20 @@ Output by default is the original data packet, you can add the json header with 
 Build and run the zmq capture monitor client...
 
 ```text
-# Use ENV Variable RUST_LOG= for logging level and cmdline args
-RUST_LOG=info target/release/monitor \
-         --source-ip 127.0.0.1 \
-         --source-port 5556 \
-         --output_file capture.ts \
-         --debug
-
-```
-
-Check the output file capture.ts (or what you set in .env or environment variables)
-
-```text
-ffmpeg -i capture.ts
+# Run the monitor
+./scripts/monitor.sh
 ```
 
 ## Kafka output of json metrics from the monitor process after processing and extraction
 
-- [Kafka Schema](schema/kafka.json) That is sent into Kafka
-- [Kafka / Prometheus / Grafana / JS Dashboard UI](probe_ui) Allowing remove viewing of dashboards in Grafana/Prometheus/JS (WIP: not conforming schemawise yet)
+- [Kafka Schema](test_data/kafka.json) That is sent into Kafka
 
 ```text
-target/release/monitor \
+scripts/monitor:
+
         --kafka-broker sun:9092 \
         --kafka-topic test \
         --send-to-kafka
-```
-
-## Probe Command Line Options (as of 01/04/2024)
-
-```text
-RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap.
-
-Usage: probe [OPTIONS]
-
-Options:
-      --batch-size <BATCH_SIZE>
-          Sets the batch size [env: BATCH_SIZE=] [default: 7]
-      --payload-offset <PAYLOAD_OFFSET>
-          Sets the payload offset [env: PAYLOAD_OFFSET=] [default: 42]
-      --packet-size <PACKET_SIZE>
-          Sets the packet size [env: PACKET_SIZE=] [default: 188]
-      --read-time-out <READ_TIME_OUT>
-          Sets the read timeout [env: READ_TIME_OUT=] [default: 60000]
-      --target-port <TARGET_PORT>
-          Sets the target port [env: TARGET_PORT=] [default: 5556]
-      --target-ip <TARGET_IP>
-          Sets the target IP [env: TARGET_IP=] [default: 127.0.0.1]
-      --source-device <SOURCE_DEVICE>
-          Sets the source device [env: SOURCE_DEVICE=] [default: ]
-      --source-ip <SOURCE_IP>
-          Sets the source IP [env: SOURCE_IP=] [default: 224.0.0.200]
-      --source-protocol <SOURCE_PROTOCOL>
-          Sets the source protocol [env: SOURCE_PROTOCOL=] [default: udp]
-      --source-port <SOURCE_PORT>
-          Sets the source port [env: SOURCE_PORT=] [default: 10000]
-      --debug-on
-          Sets the debug mode [env: DEBUG=]
-      --silent
-          Sets the silent mode [env: SILENT=]
-      --use-wireless
-          Sets if wireless is used [env: USE_WIRELESS=]
-      --send-raw-stream
-          Sets if Raw Stream should be sent [env: SEND_RAW_STREAM=]
-      --packet-count <PACKET_COUNT>
-          number of packets to capture [env: PACKET_COUNT=] [default: 0]
-      --no-progress
-          Turn off progress output dots [env: NO_PROGRESS=]
-      --no-zmq
-          Turn off ZeroMQ send [env: NO_ZMQ=]
-      --smpte2110
-          Force smpte2110 mode [env: SMPT2110=]
-      --promiscuous
-          Use promiscuous mode [env: PROMISCUOUS=]
-      --show-tr101290
-          Show the TR101290 p1, p2 and p3 errors if any [env: SHOW_TR101290=]
-      --buffer-size <BUFFER_SIZE>
-          Sets the pcap buffer size [env: BUFFER_SIZE=] [default: 1358000]
-      --immediate-mode
-          PCAP immediate mode [env: IMMEDIATE_MODE=]
-      --pcap-stats
-          PCAP output capture stats mode [env: PCAP_STATS=]
-      --pcap-channel-size <PCAP_CHANNEL_SIZE>
-          MPSC Channel Size for ZeroMQ [env: PCAP_CHANNEL_SIZE=] [default: 1000]
-      --zmq-channel-size <ZMQ_CHANNEL_SIZE>
-          MPSC Channel Size for PCAP [env: ZMQ_CHANNEL_SIZE=] [default: 1000]
-      --decoder-channel-size <DECODER_CHANNEL_SIZE>
-          MPSC Channel Size for Decoder [env: DECODER_CHANNEL_SIZE=] [default: 1000]
-      --dpdk
-          DPDK enable [env: DPDK=]
-      --dpdk-port-id <DPDK_PORT_ID>
-          DPDK Port ID [env: DPDK_PORT_ID=] [default: 0]
-      --ipc-path <IPC_PATH>
-          IPC Path for ZeroMQ [env: IPC_PATH=]
-      --output-file <OUTPUT_FILE>
-          Output file for ZeroMQ [env: OUTPUT_FILE=] [default: ]
-      --no-zmq-thread
-          Turn off the ZMQ thread [env: NO_ZMQ_THREAD=]
-      --zmq-batch-size <ZMQ_BATCH_SIZE>
-          ZMQ Batch size [env: ZMQ_BATCH_SIZE=] [default: 7]
-      --decode-video
-          Decode Video [env: DECODE_VIDEO=]
-      --decode-video-batch-size <DECODE_VIDEO_BATCH_SIZE>
-          Decode Video Batch Size [env: DECODE_VIDEO_BATCH_SIZE=] [default: 7]
-      --debug-smpte2110
-          Debug SMPTE2110 [env: DEBUG_SMPTE2110=]
-      --debug-nals
-          Debug NALs [env: DEBUG_NALS=]
-      --debug-nal-types <DEBUG_NAL_TYPES>
-          List of NAL types to debug, comma separated: sps, pps, pic_timing, sei, slice, unknown [env: DEBUG_NAL_TYPES=] [default: ]
-      --parse-short-nals
-          [env: PARSE_SHORT_NALS=]
-  -h, --help
-          Print help
-  -V, --version
-          Print version
-```
-
-## Monitor Command Line Options (as of 01/04/2024)
-
-```text
-RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe.
-
-Usage: monitor [OPTIONS]
-
-Options:
-      --source-port <SOURCE_PORT>      Sets the target port [env: TARGET_PORT=] [default: 5556]
-      --source-ip <SOURCE_IP>          Sets the target IP [env: TARGET_IP=] [default: 127.0.0.1]
-      --debug-on                       Sets the debug mode [env: DEBUG=]
-      --silent                         Sets the silent mode [env: SILENT=]
-      --recv-raw-stream                Sets if Raw Stream should be sent [env: RECV_RAW_STREAM=]
-      --packet-count <PACKET_COUNT>    number of packets to capture [env: PACKET_COUNT=] [default: 0]
-      --no-progress                    Turn off progress output dots [env: NO_PROGRESS=]
-      --output-file <OUTPUT_FILE>      Output Filename [env: OUTPUT_FILE=] [default: ]
-      --kafka-broker <KAFKA_BROKER>    Kafka Broker [env: KAFKA_BROKER=] [default: localhost:9092]
-      --kafka-topic <KAFKA_TOPIC>      Kafka Topic [env: KAFKA_TOPIC=] [default: rscap]
-      --send-to-kafka                  Send to Kafka if true [env: SEND_TO_KAFKA=]
-      --kafka-timeout <KAFKA_TIMEOUT>  Kafka timeout to drop packets [env: KAFKA_TIMEOUT=] [default: 0]
-      --ipc-path <IPC_PATH>            IPC Path for ZeroMQ [env: IPC_PATH=]
-      --show-os-stats                  Show OS [env: SHOW_OS_STATS=]
-  -h, --help                           Print help
-  -V, --version                        Print version
 ```
 
 ## Profiling with Intel Vtune (Linux/Windows)
