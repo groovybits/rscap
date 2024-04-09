@@ -53,4 +53,5 @@ struct StreamDataCapnp {
     osVersion @49 :Text;
     hasImage @50 :UInt8;
     imagePts @51 :UInt64;
+    captureIatMax @52 :UInt64;
 }
