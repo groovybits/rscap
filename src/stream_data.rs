@@ -208,10 +208,7 @@ pub fn pull_images(
                     let caps = sample.caps().expect("Sample without caps");
                     let info = VideoInfo::from_caps(&caps).expect("Failed to parse caps");
                     let pts = match buffer.pts() {
-                        Some(pts) => match pts.nseconds() {
-                            Some(nseconds) => nseconds,
-                            None => 0,
-                        },
+                        Some(pts) => pts.nseconds().unwrap_or(0) as u64,
                         None => 0,
                     };
 
