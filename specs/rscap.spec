@@ -1,7 +1,3 @@
-%define _sourcedir %(pwd)
-%define rustdir %{_sourcedir}/rust
-%define rust_version 1.77.1
-
 Name:           rscap
 Version:        0.5.0
 Release:        1%{?dist}
@@ -17,11 +13,6 @@ Requires:       glib2, orc
 RsCap is a rust based pcap for MpegTS and SMPTE2110 UDP/TCP Broadcast Feeds
 
 %prep
-# Clone RsCap repository and checkout the specific tag
-git clone https://github.com/groovybits/rscap.git
-cd rscap
-git checkout ${version}
-cd ..
 
 %build
 set -e
@@ -42,25 +33,34 @@ GST_VERSION=1.20.0
 LIBFFI_VERSION=3.3
 NASM_VERSION=2.15.05
 FFMPEG_VERSION=5.1.4
+RUST_VERSION=1.77.1
+RSCAP_VERSION=0.5.0
 
 # Define the installation prefix
 PREFIX=/opt/rscap
 
-# Define the PATH to include the Rust binaries
-export PATH=$PREFIX/bin:${rustdir}/bin:$PATH
-
-# For pkg-config to find .pc files
-export PKG_CONFIG_PATH=$PREFIX/lib64/pkgconfig:$PREFIX/lib/pkgconfig:/usr/lib64/pkgconfig:$PKG_CONFIG_PATH
-export LD_LIBRARY_PATH=$PREFIX/lib64:$PREFIX/lib:$LD_LIBRARY_PATH
+# Clone RsCap repository and checkout the specific tag
+git clone https://github.com/groovybits/rscap.git
+cd rscap
+git checkout $RSCAP_VERSION
+cd ..
 
 # Ensure the system has the basic build tools
 yum groupinstall -y "Development Tools"
 yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel
 
 # Download and extract Rust locally
-rm -rf  %{rustdir}
-curl --proto '=https' --tlsv1.2 -sSf https://static.rust-lang.org/dist/rust-%{rust_version}-x86_64-unknown-linux-gnu.tar.gz | tar -xz --directory=%{_sourcedir}
-mv %{_sourcedir}/rust-%{rust_version}-x86_64-unknown-linux-gnu %{rustdir}
+curl --proto '=https' --tlsv1.2 -sSf https://static.rust-lang.org/dist/rust-$RUST_VERSION-x86_64-unknown-linux-gnu.tar.gz | tar -xz --directory=$BUILD_DIR/rust
+mv $BUILD_DIR/rust-$RUST_VERSION-x86_64-unknown-linux-gnu $BUILD_DIR/rust
+
+# Define the PATH to include the Rust binaries
+export PATH=$PREFIX/bin:$BUILD_DIR/rust/bin:$PATH
+export RUSTC=$BUILD_DIR/rust/bin/rustc
+export CARGO_HOME=$BUILD_DIR/rust/cargo
+
+# For pkg-config to find .pc files
+export PKG_CONFIG_PATH=$PREFIX/lib64/pkgconfig:$PREFIX/lib/pkgconfig:/usr/lib64/pkgconfig:$PKG_CONFIG_PATH
+export LD_LIBRARY_PATH=$PREFIX/lib64:$PREFIX/lib:$LD_LIBRARY_PATH
 
 # Explicitly use cmake3 for Meson configuration
 echo "[binaries]" > meson-native-file.ini
@@ -190,7 +190,7 @@ run_with_scl cmake3 -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=$PREFIX -DENABLE_
 run_with_scl make
 make install
 ldconfig
-cd ../../..
+cd ../..
 rm -rf x265
 
 # FFmpeg
@@ -260,7 +260,15 @@ echo "------------------------------------------------------------"
 echo "Building RsCap..."
 cd rscap
 run_with_scl cargo build --features gst --release
-rm -rf  %{rustdir}
+cp target/release/probe $BUILD_DIR/bin/
+cp target/release/monitor $BUILD_DIR/bin/
+cd ..
+
+# cleanup rscap
+rm -rf $BUILD_DIR/rscap
+
+# cleanup rust
+rm -rf $BUILD_DIR/rust
 
 echo "------------------------------------------------------------"
 echo "Done building RsCap and all dependencies."
@@ -275,13 +283,6 @@ cp -R $BUILD_DIR/* $RPM_BUILD_ROOT/opt/rscap/
 echo "---"
 echo "Installing RsCap..."
 echo "---"
-
-# Copy the built binaries to the RPM_BUILD_ROOT
-cp rscap/target/release/probe $RPM_BUILD_ROOT/opt/rscap/bin/
-cp rscap/target/release/monitor $RPM_BUILD_ROOT/opt/rscap/bin/
-
-# cleanup rscap
-rm -rf rscap
 
 echo "------------------------------------------------------------"
 echo "Finished installing RsCap."
