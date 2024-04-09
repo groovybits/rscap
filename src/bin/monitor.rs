@@ -401,14 +401,6 @@ fn flatten_streams(
             format!("{}.capture_iat", prefix),
             json!(stream_data.capture_iat),
         );
-        flat_structure.insert(
-            format!("{}.source_ip", prefix),
-            json!(stream_data.source_ip),
-        );
-        flat_structure.insert(
-            format!("{}.source_port", prefix),
-            json!(stream_data.source_port),
-        );
 
         // Add system stats fields to the flattened structure
         flat_structure.insert(
@@ -1316,6 +1308,7 @@ async fn main() {
                     let mut stream_count: u64 = 0;
                     let mut source_ip: String = String::new();
                     let mut source_port: u32 = 0;
+                    let mut image_pts: u64 = 0;
 
                     // Process each stream to accumulate averages
                     for (_, grouping) in stream_groupings.iter() {
@@ -1326,6 +1319,7 @@ async fn main() {
                             total_cc_errors_current += stream_data.current_error_count as u64;
                             source_port = stream_data.source_port as u32;
                             source_ip = stream_data.source_ip.clone();
+                            image_pts = stream_data.image_pts;
                             stream_count += 1;
                         }
                     }
@@ -1375,6 +1369,7 @@ async fn main() {
                         .insert("source_port".to_string(), serde_json::json!(source_port));
 
                     // Insert the base64_image field into the flattened_data map
+                    flattened_data.insert("image_pts".to_string(), serde_json::json!(image_pts));
                     flattened_data
                         .insert("base64_image".to_string(), serde_json::json!(base64_image));
 
