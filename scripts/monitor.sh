@@ -6,8 +6,13 @@ KAFKA_BROKER=sun:9092
 
 GST_PLUGIN_PATH=/opt/rscap/lib64/gstreamer-1.0
 MONITOR_BIN=/target/$BUILD/monitor
-if [ -f "/opt/rscap/bin/probe" ]; then
+if [ -f "target/$BUILD/monitor" ]; then
+    MONITOR_BIN=target/$BUILD/monitor
+elif [ -f "/opt/rscap/bin/monitor" ]; then
     MONITOR_BIN=/opt/rscap/bin/monitor
+else
+    echo "No monitor binary found in /opt/rscap/bin or target/$BUILD/"
+    exit 1
 fi
 
 GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
