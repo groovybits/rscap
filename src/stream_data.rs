@@ -27,15 +27,15 @@ use image::imageops::resize;
 #[cfg(feature = "gst")]
 use image::Pixel;
 #[cfg(feature = "gst")]
+use image::Rgba;
+#[cfg(feature = "gst")]
 use image::{ImageBuffer, Rgb};
-#[cfg(feature = "gst")]
-use imageproc::drawing::draw_filled_rect_mut;
-#[cfg(feature = "gst")]
-use imageproc::rect::Rect;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use rtp::RtpReader;
 use rtp_rs as rtp;
+#[cfg(feature = "gst")]
+use rusttype::point;
 #[cfg(feature = "gst")]
 use rusttype::{Font, Scale};
 use serde::{Deserialize, Serialize};
@@ -207,6 +207,53 @@ fn i422_10le_to_rgb(width: usize, height: usize, i422_data: &[u8]) -> Vec<u8> {
 }
 
 #[cfg(feature = "gst")]
+fn draw_text(
+    image: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
+    font: &Font,
+    scale: &Scale,
+    text: &str,
+    x: u32,
+    y: u32,
+    text_color: Rgb<u8>,
+    background_color: Rgba<u8>,
+) {
+    let glyphs: Vec<_> = font.layout(text, *scale, point(0.0, 0.0)).collect();
+
+    for g in glyphs {
+        if let Some(bounding_box) = g.pixel_bounding_box() {
+            g.draw(|gx, gy, _v| {
+                let gx = gx as i32 + bounding_box.min.x;
+                let gy = gy as i32 + bounding_box.min.y;
+                let image_x = x as i32 + gx;
+                let image_y = y as i32 + gy;
+
+                if image_x >= 0
+                    && image_x < image.width() as i32
+                    && image_y >= 0
+                    && image_y < image.height() as i32
+                {
+                    let pixel = image.get_pixel_mut(image_x as u32, image_y as u32);
+
+                    // Blend the background color with the existing pixel color
+                    let bg_alpha = background_color[3] as f32 / 255.0;
+                    let bg_r = background_color[0] as f32 * bg_alpha;
+                    let bg_g = background_color[1] as f32 * bg_alpha;
+                    let bg_b = background_color[2] as f32 * bg_alpha;
+                    let pixel_alpha = 1.0 - bg_alpha;
+                    let blended_r = (pixel[0] as f32 * pixel_alpha + bg_r) as u8;
+                    let blended_g = (pixel[1] as f32 * pixel_alpha + bg_g) as u8;
+                    let blended_b = (pixel[2] as f32 * pixel_alpha + bg_b) as u8;
+                    *pixel = Rgb([blended_r, blended_g, blended_b]);
+
+                    // Blend the text color with the blended pixel color
+                    pixel.blend(&Rgb([text_color[0], text_color[1], text_color[2]]));
+                }
+            });
+        }
+    }
+}
+
+#[cfg(feature = "gst")]
 pub fn pull_images(
     appsink: AppSink,
     image_sender: mpsc::Sender<(Vec<u8>, u64)>,
@@ -268,64 +315,38 @@ pub fn pull_images(
                             );
 
                             // Burn in the timecode on the resized frame
+                            // Burn in the timecode on the resized frame
                             let font_data =
                                 Vec::from(include_bytes!("../fonts/TrebuchetMS.ttf") as &[u8]);
-                            let font = Font::try_from_bytes(&font_data).unwrap();
-                            let scale = Scale::uniform(16.0);
+                            let font =
+                                Font::try_from_bytes(&font_data).expect("Failed to load font");
+
+                            let scale = Scale::uniform(12.0);
                             let pts_seconds = pts as f64 / 1_000_000_000.0;
                             let pts_milliseconds = (pts_seconds * 1000.0) as u64;
                             let pts_datetime =
                                 DateTime::from_timestamp_millis(pts_milliseconds as i64)
-                                    .unwrap_or_else(|| DateTime::from_timestamp_millis(0).unwrap());
-                            let timecode = pts_datetime.format("%H:%M:%S%.3f").to_string();
-                            let v_metrics = font.v_metrics(scale);
-                            let glyphs: Vec<_> = font
-                                .layout(&timecode, scale, rusttype::point(0.0, 0.0))
-                                .collect();
-                            let text_width = glyphs
-                                .last()
-                                .map(|g| g.pixel_bounding_box().unwrap().max.x)
-                                .unwrap_or(0) as u32;
-                            let text_height = (v_metrics.ascent - v_metrics.descent).ceil() as u32;
-                            let x_pos = 4;
-                            let y_pos = (scaled_height - text_height - 4) as i32;
-
-                            draw_filled_rect_mut(
-                                &mut resized_image,
-                                Rect::at(x_pos, y_pos).of_size(text_width as u32, text_height),
-                                image::Rgb([0, 0, 0]),
-                            );
-
-                            let mut text_image = image::ImageBuffer::new(text_width, text_height);
-                            for g in glyphs {
-                                if let Some(bounding_box) = g.pixel_bounding_box() {
-                                    g.draw(|x, y, v| {
-                                        let x = x as i32 + bounding_box.min.x;
-                                        let y = y as i32 + bounding_box.min.y;
-                                        let alpha = (v * 255.0) as u8;
-                                        if x >= 0
-                                            && x < text_width as i32
-                                            && y >= 0
-                                            && y < text_height as i32
-                                        {
-                                            let pixel =
-                                                text_image.get_pixel_mut(x as u32, y as u32);
-                                            *pixel = image::Rgb([255, 255, 255]);
-                                            pixel.blend(&image::Rgb([alpha, alpha, alpha]));
-                                        }
+                                    .unwrap_or_else(|| {
+                                        log::warn!("Invalid timestamp: {}", pts_milliseconds);
+                                        DateTime::from_timestamp_millis(0).unwrap()
                                     });
-                                }
-                            }
+                            let timecode = pts_datetime.format("%H:%M:%S%.3f").to_string();
 
-                            image::imageops::overlay(
+                            let text_color = Rgb([255, 255, 255]);
+                            let background_color = Rgba([0, 0, 0, 128]); // Semi-transparent black
+                            draw_text(
                                 &mut resized_image,
-                                &text_image,
-                                (x_pos as u32).into(),
-                                (y_pos as u32).into(),
+                                &font,
+                                &scale,
+                                &timecode,
+                                4,
+                                4,
+                                text_color,
+                                background_color,
                             );
 
                             if save_images {
-                                // Save the resized JPEG image
+                                // Save the resized JPEG image with timecode
                                 let filename = format!("images/frame_{:04}.jpg", frame_count);
                                 if let Err(err) = resized_image.save(filename) {
                                     log::error!("Failed to save image: {}", err);
@@ -335,7 +356,7 @@ pub fn pull_images(
 
                             filmstrip_images.push(resized_image);
 
-                            if filmstrip_images.len() == filmstrip_length {
+                            if filmstrip_images.len() >= filmstrip_length {
                                 // Create a new image buffer for the filmstrip
                                 let filmstrip_width = scaled_width * filmstrip_length as u32;
                                 let mut filmstrip =
@@ -373,7 +394,8 @@ pub fn pull_images(
                                     break;
                                 }
 
-                                filmstrip_images.clear();
+                                // remove the oldest image from the filmstrip
+                                let _ = filmstrip_images.remove(0);
                             }
                         } else {
                             log::error!("Failed to create ImageBuffer");
