@@ -25,8 +25,6 @@ use gstreamer_video::VideoInfo;
 #[cfg(feature = "gst")]
 use image::imageops::resize;
 #[cfg(feature = "gst")]
-use image::Pixel;
-#[cfg(feature = "gst")]
 use image::Rgba;
 #[cfg(feature = "gst")]
 use image::{ImageBuffer, Rgb};
@@ -221,7 +219,7 @@ fn draw_text(
 
     for g in glyphs {
         if let Some(bounding_box) = g.pixel_bounding_box() {
-            g.draw(|gx, gy, _v| {
+            g.draw(|gx, gy, v| {
                 let gx = gx as i32 + bounding_box.min.x;
                 let gy = gy as i32 + bounding_box.min.y;
                 let image_x = x as i32 + gx;
@@ -234,23 +232,50 @@ fn draw_text(
                 {
                     let pixel = image.get_pixel_mut(image_x as u32, image_y as u32);
 
-                    // Blend the background color with the existing pixel color
-                    let bg_alpha = background_color[3] as f32 / 255.0;
-                    let bg_r = background_color[0] as f32 * bg_alpha;
-                    let bg_g = background_color[1] as f32 * bg_alpha;
-                    let bg_b = background_color[2] as f32 * bg_alpha;
-                    let pixel_alpha = 1.0 - bg_alpha;
-                    let blended_r = (pixel[0] as f32 * pixel_alpha + bg_r) as u8;
-                    let blended_g = (pixel[1] as f32 * pixel_alpha + bg_g) as u8;
-                    let blended_b = (pixel[2] as f32 * pixel_alpha + bg_b) as u8;
-                    *pixel = Rgb([blended_r, blended_g, blended_b]);
+                    // Calculate text pixel alpha (glyph opacity)
+                    let glyph_alpha = v;
 
-                    // Blend the text color with the blended pixel color
-                    pixel.blend(&Rgb([text_color[0], text_color[1], text_color[2]]));
+                    // Calculate the blended color of the background and text based on the glyph alpha
+                    let blended_color = blend_colors(
+                        &text_color,
+                        &Rgb([
+                            background_color[0],
+                            background_color[1],
+                            background_color[2],
+                        ]),
+                        glyph_alpha,
+                        background_color[3] as f32 / 255.0,
+                    );
+
+                    *pixel = blended_color;
                 }
             });
         }
     }
+}
+
+/// Blend two colors with their respective alpha values.
+/// `foreground` is the color of the text, `background` is the color of the background,
+/// `fg_alpha` is the alpha of the text, and `bg_alpha` is the alpha of the background.
+#[cfg(feature = "gst")]
+fn blend_colors(
+    foreground: &Rgb<u8>,
+    background: &Rgb<u8>,
+    fg_alpha: f32,
+    bg_alpha: f32,
+) -> Rgb<u8> {
+    let fg_alpha = fg_alpha.clamp(0.0, 1.0);
+    let bg_alpha = bg_alpha.clamp(0.0, 1.0) * (1.0 - fg_alpha); // Adjust background alpha considering foreground opacity
+
+    let blend_channel = |fg: u8, bg: u8| -> u8 {
+        (((fg as f32 * fg_alpha) + (bg as f32 * bg_alpha)) / (fg_alpha + bg_alpha)).round() as u8
+    };
+
+    Rgb([
+        blend_channel(foreground[0], background[0]),
+        blend_channel(foreground[1], background[1]),
+        blend_channel(foreground[2], background[2]),
+    ])
 }
 
 #[cfg(feature = "gst")]
