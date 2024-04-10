@@ -25,7 +25,6 @@ run_with_scl() {
 BUILD_DIR=%{_builddir}
 mkdir -p $BUILD_DIR
 cd $BUILD_DIR
-rm -rf $BUILD_DIR/*
 
 # Define versions for dependencies of GStreamer
 GLIB_VERSION=2.56.4
