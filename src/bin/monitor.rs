@@ -1296,11 +1296,7 @@ async fn main() {
                 }
 
                 // Check if it's time to send data to Kafka based on the interval
-                if send_to_kafka
-                    && last_kafka_send_time.elapsed().as_millis() >= args.kafka_interval as u128
-                {
-                    last_kafka_send_time = Instant::now();
-
+                if send_to_kafka {
                     // Acquire read access to STREAM_GROUPINGS
                     let stream_groupings = STREAM_GROUPINGS.read().unwrap();
                     let mut flattened_data = flatten_streams(&stream_groupings);
@@ -1413,20 +1409,26 @@ async fn main() {
                         debug!("MONITOR::PACKET:SERIALIZED_DATA: {}", ser_data_str);
                     }
 
-                    // Kafka message production
-                    let future = produce_message(
-                        ser_data,
-                        kafka_broker.clone(),
-                        kafka_topic.clone(),
-                        kafka_timeout,
-                        kafka_key.clone(),
-                        current_unix_timestamp_ms().unwrap_or(0) as i64,
-                        producer.clone(),
-                        &admin_client,
-                    );
+                    // Check if it's time to send data to Kafka based on the interval
+                    if base64_image_tag != ""
+                        || last_kafka_send_time.elapsed().as_millis() >= args.kafka_interval as u128
+                    {
+                        // Kafka message production
+                        let future = produce_message(
+                            ser_data,
+                            kafka_broker.clone(),
+                            kafka_topic.clone(),
+                            kafka_timeout,
+                            kafka_key.clone(),
+                            current_unix_timestamp_ms().unwrap_or(0) as i64,
+                            producer.clone(),
+                            &admin_client,
+                        );
 
-                    // Await the future for sending the message
-                    future.await;
+                        // Await the future for sending the message
+                        future.await;
+                        last_kafka_send_time = Instant::now();
+                    }
                 }
             }
             Err(e) => {
