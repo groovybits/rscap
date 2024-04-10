@@ -9,6 +9,8 @@ use crate::system_stats::get_system_stats;
 use crate::system_stats::SystemStats;
 use ahash::AHashMap;
 #[cfg(feature = "gst")]
+use chrono::DateTime;
+#[cfg(feature = "gst")]
 use gst_app::{AppSink, AppSrc};
 #[cfg(feature = "gst")]
 use gstreamer as gst;
@@ -23,11 +25,19 @@ use gstreamer_video::VideoInfo;
 #[cfg(feature = "gst")]
 use image::imageops::resize;
 #[cfg(feature = "gst")]
+use image::Pixel;
+#[cfg(feature = "gst")]
 use image::{ImageBuffer, Rgb};
+#[cfg(feature = "gst")]
+use imageproc::drawing::draw_filled_rect_mut;
+#[cfg(feature = "gst")]
+use imageproc::rect::Rect;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use rtp::RtpReader;
 use rtp_rs as rtp;
+#[cfg(feature = "gst")]
+use rusttype::{Font, Scale};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::{fmt, sync::Arc, sync::Mutex};
@@ -203,10 +213,12 @@ pub fn pull_images(
     save_images: bool,
     sample_interval: u64,
     image_height: u32,
+    filmstrip_length: usize,
 ) {
     tokio::spawn(async move {
         let mut frame_count = 0;
         let mut last_processed_pts = 0;
+        let mut filmstrip_images = Vec::new();
 
         loop {
             let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
@@ -248,11 +260,68 @@ pub fn pull_images(
                             let scaled_width =
                                 (width as f32 / height as f32 * scaled_height as f32) as u32;
 
-                            let resized_image = resize(
+                            let mut resized_image = resize(
                                 &image,
                                 scaled_width,
                                 scaled_height,
                                 image::imageops::FilterType::Triangle,
+                            );
+
+                            // Burn in the timecode on the resized frame
+                            let font_data =
+                                Vec::from(include_bytes!("../fonts/TrebuchetMS.ttf") as &[u8]);
+                            let font = Font::try_from_bytes(&font_data).unwrap();
+                            let scale = Scale::uniform(12.0);
+                            let pts_seconds = pts as f64 / 1_000_000_000.0;
+                            let pts_milliseconds = (pts_seconds * 1000.0) as u64;
+                            let pts_datetime =
+                                DateTime::from_timestamp_millis(pts_milliseconds as i64)
+                                    .unwrap_or_else(|| DateTime::from_timestamp_millis(0).unwrap());
+                            let timecode = pts_datetime.format("%H:%M:%S%.3f").to_string();
+                            let v_metrics = font.v_metrics(scale);
+                            let glyphs: Vec<_> = font
+                                .layout(&timecode, scale, rusttype::point(0.0, 0.0))
+                                .collect();
+                            let text_width = glyphs
+                                .last()
+                                .map(|g| g.pixel_bounding_box().unwrap().max.x)
+                                .unwrap_or(0) as u32;
+                            let text_height = (v_metrics.ascent - v_metrics.descent).ceil() as u32;
+                            let x_pos = 4;
+                            let y_pos = (scaled_height - text_height - 4) as i32;
+
+                            draw_filled_rect_mut(
+                                &mut resized_image,
+                                Rect::at(x_pos, y_pos).of_size(text_width as u32, text_height),
+                                image::Rgb([0, 0, 0]),
+                            );
+
+                            let mut text_image = image::ImageBuffer::new(text_width, text_height);
+                            for g in glyphs {
+                                if let Some(bounding_box) = g.pixel_bounding_box() {
+                                    g.draw(|x, y, v| {
+                                        let x = x as i32 + bounding_box.min.x;
+                                        let y = y as i32 + bounding_box.min.y;
+                                        let alpha = (v * 255.0) as u8;
+                                        if x >= 0
+                                            && x < text_width as i32
+                                            && y >= 0
+                                            && y < text_height as i32
+                                        {
+                                            let pixel =
+                                                text_image.get_pixel_mut(x as u32, y as u32);
+                                            *pixel = image::Rgb([255, 255, 255]);
+                                            pixel.blend(&image::Rgb([alpha, alpha, alpha]));
+                                        }
+                                    });
+                                }
+                            }
+
+                            image::imageops::overlay(
+                                &mut resized_image,
+                                &text_image,
+                                (x_pos as u32).into(),
+                                (y_pos as u32).into(),
                             );
 
                             if save_images {
@@ -260,26 +329,51 @@ pub fn pull_images(
                                 let filename = format!("images/frame_{:04}.jpg", frame_count);
                                 if let Err(err) = resized_image.save(filename) {
                                     log::error!("Failed to save image: {}", err);
-                                } else {
-                                    frame_count += 1;
                                 }
                             }
+                            frame_count += 1;
 
-                            // Convert the resized image to a JPEG vector
-                            let mut jpeg_data = Vec::new();
-                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
-                                &mut jpeg_data,
-                                80,
-                            );
+                            filmstrip_images.push(resized_image);
 
-                            encoder
-                                .encode_image(&resized_image)
-                                .expect("JPEG encoding failed");
+                            if filmstrip_images.len() == filmstrip_length {
+                                // Create a new image buffer for the filmstrip
+                                let filmstrip_width = scaled_width * filmstrip_length as u32;
+                                let mut filmstrip =
+                                    ImageBuffer::new(filmstrip_width, scaled_height);
 
-                            if let Err(err) = image_sender.send((jpeg_data, pts as u64)).await {
-                                log::error!("Failed to send image data through channel: {}", err);
-                                // exit the loop if the receiver is gone
-                                break;
+                                // Concatenate the images into the filmstrip
+                                for (i, img) in filmstrip_images.iter().enumerate() {
+                                    let x_offset = i as u32 * scaled_width;
+                                    image::imageops::overlay(
+                                        &mut filmstrip,
+                                        img,
+                                        x_offset.into(),
+                                        0,
+                                    );
+                                }
+
+                                // Convert the filmstrip to a JPEG vector
+                                let mut jpeg_data = Vec::new();
+                                let mut encoder =
+                                    image::codecs::jpeg::JpegEncoder::new_with_quality(
+                                        &mut jpeg_data,
+                                        80,
+                                    );
+
+                                encoder
+                                    .encode_image(&filmstrip)
+                                    .expect("JPEG encoding failed");
+
+                                // Send the filmstrip over the channel
+                                if let Err(err) = image_sender.send((jpeg_data, pts as u64)).await {
+                                    log::error!(
+                                        "Failed to send image data through channel: {}",
+                                        err
+                                    );
+                                    break;
+                                }
+
+                                filmstrip_images.clear();
                             }
                         } else {
                             log::error!("Failed to create ImageBuffer");
