@@ -22,15 +22,19 @@ use gstreamer_video::VideoFormat;
 use gstreamer_video::VideoInfo;
 #[cfg(feature = "gst")]
 use image::imageops::resize;
+#[cfg(feature = "gst")]
 use image::Pixel;
 #[cfg(feature = "gst")]
 use image::{ImageBuffer, Rgb};
+#[cfg(feature = "gst")]
 use imageproc::drawing::draw_filled_rect_mut;
+#[cfg(feature = "gst")]
 use imageproc::rect::Rect;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use rtp::RtpReader;
 use rtp_rs as rtp;
+#[cfg(feature = "gst")]
 use rusttype::{Font, Scale};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
