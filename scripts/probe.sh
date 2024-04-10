@@ -9,6 +9,8 @@ SOURCE_DEVICE=eth0
 SOURCE_PORT=10000
 TARGET_PORT=5556
 GST_PLUGIN_PATH=/opt/rscap/lib64/gstreamer-1.0
+IMAGE_HEIGHT=200
+LD_LIBRARY_PATH=/opt/rscap/lib64:$LD_LIBRARY_PATH
 if [ -f "target/$BUILD/probe" ]; then
     PROBE_BIN=target/$BUILD/probe
 elif [ -f "/opt/rscap/bin/probe" ]; then
@@ -21,6 +23,7 @@ fi
 $PROBE_BIN -V
 
 sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
+    LD_LIBRARY_PATH=$LD_LIBRARY_PATH \
     GST_DEBUG=$GST_DEBUG_LEVEL \
     RUST_BACKTRACE=$BACKTRACE \
     RUST_LOG=$LOGLEVEL \
@@ -33,4 +36,5 @@ sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     --send-null-packets \
     --target-port $TARGET_PORT \
     --extract-images \
+    --image-height 200 \
     --zmq-batch-size 10000 $@

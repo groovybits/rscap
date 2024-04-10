@@ -6,6 +6,8 @@ KAFKA_BROKER=sun:9092
 
 GST_PLUGIN_PATH=/opt/rscap/lib64/gstreamer-1.0
 MONITOR_BIN=/target/$BUILD/monitor
+
+LD_LIBRARY_PATH=/opt/rscap/lib64:$LD_LIBRARY_PATH
 if [ -f "target/$BUILD/monitor" ]; then
     MONITOR_BIN=target/$BUILD/monitor
 elif [ -f "/opt/rscap/bin/monitor" ]; then
@@ -19,6 +21,7 @@ $MONITOR_BIN -V
 
 GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     GST_DEBUG=$GST_DEBUG_LEVEL \
+    LD_LIBRARY_PATH=$LD_LIBRARY_PATH \
     RUST_BACKTRACE=$BACKTRACE \
     RUST_LOG=$LOGLEVEL \
     $MONITOR_BIN \
