@@ -462,7 +462,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.4",
+    version = "0.5.5",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {
@@ -649,7 +649,7 @@ struct Args {
     save_images: bool,
 
     /// Image Sample Rate Ns - Image sample rate in nano seconds
-    #[clap(long, env = "IMAGE_SAMPLE_RATE_NS", default_value_t = 2_000_000_000)]
+    #[clap(long, env = "IMAGE_SAMPLE_RATE_NS", default_value_t = 333_333_000)]
     image_sample_rate_ns: u64,
 
     /// Image Height - Image height in pixels of Thumbnail extracted images
@@ -657,7 +657,7 @@ struct Args {
     image_height: u32,
 
     /// filmstrip length
-    #[clap(long, env = "FILMSTRIP_LENGTH", default_value_t = 9)]
+    #[clap(long, env = "FILMSTRIP_LENGTH", default_value_t = 21)]
     filmstrip_length: usize,
 }
 
