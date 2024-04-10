@@ -260,11 +260,68 @@ pub fn pull_images(
                             let scaled_width =
                                 (width as f32 / height as f32 * scaled_height as f32) as u32;
 
-                            let resized_image = resize(
+                            let mut resized_image = resize(
                                 &image,
                                 scaled_width,
                                 scaled_height,
                                 image::imageops::FilterType::Triangle,
+                            );
+
+                            // Burn in the timecode on the resized frame
+                            let font_data =
+                                Vec::from(include_bytes!("../fonts/TrebuchetMS.ttf") as &[u8]);
+                            let font = Font::try_from_bytes(&font_data).unwrap();
+                            let scale = Scale::uniform(12.0);
+                            let pts_seconds = pts as f64 / 1_000_000_000.0;
+                            let pts_milliseconds = (pts_seconds * 1000.0) as u64;
+                            let pts_datetime =
+                                DateTime::from_timestamp_millis(pts_milliseconds as i64)
+                                    .unwrap_or_else(|| DateTime::from_timestamp_millis(0).unwrap());
+                            let timecode = pts_datetime.format("%H:%M:%S%.3f").to_string();
+                            let v_metrics = font.v_metrics(scale);
+                            let glyphs: Vec<_> = font
+                                .layout(&timecode, scale, rusttype::point(0.0, 0.0))
+                                .collect();
+                            let text_width = glyphs
+                                .last()
+                                .map(|g| g.pixel_bounding_box().unwrap().max.x)
+                                .unwrap_or(0) as u32;
+                            let text_height = (v_metrics.ascent - v_metrics.descent).ceil() as u32;
+                            let x_pos = 4;
+                            let y_pos = (scaled_height - text_height - 4) as i32;
+
+                            draw_filled_rect_mut(
+                                &mut resized_image,
+                                Rect::at(x_pos, y_pos).of_size(text_width as u32, text_height),
+                                image::Rgb([0, 0, 0]),
+                            );
+
+                            let mut text_image = image::ImageBuffer::new(text_width, text_height);
+                            for g in glyphs {
+                                if let Some(bounding_box) = g.pixel_bounding_box() {
+                                    g.draw(|x, y, v| {
+                                        let x = x as i32 + bounding_box.min.x;
+                                        let y = y as i32 + bounding_box.min.y;
+                                        let alpha = (v * 255.0) as u8;
+                                        if x >= 0
+                                            && x < text_width as i32
+                                            && y >= 0
+                                            && y < text_height as i32
+                                        {
+                                            let pixel =
+                                                text_image.get_pixel_mut(x as u32, y as u32);
+                                            *pixel = image::Rgb([255, 255, 255]);
+                                            pixel.blend(&image::Rgb([alpha, alpha, alpha]));
+                                        }
+                                    });
+                                }
+                            }
+
+                            image::imageops::overlay(
+                                &mut resized_image,
+                                &text_image,
+                                (x_pos as u32).into(),
+                                (y_pos as u32).into(),
                             );
 
                             if save_images {
@@ -272,15 +329,12 @@ pub fn pull_images(
                                 let filename = format!("images/frame_{:04}.jpg", frame_count);
                                 if let Err(err) = resized_image.save(filename) {
                                     log::error!("Failed to save image: {}", err);
-                                } else {
-                                    frame_count += 1;
                                 }
                             }
+                            frame_count += 1;
 
-                            // Add the resized image to the filmstrip_images array
                             filmstrip_images.push(resized_image);
 
-                            // Check if the filmstrip_images array reaches the filmstrip_length
                             if filmstrip_images.len() == filmstrip_length {
                                 // Create a new image buffer for the filmstrip
                                 let filmstrip_width = scaled_width * filmstrip_length as u32;
@@ -298,84 +352,7 @@ pub fn pull_images(
                                     );
                                 }
 
-                                // Add padding and timecode to the filmstrip
-                                let padding = 4;
-                                let mut padded_filmstrip = ImageBuffer::new(
-                                    filmstrip_width + 2 * padding,
-                                    scaled_height + 2 * padding,
-                                );
-                                image::imageops::overlay(
-                                    &mut padded_filmstrip,
-                                    &filmstrip,
-                                    padding.into(),
-                                    padding.into(),
-                                );
-
-                                // Burn in the timecode
-                                let font_data =
-                                    Vec::from(include_bytes!("../fonts/TrebuchetMS.ttf") as &[u8]);
-                                let font = Font::try_from_bytes(&font_data).unwrap();
-                                let scale = Scale::uniform(12.0);
-                                let pts_seconds = pts as f64 / 1_000_000_000.0; // Convert nanoseconds to seconds
-                                let pts_milliseconds = (pts_seconds * 1000.0) as u64; // Convert seconds to milliseconds
-                                let pts_datetime =
-                                    DateTime::from_timestamp_millis(pts_milliseconds as i64)
-                                        .unwrap_or_else(|| {
-                                            DateTime::from_timestamp_millis(0).unwrap()
-                                        });
-                                let timecode = pts_datetime.format("%H:%M:%S%.3f").to_string(); // Format as HH:MM:SS.mmm
-                                let v_metrics = font.v_metrics(scale);
-                                let glyphs: Vec<_> = font
-                                    .layout(&timecode, scale, rusttype::point(0.0, 0.0))
-                                    .collect();
-                                let text_width = glyphs
-                                    .last()
-                                    .map(|g| g.pixel_bounding_box().unwrap().max.x)
-                                    .unwrap_or(0)
-                                    as u32;
-                                let text_height =
-                                    (v_metrics.ascent - v_metrics.descent).ceil() as u32;
-                                let x_pos = padding as i32;
-                                let y_pos = (scaled_height + padding as u32 - text_height) as i32;
-
-                                // Draw a filled rectangle as the background for the text
-                                draw_filled_rect_mut(
-                                    &mut padded_filmstrip,
-                                    Rect::at(x_pos, y_pos).of_size(text_width as u32, text_height),
-                                    image::Rgb([0, 0, 0]), // Black background color
-                                );
-
-                                // Draw the text
-                                let mut text_image =
-                                    image::ImageBuffer::new(text_width, text_height);
-                                for g in glyphs {
-                                    if let Some(bounding_box) = g.pixel_bounding_box() {
-                                        g.draw(|x, y, v| {
-                                            let x = x as i32 + bounding_box.min.x;
-                                            let y = y as i32 + bounding_box.min.y;
-                                            let alpha = (v * 255.0) as u8;
-                                            if x >= 0
-                                                && x < text_width as i32
-                                                && y >= 0
-                                                && y < text_height as i32
-                                            {
-                                                let pixel =
-                                                    text_image.get_pixel_mut(x as u32, y as u32);
-                                                *pixel = image::Rgb([255, 255, 255]);
-                                                pixel.blend(&image::Rgb([alpha, alpha, alpha]));
-                                            }
-                                        });
-                                    }
-                                }
-
-                                // Overlay the text image onto the padded filmstrip
-                                image::imageops::overlay(
-                                    &mut padded_filmstrip,
-                                    &text_image,
-                                    (x_pos as u32).into(),
-                                    (y_pos as u32).into(),
-                                );
-                                // Convert the padded filmstrip to a JPEG vector
+                                // Convert the filmstrip to a JPEG vector
                                 let mut jpeg_data = Vec::new();
                                 let mut encoder =
                                     image::codecs::jpeg::JpegEncoder::new_with_quality(
@@ -384,7 +361,7 @@ pub fn pull_images(
                                     );
 
                                 encoder
-                                    .encode_image(&padded_filmstrip)
+                                    .encode_image(&filmstrip)
                                     .expect("JPEG encoding failed");
 
                                 // Send the filmstrip over the channel
@@ -396,7 +373,6 @@ pub fn pull_images(
                                     break;
                                 }
 
-                                // Clear the filmstrip_images array
                                 filmstrip_images.clear();
                             }
                         } else {
