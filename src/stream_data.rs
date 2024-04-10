@@ -8,8 +8,7 @@ use crate::current_unix_timestamp_ms;
 use crate::system_stats::get_system_stats;
 use crate::system_stats::SystemStats;
 use ahash::AHashMap;
-//#[cfg(feature = "gst")]
-//use chrono::DateTime;
+
 #[cfg(feature = "gst")]
 use gst_app::{AppSink, AppSrc};
 #[cfg(feature = "gst")]
@@ -22,20 +21,12 @@ use gstreamer_app as gst_app;
 use gstreamer_video::VideoFormat;
 #[cfg(feature = "gst")]
 use gstreamer_video::VideoInfo;
-//#[cfg(feature = "gst")]
-//use image::imageops::resize;
-//#[cfg(feature = "gst")]
-//use image::Rgba;
 #[cfg(feature = "gst")]
 use image::{ImageBuffer, Rgb};
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use rtp::RtpReader;
 use rtp_rs as rtp;
-//#[cfg(feature = "gst")]
-//use rusttype::point;
-//#[cfg(feature = "gst")]
-//use rusttype::{Font, Scale};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::{fmt, sync::Arc, sync::Mutex};
@@ -205,80 +196,6 @@ fn i422_10le_to_rgb(width: usize, height: usize, i422_data: &[u8]) -> Vec<u8> {
     rgb_data
 }
 
-/*#[cfg(feature = "gst")]
-fn draw_text(
-    image: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
-    font: &Font,
-    scale: &Scale,
-    text: &str,
-    x: u32,
-    y: u32,
-    text_color: Rgb<u8>,
-    background_color: Rgba<u8>,
-) {
-    let glyphs: Vec<_> = font.layout(text, *scale, point(0.0, 0.0)).collect();
-
-    for g in glyphs {
-        if let Some(bounding_box) = g.pixel_bounding_box() {
-            g.draw(|gx, gy, v| {
-                let gx = gx as i32 + bounding_box.min.x;
-                let gy = gy as i32 + bounding_box.min.y;
-                let image_x = x as i32 + gx;
-                let image_y = y as i32 + gy;
-
-                if image_x >= 0
-                    && image_x < image.width() as i32
-                    && image_y >= 0
-                    && image_y < image.height() as i32
-                {
-                    let pixel = image.get_pixel_mut(image_x as u32, image_y as u32);
-
-                    // Calculate text pixel alpha (glyph opacity)
-                    let glyph_alpha = v;
-
-                    // Calculate the blended color of the background and text based on the glyph alpha
-                    let blended_color = blend_colors(
-                        &text_color,
-                        &Rgb([
-                            background_color[0],
-                            background_color[1],
-                            background_color[2],
-                        ]),
-                        glyph_alpha,
-                        background_color[3] as f32 / 255.0,
-                    );
-
-                    *pixel = blended_color;
-                }
-            });
-        }
-    }
-    }*/
-
-/// Blend two colors with their respective alpha values.
-/// `foreground` is the color of the text, `background` is the color of the background,
-/// `fg_alpha` is the alpha of the text, and `bg_alpha` is the alpha of the background.
-/*#[cfg(feature = "gst")]
-fn blend_colors(
-    foreground: &Rgb<u8>,
-    background: &Rgb<u8>,
-    fg_alpha: f32,
-    bg_alpha: f32,
-) -> Rgb<u8> {
-    let fg_alpha = fg_alpha.clamp(0.0, 1.0);
-    let bg_alpha = bg_alpha.clamp(0.0, 1.0) * (1.0 - fg_alpha); // Adjust background alpha considering foreground opacity
-
-    let blend_channel = |fg: u8, bg: u8| -> u8 {
-        (((fg as f32 * fg_alpha) + (bg as f32 * bg_alpha)) / (fg_alpha + bg_alpha)).round() as u8
-    };
-
-    Rgb([
-        blend_channel(foreground[0], background[0]),
-        blend_channel(foreground[1], background[1]),
-        blend_channel(foreground[2], background[2]),
-    ])
-    }*/
-
 #[cfg(feature = "gst")]
 pub fn pull_images(
     appsink: AppSink,
@@ -333,44 +250,6 @@ pub fn pull_images(
                             let scaled_height = image_height;
                             let scaled_width =
                                 (width as f32 / height as f32 * scaled_height as f32) as u32;
-
-                            /*let resized_image = resize(
-                            &image,
-                            scaled_width,
-                            scaled_height,
-                            image::imageops::FilterType::Triangle,
-                            );*/
-
-                            // Burn in the timecode on the resized frame
-                            // Burn in the timecode on the resized frame
-                            /*let font_data =
-                                Vec::from(include_bytes!("../fonts/TrebuchetMS.ttf") as &[u8]);
-                            let font =
-                                Font::try_from_bytes(&font_data).expect("Failed to load font");
-
-                            let scale = Scale::uniform(font_size);
-                            let pts_seconds = pts as f64 / 1_000_000_000.0;
-                            let pts_milliseconds = (pts_seconds * 1000.0) as u64;
-                            let pts_datetime =
-                                DateTime::from_timestamp_millis(pts_milliseconds as i64)
-                                    .unwrap_or_else(|| {
-                                        log::warn!("Invalid timestamp: {}", pts_milliseconds);
-                                        DateTime::from_timestamp_millis(0).unwrap()
-                                    });
-                            let timecode = pts_datetime.format("%H:%M:%S%.3f").to_string();
-
-                            let text_color = Rgb([255, 255, 255]);
-                            let background_color = Rgba([0, 0, 0, 128]); // Semi-transparent black
-                            draw_text(
-                                &mut resized_image,
-                                &font,
-                                &scale,
-                                &timecode,
-                                2,
-                                2,
-                                text_color,
-                                background_color,
-                                );*/
 
                             if save_images {
                                 // Save the resized JPEG image with timecode
