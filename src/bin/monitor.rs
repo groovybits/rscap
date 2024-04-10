@@ -1390,7 +1390,11 @@ async fn main() {
 
                     // Insert the base64_image field into the flattened_data map
                     flattened_data.insert("image_pts".to_string(), serde_json::json!(image_pts));
-                    let base64_image_tag = format!("data:image/jpeg;base64,{}", base64_image);
+                    let base64_image_tag = if base64_image != "" {
+                        format!("data:image/jpeg;base64,{}", base64_image)
+                    } else {
+                        "".to_string()
+                    };
                     flattened_data.insert(
                         "base64_image".to_string(),
                         serde_json::json!(base64_image_tag),
