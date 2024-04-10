@@ -321,7 +321,7 @@ pub fn pull_images(
                             let font =
                                 Font::try_from_bytes(&font_data).expect("Failed to load font");
 
-                            let scale = Scale::uniform(12.0);
+                            let scale = Scale::uniform(6.0);
                             let pts_seconds = pts as f64 / 1_000_000_000.0;
                             let pts_milliseconds = (pts_seconds * 1000.0) as u64;
                             let pts_datetime =
@@ -339,8 +339,8 @@ pub fn pull_images(
                                 &font,
                                 &scale,
                                 &timecode,
-                                4,
-                                4,
+                                2,
+                                2,
                                 text_color,
                                 background_color,
                             );
