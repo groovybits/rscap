@@ -624,7 +624,7 @@ struct Args {
 
     // Add the new argument for Kafka interval
     /// Kafka sending interval in milliseconds
-    #[clap(long, env = "KAFKA_INTERVAL", default_value_t = 10)]
+    #[clap(long, env = "KAFKA_INTERVAL", default_value_t = 1000)]
     kafka_interval: u64,
 }
 

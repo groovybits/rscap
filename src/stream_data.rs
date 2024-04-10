@@ -8,8 +8,8 @@ use crate::current_unix_timestamp_ms;
 use crate::system_stats::get_system_stats;
 use crate::system_stats::SystemStats;
 use ahash::AHashMap;
-#[cfg(feature = "gst")]
-use chrono::DateTime;
+//#[cfg(feature = "gst")]
+//use chrono::DateTime;
 #[cfg(feature = "gst")]
 use gst_app::{AppSink, AppSrc};
 #[cfg(feature = "gst")]
@@ -24,18 +24,18 @@ use gstreamer_video::VideoFormat;
 use gstreamer_video::VideoInfo;
 #[cfg(feature = "gst")]
 use image::imageops::resize;
-#[cfg(feature = "gst")]
-use image::Rgba;
+//#[cfg(feature = "gst")]
+//use image::Rgba;
 #[cfg(feature = "gst")]
 use image::{ImageBuffer, Rgb};
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use rtp::RtpReader;
 use rtp_rs as rtp;
-#[cfg(feature = "gst")]
-use rusttype::point;
-#[cfg(feature = "gst")]
-use rusttype::{Font, Scale};
+//#[cfg(feature = "gst")]
+//use rusttype::point;
+//#[cfg(feature = "gst")]
+//use rusttype::{Font, Scale};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::{fmt, sync::Arc, sync::Mutex};
@@ -69,13 +69,13 @@ pub fn initialize_pipeline(
     // Create a pipeline to extract video frames
     let pipeline = match stream_type_number {
         0x02 => create_pipeline(
-            "appsrc name=src ! tsdemux ! mpeg2dec ! videoconvert ! appsink name=sink",
+            "appsrc name=src ! tsdemux ! mpeg2dec ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! appsink name=sink",
         )?,
         0x1B => create_pipeline(
-            "appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videoconvert ! appsink name=sink",
+            "appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! appsink name=sink",
         )?,
         0x24 => create_pipeline(
-            "appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videoconvert ! appsink name=sink",
+            "appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! appsink name=sink",
         )?,
         _ => {
             return Err(anyhow::anyhow!(
@@ -106,7 +106,7 @@ pub fn initialize_pipeline(
 
     // Set appsink to drop old buffers and only keep the most recent one
     appsink.set_drop(true);
-    appsink.set_max_buffers(188);
+    appsink.set_max_buffers(60);
 
     Ok((pipeline, appsrc, appsink))
 }
@@ -204,7 +204,7 @@ fn i422_10le_to_rgb(width: usize, height: usize, i422_data: &[u8]) -> Vec<u8> {
     rgb_data
 }
 
-#[cfg(feature = "gst")]
+/*#[cfg(feature = "gst")]
 fn draw_text(
     image: &mut ImageBuffer<Rgb<u8>, Vec<u8>>,
     font: &Font,
@@ -252,12 +252,12 @@ fn draw_text(
             });
         }
     }
-}
+    }*/
 
 /// Blend two colors with their respective alpha values.
 /// `foreground` is the color of the text, `background` is the color of the background,
 /// `fg_alpha` is the alpha of the text, and `bg_alpha` is the alpha of the background.
-#[cfg(feature = "gst")]
+/*#[cfg(feature = "gst")]
 fn blend_colors(
     foreground: &Rgb<u8>,
     background: &Rgb<u8>,
@@ -276,7 +276,7 @@ fn blend_colors(
         blend_channel(foreground[1], background[1]),
         blend_channel(foreground[2], background[2]),
     ])
-}
+    }*/
 
 #[cfg(feature = "gst")]
 pub fn pull_images(
@@ -286,7 +286,7 @@ pub fn pull_images(
     sample_interval: u64,
     image_height: u32,
     filmstrip_length: usize,
-    font_size: f32,
+    _font_size: f32,
 ) {
     tokio::spawn(async move {
         let mut frame_count = 0;
@@ -333,7 +333,7 @@ pub fn pull_images(
                             let scaled_width =
                                 (width as f32 / height as f32 * scaled_height as f32) as u32;
 
-                            let mut resized_image = resize(
+                            let resized_image = resize(
                                 &image,
                                 scaled_width,
                                 scaled_height,
@@ -342,7 +342,7 @@ pub fn pull_images(
 
                             // Burn in the timecode on the resized frame
                             // Burn in the timecode on the resized frame
-                            let font_data =
+                            /*let font_data =
                                 Vec::from(include_bytes!("../fonts/TrebuchetMS.ttf") as &[u8]);
                             let font =
                                 Font::try_from_bytes(&font_data).expect("Failed to load font");
@@ -369,7 +369,7 @@ pub fn pull_images(
                                 2,
                                 text_color,
                                 background_color,
-                            );
+                                );*/
 
                             if save_images {
                                 // Save the resized JPEG image with timecode
