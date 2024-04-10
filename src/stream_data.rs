@@ -395,7 +395,7 @@ pub fn pull_images(
                                 }
 
                                 // remove the oldest image from the filmstrip
-                                let _ = filmstrip_images.remove(0);
+                                let _ = filmstrip_images.remove(filmstrip_length / 3);
                             }
                         } else {
                             log::error!("Failed to create ImageBuffer");
