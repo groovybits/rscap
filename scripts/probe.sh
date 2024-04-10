@@ -9,9 +9,10 @@ SOURCE_DEVICE=eth0
 SOURCE_PORT=10000
 TARGET_PORT=5556
 GST_PLUGIN_PATH=/opt/rscap/lib64/gstreamer-1.0
-IMAGE_HEIGHT=96
-IMAGE_RATE=333333000
-FILMSTRIP_FRAMES=18
+IMAGE_HEIGHT=120
+IMAGE_RATE=0
+FILMSTRIP_FRAMES=15
+FONT_SIZE=6.0
 LD_LIBRARY_PATH=/opt/rscap/lib64:$LD_LIBRARY_PATH
 if [ -f "target/$BUILD/probe" ]; then
     PROBE_BIN=target/$BUILD/probe
@@ -41,4 +42,5 @@ sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     --filmstrip-length $FILMSTRIP_FRAMES \
     --image-sample-rate-ns $IMAGE_RATE \
     --image-height $IMAGE_HEIGHT \
+    --font-size $FONT_SIZE \
     --zmq-batch-size 10000 $@

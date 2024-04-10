@@ -286,6 +286,7 @@ pub fn pull_images(
     sample_interval: u64,
     image_height: u32,
     filmstrip_length: usize,
+    font_size: f32,
 ) {
     tokio::spawn(async move {
         let mut frame_count = 0;
@@ -301,7 +302,7 @@ pub fn pull_images(
                     let pts = buffer.pts().map_or(0, |pts| pts.nseconds());
 
                     // Check if the sample interval is set and skip frames if necessary
-                    if pts - last_processed_pts < sample_interval as u64 {
+                    if sample_interval > 0 && (pts - last_processed_pts < sample_interval as u64) {
                         continue;
                     }
                     last_processed_pts = pts;
@@ -346,7 +347,7 @@ pub fn pull_images(
                             let font =
                                 Font::try_from_bytes(&font_data).expect("Failed to load font");
 
-                            let scale = Scale::uniform(6.0);
+                            let scale = Scale::uniform(font_size);
                             let pts_seconds = pts as f64 / 1_000_000_000.0;
                             let pts_milliseconds = (pts_seconds * 1000.0) as u64;
                             let pts_datetime =
@@ -419,8 +420,8 @@ pub fn pull_images(
                                     break;
                                 }
 
-                                // remove the oldest image from the filmstrip
-                                let _ = filmstrip_images.remove(filmstrip_length / 3);
+                                // clear the filmstrip images
+                                filmstrip_images.clear();
                             }
                         } else {
                             log::error!("Failed to create ImageBuffer");
