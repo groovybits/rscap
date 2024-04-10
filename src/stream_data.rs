@@ -299,7 +299,7 @@ pub fn pull_images(
                                 }
 
                                 // Add padding and timecode to the filmstrip
-                                let padding = 10;
+                                let padding = 4;
                                 let mut padded_filmstrip = ImageBuffer::new(
                                     filmstrip_width + 2 * padding,
                                     scaled_height + 2 * padding,
