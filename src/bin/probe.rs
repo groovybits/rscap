@@ -657,7 +657,7 @@ struct Args {
     image_height: u32,
 
     /// filmstrip length
-    #[clap(long, env = "FILMSTRIP_LENGTH", default_value_t = 10)]
+    #[clap(long, env = "FILMSTRIP_LENGTH", default_value_t = 18)]
     filmstrip_length: usize,
 }
 
