@@ -1428,7 +1428,7 @@ async fn rscap() {
 
     // Initialize the pipeline
     #[cfg(feature = "gst")]
-    let (pipeline, appsrc, appsink) = match initialize_pipeline(0x1B) {
+    let (pipeline, appsrc, appsink) = match initialize_pipeline(0x1B, args.image_height) {
         Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
         Err(err) => {
             eprintln!("Failed to initialize the pipeline: {}", err);

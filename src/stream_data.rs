@@ -22,8 +22,8 @@ use gstreamer_app as gst_app;
 use gstreamer_video::VideoFormat;
 #[cfg(feature = "gst")]
 use gstreamer_video::VideoInfo;
-#[cfg(feature = "gst")]
-use image::imageops::resize;
+//#[cfg(feature = "gst")]
+//use image::imageops::resize;
 //#[cfg(feature = "gst")]
 //use image::Rgba;
 #[cfg(feature = "gst")]
@@ -62,6 +62,7 @@ fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
 #[cfg(feature = "gst")]
 pub fn initialize_pipeline(
     stream_type_number: u8,
+    height: u32,
 ) -> Result<(gst::Pipeline, AppSrc, AppSink), anyhow::Error> {
     // Initialize GStreamer
     gst::init()?;
@@ -69,13 +70,13 @@ pub fn initialize_pipeline(
     // Create a pipeline to extract video frames
     let pipeline = match stream_type_number {
         0x02 => create_pipeline(
-            "appsrc name=src ! tsdemux ! mpeg2dec ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! appsink name=sink",
+            &format!("appsrc name=src ! tsdemux ! mpeg2dec ! videorate ! video/x-raw,framerate=1/1 ! videoscale ! video/x-raw,height={height} ! videoconvert ! appsink name=sink"),
         )?,
         0x1B => create_pipeline(
-            "appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! appsink name=sink",
+            &format!("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate=1/1 ! videoscale ! video/x-raw,height={height} ! videoconvert ! appsink name=sink"),
         )?,
         0x24 => create_pipeline(
-            "appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! appsink name=sink",
+            &format!("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate=1/1 ! videoscale ! video/x-raw,height={height} ! videoconvert ! appsink name=sink"),
         )?,
         _ => {
             return Err(anyhow::anyhow!(
@@ -333,12 +334,12 @@ pub fn pull_images(
                             let scaled_width =
                                 (width as f32 / height as f32 * scaled_height as f32) as u32;
 
-                            let resized_image = resize(
-                                &image,
-                                scaled_width,
-                                scaled_height,
-                                image::imageops::FilterType::Triangle,
-                            );
+                            /*let resized_image = resize(
+                            &image,
+                            scaled_width,
+                            scaled_height,
+                            image::imageops::FilterType::Triangle,
+                            );*/
 
                             // Burn in the timecode on the resized frame
                             // Burn in the timecode on the resized frame
@@ -374,13 +375,13 @@ pub fn pull_images(
                             if save_images {
                                 // Save the resized JPEG image with timecode
                                 let filename = format!("images/frame_{:04}.jpg", frame_count);
-                                if let Err(err) = resized_image.save(filename) {
+                                if let Err(err) = image.save(filename) {
                                     log::error!("Failed to save image: {}", err);
                                 }
                             }
                             frame_count += 1;
 
-                            filmstrip_images.push(resized_image);
+                            filmstrip_images.push(image);
 
                             if filmstrip_images.len() >= filmstrip_length {
                                 // Create a new image buffer for the filmstrip
