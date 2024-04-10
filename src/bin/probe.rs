@@ -649,11 +649,11 @@ struct Args {
     save_images: bool,
 
     /// Image Sample Rate Ns - Image sample rate in nano seconds
-    #[clap(long, env = "IMAGE_SAMPLE_RATE_NS", default_value_t = 20_000_000_000)]
+    #[clap(long, env = "IMAGE_SAMPLE_RATE_NS", default_value_t = 1_000_000_000)]
     image_sample_rate_ns: u64,
 
     /// Image Height - Image height in pixels of Thumbnail extracted images
-    #[clap(long, env = "IMAGE_HEIGHT", default_value_t = 200)]
+    #[clap(long, env = "IMAGE_HEIGHT", default_value_t = 120)]
     image_height: u32,
 
     /// filmstrip length

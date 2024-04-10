@@ -271,7 +271,7 @@ pub fn pull_images(
                             let font_data =
                                 Vec::from(include_bytes!("../fonts/TrebuchetMS.ttf") as &[u8]);
                             let font = Font::try_from_bytes(&font_data).unwrap();
-                            let scale = Scale::uniform(12.0);
+                            let scale = Scale::uniform(16.0);
                             let pts_seconds = pts as f64 / 1_000_000_000.0;
                             let pts_milliseconds = (pts_seconds * 1000.0) as u64;
                             let pts_datetime =
