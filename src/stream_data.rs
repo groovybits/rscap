@@ -203,10 +203,12 @@ pub fn pull_images(
     save_images: bool,
     sample_interval: u64,
     image_height: u32,
+    filmstrip_length: usize,
 ) {
     tokio::spawn(async move {
         let mut frame_count = 0;
         let mut last_processed_pts = 0;
+        let mut filmstrip_images = Vec::new();
 
         loop {
             let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
@@ -265,21 +267,87 @@ pub fn pull_images(
                                 }
                             }
 
-                            // Convert the resized image to a JPEG vector
-                            let mut jpeg_data = Vec::new();
-                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
-                                &mut jpeg_data,
-                                80,
-                            );
+                            // Add the resized image to the filmstrip_images array
+                            filmstrip_images.push(resized_image);
 
-                            encoder
-                                .encode_image(&resized_image)
-                                .expect("JPEG encoding failed");
+                            // Check if the filmstrip_images array reaches the filmstrip_length
+                            if filmstrip_images.len() == filmstrip_length {
+                                // Create a new image buffer for the filmstrip
+                                let filmstrip_width = scaled_width * filmstrip_length as u32;
+                                let mut filmstrip =
+                                    ImageBuffer::new(filmstrip_width, scaled_height);
 
-                            if let Err(err) = image_sender.send((jpeg_data, pts as u64)).await {
-                                log::error!("Failed to send image data through channel: {}", err);
-                                // exit the loop if the receiver is gone
-                                break;
+                                // Concatenate the images into the filmstrip
+                                for (i, img) in filmstrip_images.iter().enumerate() {
+                                    let x_offset = i as u32 * scaled_width;
+                                    image::imageops::overlay(&mut filmstrip, img, x_offset, 0);
+                                }
+
+                                // Add padding and timecode to the filmstrip
+                                let padding = 10;
+                                let mut padded_filmstrip = ImageBuffer::new(
+                                    filmstrip_width + 2 * padding,
+                                    scaled_height + 2 * padding,
+                                );
+                                image::imageops::overlay(
+                                    &mut padded_filmstrip,
+                                    &filmstrip,
+                                    padding,
+                                    padding,
+                                );
+
+                                // Burn in the timecode
+                                let font = Vec::from(include_bytes!("Arial.ttf") as &[u8]);
+                                let font = rusttype::Font::try_from_bytes(&font).unwrap();
+                                let scale = rusttype::Scale::uniform(20.0);
+                                let timecode = format!("{}", pts);
+                                let color = image::Rgba([255, 255, 255, 255]);
+                                let text_width = rusttype::FontCollection::from_bytes(font.data())
+                                    .unwrap()
+                                    .into_font()
+                                    .layout(&timecode, scale, rusttype::point(0.0, 0.0))
+                                    .last()
+                                    .unwrap()
+                                    .pixel_bounding_box()
+                                    .unwrap()
+                                    .width()
+                                    as u32;
+                                let text_height = scale.y.ceil() as u32;
+                                let x_pos = padding as i32;
+                                let y_pos = (scaled_height + padding as u32 - text_height) as i32;
+                                image_utils::draw_text_mut(
+                                    &mut padded_filmstrip,
+                                    color,
+                                    x_pos,
+                                    y_pos,
+                                    scale,
+                                    &font,
+                                    &timecode,
+                                );
+
+                                // Convert the padded filmstrip to a JPEG vector
+                                let mut jpeg_data = Vec::new();
+                                let mut encoder =
+                                    image::codecs::jpeg::JpegEncoder::new_with_quality(
+                                        &mut jpeg_data,
+                                        80,
+                                    );
+
+                                encoder
+                                    .encode_image(&padded_filmstrip)
+                                    .expect("JPEG encoding failed");
+
+                                // Send the filmstrip over the channel
+                                if let Err(err) = image_sender.send((jpeg_data, pts as u64)).await {
+                                    log::error!(
+                                        "Failed to send image data through channel: {}",
+                                        err
+                                    );
+                                    break;
+                                }
+
+                                // Clear the filmstrip_images array
+                                filmstrip_images.clear();
                             }
                         } else {
                             log::error!("Failed to create ImageBuffer");

@@ -655,6 +655,10 @@ struct Args {
     /// Image Height - Image height in pixels of Thumbnail extracted images
     #[clap(long, env = "IMAGE_HEIGHT", default_value_t = 240)]
     image_height: u32,
+
+    /// filmstrip length
+    #[clap(long, env = "FILMSTRIP_LENGTH", default_value_t = 10)]
+    filmstrip_length: usize,
 }
 
 // MAIN Function
@@ -1448,6 +1452,7 @@ async fn rscap() {
         args.save_images,
         args.image_sample_rate_ns,
         args.image_height,
+        args.filmstrip_length,
     );
 
     // Perform TR 101 290 checks

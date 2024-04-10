@@ -58,6 +58,7 @@ image = "0.25.1"
 num_cpus = "1.16.0"
 threadpool = "1.8.1"
 base64 = "0.22.0"
+rusttype = "0.9.3"
 
 [build-dependencies]
 capnpc = "0.18.0"
