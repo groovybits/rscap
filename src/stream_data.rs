@@ -22,12 +22,16 @@ use gstreamer_video::VideoFormat;
 use gstreamer_video::VideoInfo;
 #[cfg(feature = "gst")]
 use image::imageops::resize;
+use image::Pixel;
 #[cfg(feature = "gst")]
 use image::{ImageBuffer, Rgb};
+use imageproc::drawing::draw_filled_rect_mut;
+use imageproc::rect::Rect;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use rtp::RtpReader;
 use rtp_rs as rtp;
+use rusttype::{Font, Scale};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::{fmt, sync::Arc, sync::Mutex};
@@ -280,7 +284,12 @@ pub fn pull_images(
                                 // Concatenate the images into the filmstrip
                                 for (i, img) in filmstrip_images.iter().enumerate() {
                                     let x_offset = i as u32 * scaled_width;
-                                    image::imageops::overlay(&mut filmstrip, img, x_offset, 0);
+                                    image::imageops::overlay(
+                                        &mut filmstrip,
+                                        img,
+                                        x_offset.into(),
+                                        0,
+                                    );
                                 }
 
                                 // Add padding and timecode to the filmstrip
@@ -292,39 +301,67 @@ pub fn pull_images(
                                 image::imageops::overlay(
                                     &mut padded_filmstrip,
                                     &filmstrip,
-                                    padding,
-                                    padding,
+                                    padding.into(),
+                                    padding.into(),
                                 );
 
                                 // Burn in the timecode
-                                let font = Vec::from(include_bytes!("Arial.ttf") as &[u8]);
-                                let font = rusttype::Font::try_from_bytes(&font).unwrap();
-                                let scale = rusttype::Scale::uniform(20.0);
+                                let font_data =
+                                    Vec::from(include_bytes!("../fonts/TrebuchetMS.ttf") as &[u8]);
+                                let font = Font::try_from_bytes(&font_data).unwrap();
+                                let scale = Scale::uniform(20.0);
                                 let timecode = format!("{}", pts);
-                                let color = image::Rgba([255, 255, 255, 255]);
-                                let text_width = rusttype::FontCollection::from_bytes(font.data())
-                                    .unwrap()
-                                    .into_font()
+                                let v_metrics = font.v_metrics(scale);
+                                let glyphs: Vec<_> = font
                                     .layout(&timecode, scale, rusttype::point(0.0, 0.0))
+                                    .collect();
+                                let text_width = glyphs
                                     .last()
-                                    .unwrap()
-                                    .pixel_bounding_box()
-                                    .unwrap()
-                                    .width()
+                                    .map(|g| g.pixel_bounding_box().unwrap().max.x)
+                                    .unwrap_or(0)
                                     as u32;
-                                let text_height = scale.y.ceil() as u32;
+                                let text_height =
+                                    (v_metrics.ascent - v_metrics.descent).ceil() as u32;
                                 let x_pos = padding as i32;
                                 let y_pos = (scaled_height + padding as u32 - text_height) as i32;
-                                image_utils::draw_text_mut(
+
+                                // Draw a filled rectangle as the background for the text
+                                draw_filled_rect_mut(
                                     &mut padded_filmstrip,
-                                    color,
-                                    x_pos,
-                                    y_pos,
-                                    scale,
-                                    &font,
-                                    &timecode,
+                                    Rect::at(x_pos, y_pos).of_size(text_width as u32, text_height),
+                                    image::Rgb([0, 0, 0]), // Black background color
                                 );
 
+                                // Draw the text
+                                let mut text_image =
+                                    image::ImageBuffer::new(text_width, text_height);
+                                for g in glyphs {
+                                    if let Some(bounding_box) = g.pixel_bounding_box() {
+                                        g.draw(|x, y, v| {
+                                            let x = x as i32 + bounding_box.min.x;
+                                            let y = y as i32 + bounding_box.min.y;
+                                            let alpha = (v * 255.0) as u8;
+                                            if x >= 0
+                                                && x < text_width as i32
+                                                && y >= 0
+                                                && y < text_height as i32
+                                            {
+                                                let pixel =
+                                                    text_image.get_pixel_mut(x as u32, y as u32);
+                                                *pixel = image::Rgb([255, 255, 255]);
+                                                pixel.blend(&image::Rgb([alpha, alpha, alpha]));
+                                            }
+                                        });
+                                    }
+                                }
+
+                                // Overlay the text image onto the padded filmstrip
+                                image::imageops::overlay(
+                                    &mut padded_filmstrip,
+                                    &text_image,
+                                    (x_pos as u32).into(),
+                                    (y_pos as u32).into(),
+                                );
                                 // Convert the padded filmstrip to a JPEG vector
                                 let mut jpeg_data = Vec::new();
                                 let mut encoder =
