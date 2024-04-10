@@ -61,6 +61,7 @@ base64 = "0.22.0"
 rusttype = "0.9.3"
 imageproc = "0.24.0"
 ab_glyph = "0.2.24"
+datetime = "0.5.2"
 
 [build-dependencies]
 capnpc = "0.18.0"

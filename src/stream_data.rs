@@ -9,6 +9,8 @@ use crate::system_stats::get_system_stats;
 use crate::system_stats::SystemStats;
 use ahash::AHashMap;
 #[cfg(feature = "gst")]
+use chrono::DateTime;
+#[cfg(feature = "gst")]
 use gst_app::{AppSink, AppSrc};
 #[cfg(feature = "gst")]
 use gstreamer as gst;
@@ -313,8 +315,15 @@ pub fn pull_images(
                                 let font_data =
                                     Vec::from(include_bytes!("../fonts/TrebuchetMS.ttf") as &[u8]);
                                 let font = Font::try_from_bytes(&font_data).unwrap();
-                                let scale = Scale::uniform(20.0);
-                                let timecode = format!("{}", pts);
+                                let scale = Scale::uniform(12.0);
+                                let pts_seconds = pts as f64 / 1_000_000_000.0; // Convert nanoseconds to seconds
+                                let pts_milliseconds = (pts_seconds * 1000.0) as u64; // Convert seconds to milliseconds
+                                let pts_datetime =
+                                    DateTime::from_timestamp_millis(pts_milliseconds as i64)
+                                        .unwrap_or_else(|| {
+                                            DateTime::from_timestamp_millis(0).unwrap()
+                                        });
+                                let timecode = pts_datetime.format("%H:%M:%S%.3f").to_string(); // Format as HH:MM:SS.mmm
                                 let v_metrics = font.v_metrics(scale);
                                 let glyphs: Vec<_> = font
                                     .layout(&timecode, scale, rusttype::point(0.0, 0.0))
