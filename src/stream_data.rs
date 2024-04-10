@@ -202,6 +202,7 @@ pub fn pull_images(
     image_sender: mpsc::Sender<(Vec<u8>, u64)>,
     save_images: bool,
     sample_interval: u64,
+    image_height: u32,
 ) {
     tokio::spawn(async move {
         let mut frame_count = 0;
@@ -243,7 +244,7 @@ pub fn pull_images(
                         if let Some(image) =
                             ImageBuffer::<Rgb<u8>, _>::from_raw(width, height, data.clone())
                         {
-                            let scaled_height = 480;
+                            let scaled_height = image_height;
                             let scaled_width =
                                 (width as f32 / height as f32 * scaled_height as f32) as u32;
 

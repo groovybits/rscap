@@ -651,6 +651,10 @@ struct Args {
     /// Image Sample Rate Ns - Image sample rate in nano seconds
     #[clap(long, env = "IMAGE_SAMPLE_RATE_NS", default_value_t = 1_000_000_000)]
     image_sample_rate_ns: u64,
+
+    /// Image Height - Image height in pixels of Thumbnail extracted images
+    #[clap(long, env = "IMAGE_HEIGHT", default_value_t = 240)]
+    image_height: u32,
 }
 
 // MAIN Function
@@ -1443,6 +1447,7 @@ async fn rscap() {
         image_sender,
         args.save_images,
         args.image_sample_rate_ns,
+        args.image_height,
     );
 
     // Perform TR 101 290 checks
