@@ -224,6 +224,8 @@ pub fn pull_images(
                     }
                 }
             }
+            // Sleep for a short time to avoid busy loop
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     });
 }
