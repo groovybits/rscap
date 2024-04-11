@@ -30,6 +30,7 @@ use std::collections::VecDeque;
 use std::{fmt, sync::Arc, sync::Mutex};
 #[cfg(feature = "gst")]
 use tokio::sync::mpsc;
+use tokio::time::Duration;
 
 const IAT_CAPTURE_WINDOW_SIZE: usize = 1000;
 

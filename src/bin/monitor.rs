@@ -883,14 +883,10 @@ async fn main() {
                     demux_buf[buf_end..buf_end + packet_len].copy_from_slice(&packet);
                     buf_end += packet_len;
 
-                    /*let packet_arc = Arc::new(packet);
-                    hexdump(&packet_arc, 0, packet_len);*/
                     demux.push(&mut demux_ctx, &demux_buf[0..buf_end]);
-                    // Additional processing as required
                 }
                 None => {
-                    // Handle error or shutdown
-                    break;
+                    std::thread::sleep(std::time::Duration::from_millis(1000));
                 }
             }
         }
@@ -906,7 +902,7 @@ async fn main() {
             }
 
             if !args.mpegts_reader {
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_millis(1000)).await;
                 continue;
             }
 
@@ -932,7 +928,7 @@ async fn main() {
 
             if !args.mpegts_reader && !args.decode_video {
                 // Sleep for a short duration to prevent a tight loop
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_millis(1000)).await;
                 continue;
             }
 
@@ -1106,9 +1102,10 @@ async fn main() {
                     // Clear the batch after processing
                     batch.clear();
                 }
-                _ = tokio::time::sleep(Duration::from_millis(10)), if !running_decoder.load(Ordering::SeqCst) => {
+                _ = tokio::time::sleep(Duration::from_millis(100)), if !running_decoder.load(Ordering::SeqCst) => {
                     // This branch allows checking the running flag regularly
                     info!("Decoder thread received stop signal.");
+                    tokio::time::sleep(Duration::from_millis(1000)).await;
                     break;
                 }
             }
@@ -1165,358 +1162,376 @@ async fn main() {
             break;
         }
 
-        // Now, receive the data message
-        let packet_msg = zmq_sub
-            .recv_multipart(0)
-            .expect("Failed to receive header message");
+        match zmq_sub.recv_multipart(0) {
+            Ok(packet_msg) => {
+                // get first message
+                let header_msg = packet_msg[0].clone();
 
-        // get first message
-        let header_msg = packet_msg[0].clone();
+                if show_os_stats && dot_last_sent_stats.elapsed().as_secs() > 10 {
+                    dot_last_sent_stats = Instant::now();
 
-        if show_os_stats && dot_last_sent_stats.elapsed().as_secs() > 10 {
-            dot_last_sent_stats = Instant::now();
+                    // OS and Network stats
+                    system_stats_json = get_stats_as_json(StatsType::System).await;
 
-            // OS and Network stats
-            system_stats_json = get_stats_as_json(StatsType::System).await;
-
-            if show_os_stats && system_stats_json != json!({}) {
-                info!("System stats as JSON:\n{:?}", system_stats_json);
-            }
-        }
-
-        // Deserialize the received message into StreamData
-        match capnp_to_stream_data(&header_msg) {
-            Ok(stream_data) => {
-                // print the structure of the packet
-                log::debug!("MONITOR::PACKET:RECEIVE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {}",
-                    counter + 1,
-                    stream_data.pid,
-                    stream_data.stream_type,
-                    stream_data.bitrate,
-                    stream_data.bitrate_max,
-                    stream_data.bitrate_min,
-                    stream_data.bitrate_avg,
-                    stream_data.iat,
-                    stream_data.iat_max,
-                    stream_data.iat_min,
-                    stream_data.iat_avg,
-                    stream_data.error_count,
-                    stream_data.continuity_counter,
-                    stream_data.timestamp,
-                );
-
-                // get data message
-                let data_msg = packet_msg[1].clone();
-
-                // Process raw data packet
-                total_bytes += data_msg.len();
-                debug!(
-                    "Monitor: #{} Received {}/{} bytes",
-                    counter,
-                    data_msg.len(),
-                    total_bytes
-                );
-
-                if debug_on {
-                    let data_msg_arc = Arc::new(data_msg.to_vec());
-                    hexdump(&data_msg_arc, 0, data_msg.len());
+                    if show_os_stats && system_stats_json != json!({}) {
+                        info!("System stats as JSON:\n{:?}", system_stats_json);
+                    }
                 }
 
-                let mut base64_image = String::new();
+                // Deserialize the received message into StreamData
+                match capnp_to_stream_data(&header_msg) {
+                    Ok(stream_data) => {
+                        // print the structure of the packet
+                        log::debug!("MONITOR::PACKET:RECEIVE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {}",
+                                 counter + 1,
+                                 stream_data.pid,
+                                 stream_data.stream_type,
+                                 stream_data.bitrate,
+                                 stream_data.bitrate_max,
+                                 stream_data.bitrate_min,
+                                 stream_data.bitrate_avg,
+                                 stream_data.iat,
+                                 stream_data.iat_max,
+                                 stream_data.iat_min,
+                                 stream_data.iat_avg,
+                                 stream_data.error_count,
+                                 stream_data.continuity_counter,
+                                 stream_data.timestamp,
+                             );
 
-                // Check if Decoding or if Demuxing
-                if args.recv_raw_stream {
-                    // Initialize an Option<File> to None
-                    let mut output_file_mut = if !output_file.is_empty() {
-                        Some(File::create(&output_file).unwrap())
-                    } else {
-                        None
-                    };
+                        // get data message
+                        let data_msg = packet_msg[1].clone();
 
-                    if args.decode_video || args.mpegts_reader {
-                        if video_batch.len() >= args.decode_video_batch_size {
-                            dtx.send(video_batch).await.unwrap(); // Clone if necessary
-                            video_batch = Vec::new();
-                        } else {
-                            let mut stream_data_clone = stream_data.clone();
-                            stream_data_clone.packet_start = 0;
-                            stream_data_clone.packet_len = data_msg.len();
-                            stream_data_clone.packet = Arc::new(data_msg.to_vec());
-                            video_batch.push(stream_data_clone);
-                        }
-                    }
-
-                    // Write to file if output_file is provided
-                    if let Some(file) = output_file_mut.as_mut() {
-                        output_file_counter += 1;
-                        if !no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
-                            dot_last_file_write = Instant::now();
-                            print!("*");
-                            // flush stdout
-                            std::io::stdout().flush().unwrap();
-                        }
-                        file.write_all(&data_msg).unwrap();
-                    }
-                } else {
-                    // change output_file_name_mut to contain an incrementing _00000000.jpg ending
-                    // use output_file_counter to increment the file name
-                    // example output_file_name_mut = "output_{:08}.jpg", output_file_counter
-                    // remove existing .jpg if given first
-                    let output_file_without_jpg = output_file.replace(".jpg", "");
-                    if data_msg.len() > 0 && stream_data.has_image > 0 {
-                        log::debug!(
-                            "Monitor: Jpeg image received: {} size {} pts",
+                        // Process raw data packet
+                        total_bytes += data_msg.len();
+                        debug!(
+                            "Monitor: #{} Received {}/{} bytes",
+                            counter,
                             data_msg.len(),
-                            stream_data.image_pts
+                            total_bytes
                         );
-                        let output_file_incremental =
-                            format!("{}_{:08}.jpg", output_file_without_jpg, output_file_counter);
 
-                        let mut output_file_mut = if !output_file.is_empty() {
-                            Some(File::create(&output_file_incremental).unwrap())
-                        } else {
-                            None
-                        };
-
-                        // Write to file if output_file is provided
-                        if let Some(file) = output_file_mut.as_mut() {
-                            output_file_counter += 1;
-                            if !no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
-                                dot_last_file_write = Instant::now();
-                                print!("*");
-                                // flush stdout
-                                std::io::stdout().flush().unwrap();
-                            }
-                            file.write_all(&data_msg).unwrap();
-                        }
-
-                        // Encode the JPEG image as Base64
-                        base64_image = general_purpose::STANDARD.encode(&data_msg);
-                    }
-                }
-
-                let pid = stream_data.pid;
-                {
-                    let mut stream_groupings = STREAM_GROUPINGS.write().unwrap();
-                    if let Some(grouping) = stream_groupings.get_mut(&pid) {
-                        // Update the existing StreamData instance in the grouping
-                        let last_stream_data = grouping.stream_data_list.last_mut().unwrap();
-                        *last_stream_data = stream_data.clone();
-                    } else {
-                        let new_grouping = StreamGrouping {
-                            stream_data_list: vec![stream_data.clone()],
-                        };
-                        stream_groupings.insert(pid, new_grouping);
-                    }
-                }
-
-                // Check if it's time to send data to Kafka based on the interval
-                if send_to_kafka {
-                    // Acquire read access to STREAM_GROUPINGS
-                    let stream_groupings = STREAM_GROUPINGS.read().unwrap();
-                    let mut flattened_data = flatten_streams(&stream_groupings);
-
-                    // Initialize variables to accumulate global averages
-                    let mut total_bitrate_avg: u64 = 0;
-                    let mut total_iat_avg: u64 = 0;
-                    let mut total_iat_max: u64 = 0;
-                    let mut total_cc_errors: u64 = 0;
-                    let mut total_cc_errors_current: u64 = 0;
-                    let mut stream_count: u64 = 0;
-                    let mut source_ip: String = String::new();
-                    let mut source_port: u32 = 0;
-                    let mut image_pts: u64 = 0;
-                    let mut probe_id: String = String::new();
-
-                    // Process each stream to accumulate averages
-                    for (_, grouping) in stream_groupings.iter() {
-                        for stream_data in &grouping.stream_data_list {
-                            total_bitrate_avg += stream_data.bitrate_avg as u64;
-                            total_iat_avg += stream_data.capture_iat;
-                            total_iat_max += stream_data.capture_iat_max;
-                            total_cc_errors += stream_data.error_count as u64;
-                            total_cc_errors_current += stream_data.current_error_count as u64;
-                            source_port = stream_data.source_port as u32;
-                            source_ip = stream_data.source_ip.clone();
-                            if stream_data.has_image > 0 && stream_data.image_pts > 0 {
-                                image_pts = stream_data.image_pts;
-                            }
-                            if stream_data.log_message != "" {
-                                log::info!(
-                                    "Monitor Log message received: {}",
-                                    stream_data.log_message
-                                );
-                                log_messages.push(stream_data.log_message.clone());
-                            }
-                            if stream_data.probe_id != "" {
-                                if probe_id != "" && probe_id != stream_data.probe_id {
-                                    log::warn!(
-                                        "Multiple probe IDs detected: {} and {}",
-                                        probe_id,
-                                        stream_data.probe_id
-                                    );
-                                }
-                                probe_id = stream_data.probe_id.clone();
-                            }
-                            stream_count += 1;
-                        }
-                    }
-
-                    // Get the ProbeData for the current probe_id or create a new one if it doesn't exist
-                    let probe_data =
-                        probe_data_map
-                            .entry(probe_id.clone())
-                            .or_insert_with(|| ProbeData {
-                                flattened_data: serde_json::Map::new(),
-                                last_kafka_send_time: Instant::now(),
-                                log_messages: Vec::new(),
-                            });
-
-                    // Continuity Counter errors
-                    let global_cc_errors = total_cc_errors;
-                    let global_cc_errors_current = total_cc_errors_current;
-
-                    // avg IAT
-                    let global_iat_avg = if stream_count > 0 {
-                        total_iat_avg as f64 / stream_count as f64
-                    } else {
-                        0.0
-                    };
-
-                    // max IAT
-                    let global_iat_max = if stream_count > 0 {
-                        total_iat_max as f64 / stream_count as f64
-                    } else {
-                        0.0
-                    };
-
-                    // Calculate global averages
-                    let global_bitrate_avg = if stream_count > 0 {
-                        total_bitrate_avg
-                    } else {
-                        0
-                    };
-                    let current_timestamp = current_unix_timestamp_ms().unwrap_or(0); // stream_data.capture_time;
-
-                    // Directly insert global statistics and timestamp into the flattened_data map
-                    flattened_data.insert(
-                        "bitrate_avg_global".to_string(),
-                        serde_json::json!(global_bitrate_avg),
-                    );
-                    flattened_data.insert(
-                        "iat_avg_global".to_string(),
-                        serde_json::json!(global_iat_avg),
-                    );
-                    flattened_data.insert(
-                        "iat_max_global".to_string(),
-                        serde_json::json!(global_iat_max),
-                    );
-                    flattened_data.insert(
-                        "cc_errors_global".to_string(),
-                        serde_json::json!(global_cc_errors),
-                    );
-                    flattened_data.insert(
-                        "current_cc_errors_global".to_string(),
-                        serde_json::json!(global_cc_errors_current),
-                    );
-                    flattened_data.insert(
-                        "timestamp".to_string(),
-                        serde_json::json!(current_timestamp),
-                    );
-                    flattened_data.insert("source_ip".to_string(), serde_json::json!(source_ip));
-                    flattened_data
-                        .insert("source_port".to_string(), serde_json::json!(source_port));
-
-                    // Insert the base64_image field into the flattened_data map
-                    flattened_data.insert("image_pts".to_string(), serde_json::json!(image_pts));
-                    let base64_image_tag = if base64_image != "" {
-                        format!("data:image/jpeg;base64,{}", base64_image)
-                    } else {
-                        "".to_string()
-                    };
-                    flattened_data.insert(
-                        "base64_image".to_string(),
-                        serde_json::json!(base64_image_tag),
-                    );
-                    // Check if we have a log_message in log_messages Vector, if so add it to the flattened_data map
-                    let mut got_log_message = false;
-                    if !probe_data.log_messages.is_empty() {
-                        // get a log_message
-                        let log_message = probe_data.log_messages.remove(0);
-                        flattened_data
-                            .insert("log_message".to_string(), serde_json::json!(log_message));
-                        got_log_message = true;
-                    } else if !log_messages.is_empty() {
-                        // get a log_message
-                        let log_message = log_messages.remove(0);
-                        flattened_data
-                            .insert("log_message".to_string(), serde_json::json!(log_message));
-                        got_log_message = true;
-                    } else {
-                        flattened_data.insert("log_message".to_string(), serde_json::json!(""));
-                    }
-                    // probe id
-                    flattened_data.insert("id".to_string(), serde_json::json!(probe_id));
-
-                    // Update the flattened_data for the current probe_id
-                    probe_data.flattened_data = flattened_data;
-
-                    // Convert the Map directly to a Value for serialization
-                    let combined_stats =
-                        serde_json::Value::Object(probe_data.flattened_data.clone());
-
-                    // Update the log_messages for the current probe_id
-                    if !log_messages.is_empty() {
-                        probe_data.log_messages.extend(log_messages.drain(..));
-                    }
-
-                    // Check if it's time to send data to Kafka based on the interval
-                    if base64_image_tag != ""
-                        || got_log_message
-                        || probe_data.last_kafka_send_time.elapsed().as_millis()
-                            >= args.kafka_interval as u128
-                    {
-                        // Serialization
-                        let ser_data = serde_json::to_vec(&combined_stats)
-                            .expect("Failed to serialize for Kafka");
-
-                        // Debug output if enabled
                         if debug_on {
-                            let ser_data_str = String::from_utf8_lossy(&ser_data);
-                            debug!("MONITOR::PACKET:SERIALIZED_DATA: {}", ser_data_str);
+                            let data_msg_arc = Arc::new(data_msg.to_vec());
+                            hexdump(&data_msg_arc, 0, data_msg.len());
                         }
 
-                        // Kafka message production
-                        let future = produce_message(
-                            ser_data,
-                            kafka_broker.clone(),
-                            kafka_topic.clone(),
-                            kafka_timeout,
-                            kafka_key.clone(),
-                            current_unix_timestamp_ms().unwrap_or(0) as i64,
-                            producer.clone(),
-                            &admin_client,
-                        );
+                        let mut base64_image = String::new();
 
-                        // Await the future for sending the message
-                        future.await;
-                        probe_data.last_kafka_send_time = Instant::now();
+                        // Check if Decoding or if Demuxing
+                        if args.recv_raw_stream {
+                            // Initialize an Option<File> to None
+                            let mut output_file_mut = if !output_file.is_empty() {
+                                Some(File::create(&output_file).unwrap())
+                            } else {
+                                None
+                            };
+
+                            if args.decode_video || args.mpegts_reader {
+                                if video_batch.len() >= args.decode_video_batch_size {
+                                    dtx.send(video_batch).await.unwrap(); // Clone if necessary
+                                    video_batch = Vec::new();
+                                } else {
+                                    let mut stream_data_clone = stream_data.clone();
+                                    stream_data_clone.packet_start = 0;
+                                    stream_data_clone.packet_len = data_msg.len();
+                                    stream_data_clone.packet = Arc::new(data_msg.to_vec());
+                                    video_batch.push(stream_data_clone);
+                                }
+                            }
+
+                            // Write to file if output_file is provided
+                            if let Some(file) = output_file_mut.as_mut() {
+                                output_file_counter += 1;
+                                if !no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
+                                    dot_last_file_write = Instant::now();
+                                    print!("*");
+                                    // flush stdout
+                                    std::io::stdout().flush().unwrap();
+                                }
+                                file.write_all(&data_msg).unwrap();
+                            }
+                        } else {
+                            // change output_file_name_mut to contain an incrementing _00000000.jpg ending
+                            // use output_file_counter to increment the file name
+                            // example output_file_name_mut = "output_{:08}.jpg", output_file_counter
+                            // remove existing .jpg if given first
+                            let output_file_without_jpg = output_file.replace(".jpg", "");
+                            if data_msg.len() > 0 && stream_data.has_image > 0 {
+                                log::debug!(
+                                    "Monitor: Jpeg image received: {} size {} pts",
+                                    data_msg.len(),
+                                    stream_data.image_pts
+                                );
+                                let output_file_incremental = format!(
+                                    "{}_{:08}.jpg",
+                                    output_file_without_jpg, output_file_counter
+                                );
+
+                                let mut output_file_mut = if !output_file.is_empty() {
+                                    Some(File::create(&output_file_incremental).unwrap())
+                                } else {
+                                    None
+                                };
+
+                                // Write to file if output_file is provided
+                                if let Some(file) = output_file_mut.as_mut() {
+                                    output_file_counter += 1;
+                                    if !no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
+                                        dot_last_file_write = Instant::now();
+                                        print!("*");
+                                        // flush stdout
+                                        std::io::stdout().flush().unwrap();
+                                    }
+                                    file.write_all(&data_msg).unwrap();
+                                }
+
+                                // Encode the JPEG image as Base64
+                                base64_image = general_purpose::STANDARD.encode(&data_msg);
+                            }
+                        }
+
+                        let pid = stream_data.pid;
+                        {
+                            let mut stream_groupings = STREAM_GROUPINGS.write().unwrap();
+                            if let Some(grouping) = stream_groupings.get_mut(&pid) {
+                                // Update the existing StreamData instance in the grouping
+                                let last_stream_data =
+                                    grouping.stream_data_list.last_mut().unwrap();
+                                *last_stream_data = stream_data.clone();
+                            } else {
+                                let new_grouping = StreamGrouping {
+                                    stream_data_list: vec![stream_data.clone()],
+                                };
+                                stream_groupings.insert(pid, new_grouping);
+                            }
+                        }
+
+                        // Check if it's time to send data to Kafka based on the interval
+                        if send_to_kafka {
+                            // Acquire read access to STREAM_GROUPINGS
+                            let stream_groupings = STREAM_GROUPINGS.read().unwrap();
+                            let mut flattened_data = flatten_streams(&stream_groupings);
+
+                            // Initialize variables to accumulate global averages
+                            let mut total_bitrate_avg: u64 = 0;
+                            let mut total_iat_avg: u64 = 0;
+                            let mut total_iat_max: u64 = 0;
+                            let mut total_cc_errors: u64 = 0;
+                            let mut total_cc_errors_current: u64 = 0;
+                            let mut stream_count: u64 = 0;
+                            let mut source_ip: String = String::new();
+                            let mut source_port: u32 = 0;
+                            let mut image_pts: u64 = 0;
+                            let mut probe_id: String = String::new();
+
+                            // Process each stream to accumulate averages
+                            for (_, grouping) in stream_groupings.iter() {
+                                for stream_data in &grouping.stream_data_list {
+                                    total_bitrate_avg += stream_data.bitrate_avg as u64;
+                                    total_iat_avg += stream_data.capture_iat;
+                                    total_iat_max += stream_data.capture_iat_max;
+                                    total_cc_errors += stream_data.error_count as u64;
+                                    total_cc_errors_current +=
+                                        stream_data.current_error_count as u64;
+                                    source_port = stream_data.source_port as u32;
+                                    source_ip = stream_data.source_ip.clone();
+                                    if stream_data.has_image > 0 && stream_data.image_pts > 0 {
+                                        image_pts = stream_data.image_pts;
+                                    }
+                                    if stream_data.log_message != "" {
+                                        log::info!(
+                                            "Monitor Log message received: {}",
+                                            stream_data.log_message
+                                        );
+                                        log_messages.push(stream_data.log_message.clone());
+                                    }
+                                    if stream_data.probe_id != "" {
+                                        if probe_id != "" && probe_id != stream_data.probe_id {
+                                            log::warn!(
+                                                "Multiple probe IDs detected: {} and {}",
+                                                probe_id,
+                                                stream_data.probe_id
+                                            );
+                                        }
+                                        probe_id = stream_data.probe_id.clone();
+                                    }
+                                    stream_count += 1;
+                                }
+                            }
+
+                            // Get the ProbeData for the current probe_id or create a new one if it doesn't exist
+                            let probe_data =
+                                probe_data_map.entry(probe_id.clone()).or_insert_with(|| {
+                                    ProbeData {
+                                        flattened_data: serde_json::Map::new(),
+                                        last_kafka_send_time: Instant::now(),
+                                        log_messages: Vec::new(),
+                                    }
+                                });
+
+                            // Continuity Counter errors
+                            let global_cc_errors = total_cc_errors;
+                            let global_cc_errors_current = total_cc_errors_current;
+
+                            // avg IAT
+                            let global_iat_avg = if stream_count > 0 {
+                                total_iat_avg as f64 / stream_count as f64
+                            } else {
+                                0.0
+                            };
+
+                            // max IAT
+                            let global_iat_max = if stream_count > 0 {
+                                total_iat_max as f64 / stream_count as f64
+                            } else {
+                                0.0
+                            };
+
+                            // Calculate global averages
+                            let global_bitrate_avg = if stream_count > 0 {
+                                total_bitrate_avg
+                            } else {
+                                0
+                            };
+                            let current_timestamp = current_unix_timestamp_ms().unwrap_or(0); // stream_data.capture_time;
+
+                            // Directly insert global statistics and timestamp into the flattened_data map
+                            flattened_data.insert(
+                                "bitrate_avg_global".to_string(),
+                                serde_json::json!(global_bitrate_avg),
+                            );
+                            flattened_data.insert(
+                                "iat_avg_global".to_string(),
+                                serde_json::json!(global_iat_avg),
+                            );
+                            flattened_data.insert(
+                                "iat_max_global".to_string(),
+                                serde_json::json!(global_iat_max),
+                            );
+                            flattened_data.insert(
+                                "cc_errors_global".to_string(),
+                                serde_json::json!(global_cc_errors),
+                            );
+                            flattened_data.insert(
+                                "current_cc_errors_global".to_string(),
+                                serde_json::json!(global_cc_errors_current),
+                            );
+                            flattened_data.insert(
+                                "timestamp".to_string(),
+                                serde_json::json!(current_timestamp),
+                            );
+                            flattened_data
+                                .insert("source_ip".to_string(), serde_json::json!(source_ip));
+                            flattened_data
+                                .insert("source_port".to_string(), serde_json::json!(source_port));
+
+                            // Insert the base64_image field into the flattened_data map
+                            flattened_data
+                                .insert("image_pts".to_string(), serde_json::json!(image_pts));
+                            let base64_image_tag = if base64_image != "" {
+                                format!("data:image/jpeg;base64,{}", base64_image)
+                            } else {
+                                "".to_string()
+                            };
+                            flattened_data.insert(
+                                "base64_image".to_string(),
+                                serde_json::json!(base64_image_tag),
+                            );
+                            // Check if we have a log_message in log_messages Vector, if so add it to the flattened_data map
+                            let mut got_log_message = false;
+                            if !probe_data.log_messages.is_empty() {
+                                // get a log_message
+                                let log_message = probe_data.log_messages.remove(0);
+                                flattened_data.insert(
+                                    "log_message".to_string(),
+                                    serde_json::json!(log_message),
+                                );
+                                got_log_message = true;
+                            } else if !log_messages.is_empty() {
+                                // get a log_message
+                                let log_message = log_messages.remove(0);
+                                flattened_data.insert(
+                                    "log_message".to_string(),
+                                    serde_json::json!(log_message),
+                                );
+                                got_log_message = true;
+                            } else {
+                                flattened_data
+                                    .insert("log_message".to_string(), serde_json::json!(""));
+                            }
+                            // probe id
+                            flattened_data.insert("id".to_string(), serde_json::json!(probe_id));
+
+                            // Update the flattened_data for the current probe_id
+                            probe_data.flattened_data = flattened_data;
+
+                            // Convert the Map directly to a Value for serialization
+                            let combined_stats =
+                                serde_json::Value::Object(probe_data.flattened_data.clone());
+
+                            // Update the log_messages for the current probe_id
+                            if !log_messages.is_empty() {
+                                probe_data.log_messages.extend(log_messages.drain(..));
+                            }
+
+                            // Check if it's time to send data to Kafka based on the interval
+                            if base64_image_tag != ""
+                                || got_log_message
+                                || probe_data.last_kafka_send_time.elapsed().as_millis()
+                                    >= args.kafka_interval as u128
+                            {
+                                // Serialization
+                                let ser_data = serde_json::to_vec(&combined_stats)
+                                    .expect("Failed to serialize for Kafka");
+
+                                // Debug output if enabled
+                                if debug_on {
+                                    let ser_data_str = String::from_utf8_lossy(&ser_data);
+                                    debug!("MONITOR::PACKET:SERIALIZED_DATA: {}", ser_data_str);
+                                }
+
+                                // Kafka message production
+                                let future = produce_message(
+                                    ser_data,
+                                    kafka_broker.clone(),
+                                    kafka_topic.clone(),
+                                    kafka_timeout,
+                                    kafka_key.clone(),
+                                    current_unix_timestamp_ms().unwrap_or(0) as i64,
+                                    producer.clone(),
+                                    &admin_client,
+                                );
+
+                                // Await the future for sending the message
+                                future.await;
+                                probe_data.last_kafka_send_time = Instant::now();
+                            } else {
+                                // No message to send, wait for a short duration before the next iteration
+                                tokio::time::sleep(Duration::from_millis(10)).await;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Error deserializing message: {:?}", e);
                     }
                 }
+
+                if !no_progress && dot_last_sent_ts.elapsed().as_secs() > 1 {
+                    dot_last_sent_ts = Instant::now();
+                    print!(".");
+                    // flush stdout
+                    std::io::stdout().flush().unwrap();
+                }
+
+                counter += 1;
             }
-            Err(e) => {
-                error!("Error deserializing message: {:?}", e);
+            Err(_) => {
+                // No packet received, wait for a short duration before the next iteration
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                continue;
             }
         }
-
-        if !no_progress && dot_last_sent_ts.elapsed().as_secs() > 1 {
-            dot_last_sent_ts = Instant::now();
-            print!(".");
-            // flush stdout
-            std::io::stdout().flush().unwrap();
-        }
-
-        counter += 1;
     }
 
     demuxer_thread.await.unwrap();
