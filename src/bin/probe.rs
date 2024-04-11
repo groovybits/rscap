@@ -233,6 +233,7 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
         stream_data_msg.set_has_image(stream_data.has_image);
         stream_data_msg.set_image_pts(stream_data.image_pts);
         stream_data_msg.set_capture_iat_max(stream_data.capture_iat_max);
+        stream_data_msg.set_log_message(stream_data.log_message.as_str().into())
     }
 
     Ok(message)

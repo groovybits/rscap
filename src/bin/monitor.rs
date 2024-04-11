@@ -1408,6 +1408,8 @@ async fn main() {
                         log_messages.remove(0);
                         flattened_data
                             .insert("log_message".to_string(), serde_json::json!(log_message));
+                    } else {
+                        flattened_data.insert("log_message".to_string(), serde_json::json!(""));
                     }
 
                     // Convert the Map directly to a Value for serialization
