@@ -329,6 +329,7 @@ pub struct StreamData {
     pub image_pts: u64,
     pub capture_iat_max: u64,
     pub log_message: String,
+    pub probe_id: String,
 }
 
 impl Clone for StreamData {
@@ -392,6 +393,7 @@ impl Clone for StreamData {
             image_pts: self.image_pts,
             capture_iat_max: self.capture_iat_max,
             log_message: self.log_message.clone(),
+            probe_id: self.probe_id.clone(),
         }
     }
 }
@@ -414,6 +416,7 @@ impl StreamData {
         source_ip: String,
         source_port: i32,
         system_stats: SystemStats,
+        probe_id: String,
     ) -> Self {
         // convert capture_timestamp to unix timestamp in milliseconds since epoch
         let last_arrival_time = capture_timestamp;
@@ -478,6 +481,7 @@ impl StreamData {
             image_pts: 0,
             capture_iat_max: capture_iat,
             log_message: "".to_string(),
+            probe_id,
         }
     }
     // set RTP fields
@@ -901,6 +905,7 @@ pub fn process_packet(
     errors: &mut Tr101290Errors,
     is_mpegts: bool,
     pmt_pid: u16,
+    probe_id: String,
 ) {
     let packet: &[u8] = &stream_data_packet.packet[stream_data_packet.packet_start
         ..stream_data_packet.packet_start + stream_data_packet.packet_len];
@@ -967,6 +972,7 @@ pub fn process_packet(
             if stream_data_packet.timestamp == 0 {
                 stream_data_packet.timestamp = stream_data.timestamp;
             }
+            stream_data_packet.probe_id = probe_id.clone();
 
             // write the stream_data back to the pid_map with modified values
             pid_map.insert(pid, stream_data);
@@ -995,6 +1001,7 @@ pub fn process_packet(
                     stream_data_packet.source_ip.clone(),
                     stream_data_packet.source_port,
                     system_stats,
+                    probe_id.clone(),
                 ));
                 Arc::make_mut(&mut stream_data).update_stats(packet.len());
                 Arc::make_mut(&mut stream_data).update_capture_iat(stream_data_packet.capture_iat);
@@ -1016,6 +1023,7 @@ pub fn update_pid_map(
     capture_iat: u64,
     source_ip: String,
     source_port: i32,
+    probe_id: String,
 ) {
     let mut pid_map = PID_MAP.lock().unwrap();
 
@@ -1106,6 +1114,7 @@ pub fn update_pid_map(
                         source_ip.clone(),
                         source_port,
                         system_stats,
+                        probe_id.clone(),
                     ));
                     // update stream_data stats
                     Arc::make_mut(&mut stream_data).update_stats(pmt_packet.len());
@@ -1252,6 +1261,7 @@ pub fn process_smpte2110_packet(
     capture_iat: u64,
     source_ip: String,
     source_port: i32,
+    probe_id: String,
 ) -> Vec<StreamData> {
     let mut streams = Vec::new();
     let mut offset = payload_offset;
@@ -1307,6 +1317,7 @@ pub fn process_smpte2110_packet(
                     source_ip.clone(),
                     source_port,
                     system_stats,
+                    probe_id.clone(),
                 );
 
                 // Update StreamData stats and RTP fields
@@ -1356,6 +1367,7 @@ pub fn process_mpegts_packet(
     capture_iat: u64,
     source_ip: String,
     source_port: i32,
+    probe_id: String,
 ) -> Vec<StreamData> {
     let mut start = payload_offset;
     let mut read_size = packet_size;
@@ -1394,6 +1406,7 @@ pub fn process_mpegts_packet(
                 source_ip.clone(),
                 source_port,
                 system_stats,
+                probe_id.clone(),
             );
             stream_data.update_stats(packet_size);
             stream_data.update_capture_iat(capture_iat);

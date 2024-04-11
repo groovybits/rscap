@@ -233,6 +233,7 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         image_pts: reader.get_image_pts(),
         capture_iat_max: reader.get_capture_iat_max(),
         log_message: reader.get_log_message()?.to_string()?,
+        probe_id: reader.get_probe_id()?.to_string()?,
     };
 
     Ok(stream_data)
@@ -472,6 +473,7 @@ fn flatten_streams(
             format!("{}.image_pts", prefix),
             json!(stream_data.image_pts),
         );
+        flat_structure.insert(format!("{}.id", prefix), json!(stream_data.probe_id));
     }
 
     flat_structure
@@ -517,7 +519,7 @@ async fn produce_message(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.16",
+    version = "0.5.17",
     about = "RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe."
 )]
 struct Args {
@@ -1312,6 +1314,7 @@ async fn main() {
                     let mut source_ip: String = String::new();
                     let mut source_port: u32 = 0;
                     let mut image_pts: u64 = 0;
+                    let mut probe_id: String = String::new();
 
                     // Process each stream to accumulate averages
                     for (_, grouping) in stream_groupings.iter() {
@@ -1328,6 +1331,16 @@ async fn main() {
                             }
                             if stream_data.log_message != "" {
                                 log_messages.push(stream_data.log_message.clone());
+                            }
+                            if stream_data.probe_id != "" {
+                                if probe_id != "" && probe_id != stream_data.probe_id {
+                                    log::warn!(
+                                        "Multiple probe IDs detected: {} and {}",
+                                        probe_id,
+                                        stream_data.probe_id
+                                    );
+                                }
+                                probe_id = stream_data.probe_id.clone();
                             }
                             stream_count += 1;
                         }
@@ -1411,6 +1424,8 @@ async fn main() {
                     } else {
                         flattened_data.insert("log_message".to_string(), serde_json::json!(""));
                     }
+                    // probe id
+                    flattened_data.insert("id".to_string(), serde_json::json!(probe_id));
 
                     // Convert the Map directly to a Value for serialization
                     let combined_stats = serde_json::Value::Object(flattened_data);

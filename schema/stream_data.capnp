@@ -55,4 +55,5 @@ struct StreamDataCapnp {
     imagePts @51 :UInt64;
     captureIatMax @52 :UInt64;
     logMessage @53 :Text;
+    probeId @54 :Text;
 }

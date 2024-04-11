@@ -233,7 +233,8 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
         stream_data_msg.set_has_image(stream_data.has_image);
         stream_data_msg.set_image_pts(stream_data.image_pts);
         stream_data_msg.set_capture_iat_max(stream_data.capture_iat_max);
-        stream_data_msg.set_log_message(stream_data.log_message.as_str().into())
+        stream_data_msg.set_log_message(stream_data.log_message.as_str().into());
+        stream_data_msg.set_probe_id(stream_data.probe_id.as_str().into());
     }
 
     Ok(message)
@@ -466,10 +467,14 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.16",
+    version = "0.5.17",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {
+    /// probe ID - ID for the probe to send with the messages
+    #[clap(long, env = "PROBE_ID", default_value = "")]
+    probe_id: String,
+
     /// Sets the batch size
     #[clap(long, env = "BATCH_SIZE", default_value_t = 7)]
     batch_size: usize,
@@ -1541,6 +1546,7 @@ async fn rscap() {
                 iat,
                 args.source_ip.clone(),
                 args.source_port,
+                args.probe_id.clone(),
             )
         } else {
             process_smpte2110_packet(
@@ -1553,6 +1559,7 @@ async fn rscap() {
                 iat,
                 args.source_ip.clone(),
                 args.source_port,
+                args.probe_id.clone(),
             )
         };
 
@@ -1596,6 +1603,7 @@ async fn rscap() {
                                 iat,
                                 args.source_ip.clone(),
                                 args.source_port,
+                                args.probe_id.clone(),
                             );
                             // Identify the video PID (if not already identified)
                             if let Some((new_pid, new_codec)) = identify_video_pid(&packet_chunk) {
@@ -1653,6 +1661,7 @@ async fn rscap() {
                 &mut tr101290_errors,
                 is_mpegts,
                 pmt_info.pid,
+                args.probe_id.clone(),
             );
 
             // If MpegTS, Check if this is a video PID and if so parse NALS and decode video
