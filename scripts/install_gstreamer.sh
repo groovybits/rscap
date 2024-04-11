@@ -45,7 +45,7 @@ export PATH=$PREFIX/bin:$PATH
 if [ "$OS" = "Linux" ]; then
     # Ensure the system is up to date and has the basic build tools
     sudo yum groupinstall -y "Development Tools"
-    sudo yum install -y bison flex python3 wget libffi-devel util-linux-devel util-linux libmount-devel
+    sudo yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel
 else
     export CXXFLAGS="-stdlib=libc++"
     export LDFLAGS="-lc++"
@@ -273,7 +273,7 @@ if [ "$OS" = "Linux" ]; then
         sudo ldconfig
 
         # Navigate back to the initial directory
-        cd ../../..
+        cd ../..
     fi
     touch x265-installed.done
 else

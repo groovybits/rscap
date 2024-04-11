@@ -9,6 +9,14 @@ if [ "$1" != "" ]; then
 fi
 
 BUILD=release-with-debug
+PREFIX=/opt/rscap
+
+LD_LIBRARY_PATH=$PREFIX/lib:$PREFIX/lib64:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH
+
+# Assuming your pkg-config files are in /opt/rscap/lib64/pkgconfig
+PKG_CONFIG_PATH=/opt/rscap/lib64/pkgconfig:$PKG_CONFIG_PATH
+export PKG_CONFIG_PATH
 
 # Function to prompt for installation
 prompt_install() {

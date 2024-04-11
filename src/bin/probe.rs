@@ -659,10 +659,6 @@ struct Args {
     /// filmstrip length
     #[clap(long, env = "FILMSTRIP_LENGTH", default_value_t = 10)]
     filmstrip_length: usize,
-
-    /// font size - font size for the text overlay
-    #[clap(long, env = "FONT_SIZE", default_value_t = 6.0)]
-    font_size: f32,
 }
 
 // MAIN Function
@@ -1457,7 +1453,6 @@ async fn rscap() {
         args.image_sample_rate_ns,
         args.image_height,
         args.filmstrip_length,
-        args.font_size,
     );
 
     // Perform TR 101 290 checks

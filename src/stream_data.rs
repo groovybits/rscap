@@ -18,8 +18,6 @@ use gstreamer::prelude::*;
 #[cfg(feature = "gst")]
 use gstreamer_app as gst_app;
 #[cfg(feature = "gst")]
-use gstreamer_video::VideoFormat;
-#[cfg(feature = "gst")]
 use gstreamer_video::VideoInfo;
 #[cfg(feature = "gst")]
 use image::{ImageBuffer, Rgb};
@@ -58,19 +56,25 @@ pub fn initialize_pipeline(
     // Initialize GStreamer
     gst::init()?;
 
-    // get width from height with a 16:9 aspect ratio
-    let width = (height as f32 * 16.0 / 9.0) as u32;
+    // get width from height with a 16:9 aspect ratio, ensuring it's divisible by 16
+    let width = (((height as f32 * 16.0 / 9.0) / 16.0).round() * 16.0) as u32;
+
+    log::debug!(
+        "initialize_pipeline: Gstreamer set to scale image to {}x{}",
+        width,
+        height
+    );
 
     // Create a pipeline to extract video frames
     let pipeline = match stream_type_number {
         0x02 => create_pipeline(
-            &format!("appsrc name=src ! tsdemux ! mpeg2dec ! videorate ! video/x-raw,framerate=1/1 ! videoscale ! video/x-raw,width={width},height={height} ! videoconvert ! appsink name=sink"),
+            &format!("appsrc name=src ! tsdemux ! mpeg2dec ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! video/x-raw,format=RGB ! videoscale ! video/x-raw,width={width},height={height} ! appsink name=sink"),
         )?,
         0x1B => create_pipeline(
-            &format!("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate=1/1 ! videoscale ! video/x-raw,width={width},height={height} ! videoconvert ! appsink name=sink"),
+            &format!("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! video/x-raw,format=RGB ! videoscale ! video/x-raw,width={width},height={height} ! appsink name=sink"),
         )?,
         0x24 => create_pipeline(
-            &format!("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate=1/1 ! videoscale ! video/x-raw,width={width},height={height} ! videoconvert ! appsink name=sink"),
+            &format!("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! video/x-raw,format=RGB ! videoscale ! video/x-raw,width={width},height={height} appsink name=sink"),
         )?,
         _ => {
             return Err(anyhow::anyhow!(
@@ -119,87 +123,6 @@ pub fn process_video_packets(appsrc: AppSrc, mut video_packet_receiver: mpsc::Re
 }
 
 #[cfg(feature = "gst")]
-fn i420_to_rgb(width: usize, height: usize, i420_data: &[u8]) -> Vec<u8> {
-    let mut rgb_data = Vec::with_capacity(width * height * 3);
-
-    let y_plane_size = width * height;
-    let uv_plane_size = y_plane_size / 4;
-    let u_offset = y_plane_size;
-    let v_offset = u_offset + uv_plane_size;
-
-    for j in 0..height {
-        for i in 0..width {
-            let y = i420_data[j * width + i] as f32;
-            let u = i420_data[u_offset + (j / 2) * (width / 2) + (i / 2)] as f32;
-            let v = i420_data[v_offset + (j / 2) * (width / 2) + (i / 2)] as f32;
-
-            let r = (y + 1.402 * (v - 128.0)).max(0.0).min(255.0);
-            let g = (y - 0.344136 * (u - 128.0) - 0.714136 * (v - 128.0))
-                .max(0.0)
-                .min(255.0);
-            let b = (y + 1.772 * (u - 128.0)).max(0.0).min(255.0);
-
-            rgb_data.push(r as u8);
-            rgb_data.push(g as u8);
-            rgb_data.push(b as u8);
-        }
-    }
-
-    rgb_data
-}
-
-#[cfg(feature = "gst")]
-fn i422_10le_to_rgb(width: usize, height: usize, i422_data: &[u8]) -> Vec<u8> {
-    let mut rgb_data = Vec::with_capacity(width * height * 3);
-
-    let y_plane_size = width * height * 2; // Y plane uses 2 bytes per pixel
-    let u_plane_offset = y_plane_size;
-    let v_plane_offset = u_plane_offset + (width / 2) * height * 2; // U plane uses 2 bytes per value, half the width
-
-    for j in 0..height {
-        for i in 0..width {
-            let y_index = j * width * 2 + i * 2;
-            let uv_horizontal_index = (i / 2) * 2;
-            let u_index = u_plane_offset + j * (width / 2) * 2 + uv_horizontal_index;
-            let v_index = v_plane_offset + j * (width / 2) * 2 + uv_horizontal_index;
-
-            // Unpacking the 10-bit YUV values, shifting to the right by 6 to get the value in the lower bits
-            // and scaling to the full 8-bit range (0-255)
-            let y = (((i422_data[y_index] as u16) | ((i422_data[y_index + 1] as u16) << 8))
-                & 0x03FF) as f32
-                * 255.0
-                / 1023.0;
-            let u = (((i422_data[u_index] as u16) | ((i422_data[u_index + 1] as u16) << 8))
-                & 0x03FF) as f32
-                * 255.0
-                / 1023.0
-                - 128.0;
-            let v = (((i422_data[v_index] as u16) | ((i422_data[v_index + 1] as u16) << 8))
-                & 0x03FF) as f32
-                * 255.0
-                / 1023.0
-                - 128.0;
-
-            // Convert to RGB using the YUV to RGB conversion formula
-            let r = y + 1.402 * v;
-            let g = y - 0.344136 * u - 0.714136 * v;
-            let b = y + 1.772 * u;
-
-            // Clamping the RGB values to the 0-255 range after conversion
-            let r = r.clamp(0.0, 255.0) as u8;
-            let g = g.clamp(0.0, 255.0) as u8;
-            let b = b.clamp(0.0, 255.0) as u8;
-
-            rgb_data.push(r);
-            rgb_data.push(g);
-            rgb_data.push(b);
-        }
-    }
-
-    rgb_data
-}
-
-#[cfg(feature = "gst")]
 pub fn pull_images(
     appsink: AppSink,
     image_sender: mpsc::Sender<(Vec<u8>, u64)>,
@@ -207,7 +130,6 @@ pub fn pull_images(
     sample_interval: u64,
     image_height: u32,
     filmstrip_length: usize,
-    _font_size: f32,
 ) {
     tokio::spawn(async move {
         let mut frame_count = 0;
@@ -218,8 +140,6 @@ pub fn pull_images(
             let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
             if let Some(sample) = sample {
                 if let Some(buffer) = sample.buffer() {
-                    let caps = sample.caps().expect("Sample without caps");
-                    let info = VideoInfo::from_caps(&caps).expect("Failed to parse caps");
                     let pts = buffer.pts().map_or(0, |pts| pts.nseconds());
 
                     // Check if the sample interval is set and skip frames if necessary
@@ -228,81 +148,76 @@ pub fn pull_images(
                     }
                     last_processed_pts = pts;
 
-                    // print entire videoinfo struct
-                    log::debug!("Video Frame Info: {:?}", info);
-
-                    let width = info.width();
-                    let height = info.height();
-
                     let map = buffer.map_readable().unwrap();
-                    let data = if info.format() == VideoFormat::I420 {
-                        i420_to_rgb(width as usize, height as usize, &map.as_slice())
-                    } else if info.format() == VideoFormat::I42210le {
-                        i422_10le_to_rgb(width as usize, height as usize, &map.as_slice())
-                    } else {
-                        map.as_slice().to_vec()
-                    };
+                    let data = map.as_slice();
 
-                    // Check if the data length matches the expected dimensions
-                    let expected_length = width as usize * height as usize * 3; // Assuming RGB format
+                    // Check if the data length matches the expected dimensions for RGB format
+                    let info = VideoInfo::from_caps(&sample.caps().expect("Sample without caps"))
+                        .expect("Failed to parse caps");
+                    let width = info.width() as usize;
+                    let height = info.height() as usize;
+                    let expected_length = width * height * 3; // 3 bytes per pixel for RGB
+
+                    log::debug!("pull_images: Gstreamer scaled to {}x{}", width, height);
+
                     if data.len() == expected_length {
-                        // Create an ImageBuffer from the received image data
-                        if let Some(image) =
-                            ImageBuffer::<Rgb<u8>, _>::from_raw(width, height, data.clone())
-                        {
-                            if save_images {
-                                // Save the resized JPEG image with timecode
-                                let filename = format!("images/frame_{:04}.jpg", frame_count);
-                                if let Err(err) = image.save(filename) {
-                                    log::error!("Failed to save image: {}", err);
-                                }
+                        let image = ImageBuffer::<Rgb<u8>, _>::from_raw(
+                            width as u32,
+                            height as u32,
+                            data.to_vec(),
+                        )
+                        .expect("Failed to create ImageBuffer");
+
+                        // Save the image as a JPEG with timecode
+                        if save_images {
+                            let filename = format!("images/frame_{:04}.jpg", frame_count);
+                            let mut jpeg_data = Vec::new();
+                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+                                &mut jpeg_data,
+                                80,
+                            );
+                            encoder
+                                .encode_image(&image)
+                                .expect("Failed to encode image to JPEG");
+                            std::fs::write(&filename, &jpeg_data)
+                                .expect("Failed to save JPEG image");
+                        }
+                        frame_count += 1;
+
+                        filmstrip_images.push(image);
+
+                        if filmstrip_images.len() >= filmstrip_length {
+                            // Create a new image buffer for the filmstrip
+                            let filmstrip_width = (width * filmstrip_length) as u32;
+                            let mut filmstrip = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(
+                                filmstrip_width,
+                                image_height as u32,
+                            );
+
+                            // Concatenate the images into the filmstrip
+                            for (i, img) in filmstrip_images.iter().enumerate() {
+                                let x_offset = i as u32 * width as u32;
+                                image::imageops::overlay(&mut filmstrip, img, x_offset.into(), 0);
                             }
-                            frame_count += 1;
 
-                            filmstrip_images.push(image);
+                            // Encode the filmstrip to a JPEG vector
+                            let mut jpeg_data = Vec::new();
+                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+                                &mut jpeg_data,
+                                80,
+                            );
+                            encoder
+                                .encode_image(&filmstrip)
+                                .expect("JPEG encoding failed");
 
-                            if filmstrip_images.len() >= filmstrip_length {
-                                // Create a new image buffer for the filmstrip
-                                let filmstrip_width = width * filmstrip_length as u32;
-                                let mut filmstrip = ImageBuffer::new(filmstrip_width, image_height);
-
-                                // Concatenate the images into the filmstrip
-                                for (i, img) in filmstrip_images.iter().enumerate() {
-                                    let x_offset = i as u32 * width;
-                                    image::imageops::overlay(
-                                        &mut filmstrip,
-                                        img,
-                                        x_offset.into(),
-                                        0,
-                                    );
-                                }
-
-                                // Convert the filmstrip to a JPEG vector
-                                let mut jpeg_data = Vec::new();
-                                let mut encoder =
-                                    image::codecs::jpeg::JpegEncoder::new_with_quality(
-                                        &mut jpeg_data,
-                                        80,
-                                    );
-
-                                encoder
-                                    .encode_image(&filmstrip)
-                                    .expect("JPEG encoding failed");
-
-                                // Send the filmstrip over the channel
-                                if let Err(err) = image_sender.send((jpeg_data, pts as u64)).await {
-                                    log::error!(
-                                        "Failed to send image data through channel: {}",
-                                        err
-                                    );
-                                    break;
-                                }
-
-                                // clear the filmstrip images
-                                filmstrip_images.clear();
+                            // Send the filmstrip over the channel
+                            if let Err(err) = image_sender.send((jpeg_data, pts)).await {
+                                log::error!("Failed to send image data through channel: {}", err);
+                                break;
                             }
-                        } else {
-                            log::error!("Failed to create ImageBuffer");
+
+                            // Clear the filmstrip images for the next set
+                            filmstrip_images.clear();
                         }
                     } else {
                         log::error!("Received image data with unexpected length: {}", data.len());
