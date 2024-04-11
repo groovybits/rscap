@@ -415,6 +415,7 @@ pub struct StreamData {
     pub has_image: u8,
     pub image_pts: u64,
     pub capture_iat_max: u64,
+    pub log_message: String,
 }
 
 impl Clone for StreamData {
@@ -477,6 +478,7 @@ impl Clone for StreamData {
             has_image: self.has_image,
             image_pts: self.image_pts,
             capture_iat_max: self.capture_iat_max,
+            log_message: self.log_message.clone(),
         }
     }
 }
@@ -562,6 +564,7 @@ impl StreamData {
             has_image: 0,
             image_pts: 0,
             capture_iat_max: capture_iat,
+            log_message: "".to_string(),
         }
     }
     // set RTP fields
