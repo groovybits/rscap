@@ -223,9 +223,6 @@ pub fn pull_images(
 
                             // Clear the filmstrip images for the next set
                             filmstrip_images.clear();
-
-                            // free memory
-                            drop(filmstrip);
                         }
                         tokio::time::sleep(Duration::from_millis(10)).await;
                     } else {
