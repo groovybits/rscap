@@ -886,7 +886,7 @@ async fn main() {
                     demux.push(&mut demux_ctx, &demux_buf[0..buf_end]);
                 }
                 None => {
-                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    std::thread::sleep(std::time::Duration::from_millis(1));
                 }
             }
         }
@@ -902,7 +902,7 @@ async fn main() {
             }
 
             if !args.mpegts_reader {
-                tokio::time::sleep(Duration::from_millis(1000)).await;
+                tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             }
 
@@ -928,7 +928,7 @@ async fn main() {
 
             if !args.mpegts_reader && !args.decode_video {
                 // Sleep for a short duration to prevent a tight loop
-                tokio::time::sleep(Duration::from_millis(1000)).await;
+                tokio::time::sleep(Duration::from_millis(10)).await;
                 continue;
             }
 
@@ -1102,10 +1102,9 @@ async fn main() {
                     // Clear the batch after processing
                     batch.clear();
                 }
-                _ = tokio::time::sleep(Duration::from_millis(100)), if !running_decoder.load(Ordering::SeqCst) => {
+                _ = tokio::time::sleep(Duration::from_millis(10)), if !running_decoder.load(Ordering::SeqCst) => {
                     // This branch allows checking the running flag regularly
                     info!("Decoder thread received stop signal.");
-                    tokio::time::sleep(Duration::from_millis(100)).await;
                     break;
                 }
             }
@@ -1508,7 +1507,7 @@ async fn main() {
                                 probe_data.last_kafka_send_time = Instant::now();
                             } else {
                                 // No message to send, wait for a short duration before the next iteration
-                                tokio::time::sleep(Duration::from_millis(10)).await;
+                                tokio::time::sleep(Duration::from_millis(1)).await;
                             }
                         }
                     }
@@ -1528,7 +1527,7 @@ async fn main() {
             }
             Err(_) => {
                 // No packet received, wait for a short duration before the next iteration
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::time::sleep(Duration::from_millis(1)).await;
                 continue;
             }
         }
