@@ -53,21 +53,21 @@ fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
 #[cfg(feature = "gst")]
 pub fn initialize_pipeline(
     stream_type_number: u8,
-    target_height: u32,
+    height: u32,
 ) -> Result<(gst::Pipeline, AppSrc, AppSink), anyhow::Error> {
     // Initialize GStreamer
     gst::init()?;
 
-    // Create a simplified pipeline without videoscale
+    // Create a pipeline to extract video frames
     let pipeline = match stream_type_number {
         0x02 => create_pipeline(
-            "appsrc name=src ! tsdemux ! mpeg2dec ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! appsink name=sink",
+            &format!("appsrc name=src ! tsdemux ! mpeg2dec ! videorate ! video/x-raw,framerate=1/1 ! videoscale ! video/x-raw,height={height} ! videoconvert ! appsink name=sink"),
         )?,
         0x1B => create_pipeline(
-            "appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! appsink name=sink",
+            &format!("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate=1/1 ! videoscale ! video/x-raw,height={height} ! videoconvert ! appsink name=sink"),
         )?,
         0x24 => create_pipeline(
-            "appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! appsink name=sink",
+            &format!("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate=1/1 ! videoscale ! video/x-raw,height={height} ! videoconvert ! appsink name=sink"),
         )?,
         _ => {
             return Err(anyhow::anyhow!(
@@ -77,50 +77,30 @@ pub fn initialize_pipeline(
         }
     };
 
-    // Get the AppSrc and AppSink elements
-    let appsrc = pipeline.by_name("src").unwrap();
-    let appsink = pipeline.by_name("sink").unwrap();
+    // Get references to the appsrc and appsink elements
+    let appsrc = pipeline
+        .clone()
+        .dynamic_cast::<gst::Bin>()
+        .unwrap()
+        .by_name("src")
+        .unwrap()
+        .downcast::<AppSrc>()
+        .unwrap();
 
-    // Set the pipeline to the PAUSED state
-    pipeline.set_state(gst::State::Paused)?;
+    let appsink = pipeline
+        .clone()
+        .dynamic_cast::<gst::Bin>()
+        .unwrap()
+        .by_name("sink")
+        .unwrap()
+        .downcast::<AppSink>()
+        .unwrap();
 
-    // Wait for the pipeline to reach the PAUSED state
-    let _ = pipeline.state(gst::ClockTime::from_seconds(5));
+    // Set appsink to drop old buffers and only keep the most recent one
+    appsink.set_drop(true);
+    appsink.set_max_buffers(60);
 
-    // Query the negotiated caps of the video stream
-    let caps = appsink.sink_pads()[0].current_caps().unwrap();
-    let s = caps.structure(0).unwrap();
-    let original_width = s.get::<i32>("width").unwrap() as u32;
-    let original_height = s.get::<i32>("height").unwrap() as u32;
-
-    // Calculate the new width based on the target height while keeping the aspect ratio
-    let new_width = (original_width as f64 / original_height as f64 * target_height as f64) as u32;
-
-    // Modify the pipeline to add the videoscale element
-    let videoscale = gst::ElementFactory::make("videoscale").build().unwrap();
-    let caps_filter = gst::ElementFactory::make("capsfilter").build().unwrap();
-    let caps = gst::Caps::builder("video/x-raw")
-        .field("width", &new_width)
-        .field("height", &target_height)
-        .build();
-    caps_filter.set_property("caps", &caps);
-
-    let bin = pipeline.clone().upcast::<gst::Bin>();
-    bin.add_many(&[&videoscale, &caps_filter]).unwrap();
-    videoscale.link(&caps_filter).unwrap();
-
-    let sink_pad = bin.static_pad("sink").unwrap();
-    let src_pad = videoscale.static_pad("src").unwrap();
-    sink_pad.link(&src_pad).unwrap();
-
-    // Set the pipeline back to the PLAYING state
-    pipeline.set_state(gst::State::Playing)?;
-
-    Ok((
-        pipeline,
-        appsrc.dynamic_cast().unwrap(),
-        appsink.dynamic_cast().unwrap(),
-    ))
+    Ok((pipeline, appsrc, appsink))
 }
 
 #[cfg(feature = "gst")]
@@ -435,7 +415,6 @@ pub struct StreamData {
     pub has_image: u8,
     pub image_pts: u64,
     pub capture_iat_max: u64,
-    pub log_message: String,
 }
 
 impl Clone for StreamData {
@@ -498,7 +477,6 @@ impl Clone for StreamData {
             has_image: self.has_image,
             image_pts: self.image_pts,
             capture_iat_max: self.capture_iat_max,
-            log_message: self.log_message.clone(),
         }
     }
 }
@@ -584,7 +562,6 @@ impl StreamData {
             has_image: 0,
             image_pts: 0,
             capture_iat_max: capture_iat,
-            log_message: "".to_string(),
         }
     }
     // set RTP fields
