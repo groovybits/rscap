@@ -1,5 +1,6 @@
 pub mod mpegts;
 pub mod stream_data;
+pub mod watch_file;
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};

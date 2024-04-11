@@ -1143,6 +1143,7 @@ async fn main() {
     }
 
     let mut output_file_counter = 0;
+    let mut log_messages = Vec::new();
 
     loop {
         // check for packet count
@@ -1325,6 +1326,9 @@ async fn main() {
                             if stream_data.has_image > 0 && stream_data.image_pts > 0 {
                                 image_pts = stream_data.image_pts;
                             }
+                            if stream_data.log_message != "" {
+                                log_messages.push(stream_data.log_message.clone());
+                            }
                             stream_count += 1;
                         }
                     }
@@ -1395,6 +1399,16 @@ async fn main() {
                         "base64_image".to_string(),
                         serde_json::json!(base64_image_tag),
                     );
+                    // check if we have a log_message in log_messages Vector, if so add it to the flattened_data map
+                    if log_messages.len() > 0 {
+                        //let log_message = log_messages.join("\n");
+                        // get 1 log message and attach it to the flattened_data map
+                        let log_message = log_messages[0].clone();
+                        // remove the log message from the log_messages Vector
+                        log_messages.remove(0);
+                        flattened_data
+                            .insert("log_message".to_string(), serde_json::json!(log_message));
+                    }
 
                     // Convert the Map directly to a Value for serialization
                     let combined_stats = serde_json::Value::Object(flattened_data);

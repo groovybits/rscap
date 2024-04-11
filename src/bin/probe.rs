@@ -33,7 +33,10 @@ use rscap::stream_data::{
 #[cfg(feature = "gst")]
 use rscap::stream_data::{initialize_pipeline, process_video_packets, pull_images};
 use rscap::system_stats::get_system_stats;
+use rscap::watch_file::watch_daemon;
 use rscap::{current_unix_timestamp_ms, hexdump};
+use std::sync::mpsc::channel;
+use std::thread;
 use std::{
     error::Error as StdError,
     fmt,
@@ -659,6 +662,10 @@ struct Args {
     /// filmstrip length
     #[clap(long, env = "FILMSTRIP_LENGTH", default_value_t = 10)]
     filmstrip_length: usize,
+
+    /// Watch File - File we watch for changes to send as the streams.PID.log_line string
+    #[clap(long, env = "WATCH_FILE", default_value = "")]
+    watch_file: String,
 }
 
 // MAIN Function
@@ -1455,6 +1462,19 @@ async fn rscap() {
         args.filmstrip_length,
     );
 
+    // Watch file thread and sender/receiver for log file input
+    let (watch_file_sender, watch_file_receiver) = channel();
+    let watch_file_sender_clone = watch_file_sender.clone();
+
+    if args.watch_file != "" {
+        let watch_file_clone = args.watch_file.clone();
+        thread::spawn(move || {
+            watch_daemon(&watch_file_clone, watch_file_sender_clone);
+        });
+    } else {
+        info!("No watch file provided, skipping watch file thread.");
+    }
+
     // Perform TR 101 290 checks
     let mut tr101290_errors = Tr101290Errors::new();
 
@@ -1650,6 +1670,15 @@ async fn rscap() {
                             stream_data_clone.packet = Arc::new(stream_data.packet.to_vec());
                             video_batch.push(stream_data_clone);
                         }
+                    }
+                }
+
+                // Watch file
+                if args.watch_file != "" {
+                    if let Ok(line) = watch_file_receiver.try_recv() {
+                        log::debug!("WatchFile Received line: {}", line);
+                        // attach to stream_data.log_message
+                        stream_data.log_message = line;
                     }
                 }
 
