@@ -886,7 +886,7 @@ async fn main() {
                     demux.push(&mut demux_ctx, &demux_buf[0..buf_end]);
                 }
                 None => {
-                    std::thread::sleep(std::time::Duration::from_millis(1000));
+                    std::thread::sleep(std::time::Duration::from_millis(10));
                 }
             }
         }
@@ -1105,7 +1105,7 @@ async fn main() {
                 _ = tokio::time::sleep(Duration::from_millis(100)), if !running_decoder.load(Ordering::SeqCst) => {
                     // This branch allows checking the running flag regularly
                     info!("Decoder thread received stop signal.");
-                    tokio::time::sleep(Duration::from_millis(1000)).await;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                     break;
                 }
             }
