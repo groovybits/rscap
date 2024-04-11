@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::io::Read;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::sync::mpsc::Sender;
 use std::thread;
@@ -12,16 +13,18 @@ pub fn watch_daemon(file_path: &str, sender: Sender<String>) {
             let mut reader = BufReader::new(file);
             reader.seek(SeekFrom::Start(last_offset)).unwrap();
 
-            {
-                let reader = &mut reader;
-                let lines: Vec<String> = reader.lines().filter_map(Result::ok).collect();
-
-                for line in lines {
-                    sender.send(line).unwrap();
-                }
+            let mut new_lines = Vec::new();
+            let lines = reader.by_ref().lines().filter_map(Result::ok);
+            for line in lines {
+                new_lines.push(line);
             }
 
-            last_offset = reader.stream_position().unwrap();
+            if !new_lines.is_empty() {
+                for line in new_lines {
+                    sender.send(line).unwrap();
+                }
+                last_offset = reader.stream_position().unwrap();
+            }
         }
 
         thread::sleep(Duration::from_secs(1));
