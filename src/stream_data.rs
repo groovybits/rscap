@@ -186,10 +186,16 @@ pub fn pull_images(
                                 .expect("Failed to encode image to JPEG");
                             std::fs::write(&filename, &jpeg_data)
                                 .expect("Failed to save JPEG image");
+
+                            // free up memory
+                            jpeg_data.clear();
                         }
                         frame_count += 1;
 
-                        filmstrip_images.push(image);
+                        filmstrip_images.push(image.clone());
+
+                        // free up memory
+                        drop(image);
 
                         if filmstrip_images.len() >= filmstrip_length {
                             // Create a new image buffer for the filmstrip
