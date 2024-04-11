@@ -58,16 +58,19 @@ pub fn initialize_pipeline(
     // Initialize GStreamer
     gst::init()?;
 
+    // get width from height with a 16:9 aspect ratio
+    let width = (height as f32 * 16.0 / 9.0) as u32;
+
     // Create a pipeline to extract video frames
     let pipeline = match stream_type_number {
         0x02 => create_pipeline(
-            &format!("appsrc name=src ! tsdemux ! mpeg2dec ! videorate ! video/x-raw,framerate=1/1 ! videoscale ! video/x-raw,height={height} ! videoconvert ! appsink name=sink"),
+            &format!("appsrc name=src ! tsdemux ! mpeg2dec ! videorate ! video/x-raw,framerate=1/1 ! videoscale ! video/x-raw,width={width},height={height} ! videoconvert ! appsink name=sink"),
         )?,
         0x1B => create_pipeline(
-            &format!("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate=1/1 ! videoscale ! video/x-raw,height={height} ! videoconvert ! appsink name=sink"),
+            &format!("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate=1/1 ! videoscale ! video/x-raw,width={width},height={height} ! videoconvert ! appsink name=sink"),
         )?,
         0x24 => create_pipeline(
-            &format!("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate=1/1 ! videoscale ! video/x-raw,height={height} ! videoconvert ! appsink name=sink"),
+            &format!("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate=1/1 ! videoscale ! video/x-raw,width={width},height={height} ! videoconvert ! appsink name=sink"),
         )?,
         _ => {
             return Err(anyhow::anyhow!(
