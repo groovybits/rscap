@@ -119,6 +119,8 @@ pub fn process_video_packets(appsrc: AppSrc, mut video_packet_receiver: mpsc::Re
             if let Err(err) = appsrc.push_buffer(buffer) {
                 eprintln!("Failed to push buffer to appsrc: {}", err);
             }
+            // Add a small delay to prevent a tight loop
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     });
 }
@@ -145,6 +147,8 @@ pub fn pull_images(
 
                     // Check if the sample interval is set and skip frames if necessary
                     if sample_interval > 0 && (pts - last_processed_pts < sample_interval as u64) {
+                        // Add a small delay to prevent a tight loop
+                        tokio::time::sleep(Duration::from_millis(10)).await;
                         continue;
                     }
                     last_processed_pts = pts;
@@ -219,11 +223,17 @@ pub fn pull_images(
 
                             // Clear the filmstrip images for the next set
                             filmstrip_images.clear();
+
+                            // free memory
+                            drop(filmstrip);
                         }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
                     } else {
                         log::error!("Received image data with unexpected length: {}", data.len());
+                        tokio::time::sleep(Duration::from_millis(10)).await;
                     }
                 }
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
             // Sleep for a short time to avoid busy loop
             tokio::time::sleep(Duration::from_millis(10)).await;
