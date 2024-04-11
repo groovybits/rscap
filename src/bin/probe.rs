@@ -467,7 +467,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.18",
+    version = "0.5.19",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {
@@ -1685,15 +1685,6 @@ async fn rscap() {
                     }
                 }
 
-                // Watch file
-                if args.watch_file != "" {
-                    if let Ok(line) = watch_file_receiver.try_recv() {
-                        log::info!("WatchFile Received line: {}", line);
-                        // attach to stream_data.log_message
-                        stream_data.log_message = line;
-                    }
-                }
-
                 // Process video packets
                 #[cfg(feature = "gst")]
                 if args.extract_images {
@@ -1738,6 +1729,15 @@ async fn rscap() {
                 }
             } else {
                 // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
+            }
+
+            // Watch file
+            if args.watch_file != "" {
+                if let Ok(line) = watch_file_receiver.try_recv() {
+                    log::info!("WatchFile Received line: {}", line);
+                    // attach to stream_data.log_message
+                    stream_data.log_message = line.clone();
+                }
             }
 
             if !args.extract_images && !args.send_raw_stream && stream_data.packet_len > 0 {
