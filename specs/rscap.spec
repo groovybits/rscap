@@ -1,5 +1,5 @@
 Name:           rscap
-Version:        0.5.9
+Version:        0.5.9.3
 Release:        1%{?dist}
 Summary:        RsCap and GStreamer with essential dependencies
 
@@ -34,7 +34,7 @@ LIBFFI_VERSION=3.3
 NASM_VERSION=2.15.05
 FFMPEG_VERSION=5.1.4
 RUST_VERSION=1.77.1
-RSCAP_VERSION=0.5.9
+RSCAP_VERSION=0.5.9.3
 
 # Define the installation prefix
 PREFIX=$BUILD_DIR/opt/rscap
@@ -72,6 +72,25 @@ cd rust
 ./install.sh --prefix=$PREFIX --without=rust-docs
 cd ..
 rm -rf rust
+
+# Download and extract pangocairo and its dependencies
+#wget --no-check-certificate  https://download.gnome.org/sources/pango/1.48/pango-1.48.5.tar.xz
+#wget --no-check-certificate  https://download.gnome.org/sources/harfbuzz/2.8/harfbuzz-2.8.2.tar.xz
+#wget --no-check-certificate  https://download.gnome.org/sources/fribidi/1.0/fribidi-1.0.10.tar.xz
+#wget --no-check-certificate  https://download.gnome.org/sources/cairo/1.16/cairo-1.16.0.tar.xz
+#wget --no-check-certificate  https://download.gnome.org/sources/glib/2.68/glib-2.68.4.tar.xz
+
+# Build and install pangocairo and its dependencies
+#for pkg in glib-2.68.4 fribidi-1.0.10 harfbuzz-2.8.2 cairo-1.16.0 pango-1.48.5; do
+#    tar xf $pkg.tar.xz
+#    cd $pkg
+#    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+#    run_with_scl ninja -C _build
+#    ninja -C _build install
+#    cd ..
+#    rm -rf $pkg
+#    rm -rf $pkg.tar.xz
+#done
 
 # Install libFFI
 echo "---"

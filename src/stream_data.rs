@@ -8,7 +8,6 @@ use crate::current_unix_timestamp_ms;
 use crate::system_stats::get_system_stats;
 use crate::system_stats::SystemStats;
 use ahash::AHashMap;
-
 #[cfg(feature = "gst")]
 use gst_app::{AppSink, AppSrc};
 #[cfg(feature = "gst")]
@@ -87,11 +86,42 @@ pub fn initialize_pipeline(
     // Wait for the pipeline to reach the PAUSED state
     let _ = pipeline.state(gst::ClockTime::from_seconds(5));
 
-    // Query the negotiated caps of the video stream
-    let caps = appsink.sink_pads()[0].current_caps().unwrap();
-    let s = caps.structure(0).unwrap();
-    let original_width = s.get::<i32>("width").unwrap() as u32;
-    let original_height = s.get::<i32>("height").unwrap() as u32;
+    // Wait for the appsink element to become available
+    let appsink = loop {
+        match appsink.clone().dynamic_cast::<AppSink>() {
+            Ok(sink) => break sink,
+            Err(_) => {
+                log::warn!("AppSink element not available yet, retrying...");
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                continue;
+            }
+        }
+    };
+
+    // Wait for the appsink to receive a sample
+    let sample = loop {
+        match appsink.try_pull_sample(gst::ClockTime::from_seconds(1)) {
+            Some(sample) => break sample,
+            None => {
+                log::warn!("No sample received yet, retrying...");
+                continue;
+            }
+        }
+    };
+
+    // Get the caps from the sample
+    let caps = sample
+        .caps()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get caps from sample"))?;
+    let s = caps
+        .structure(0)
+        .ok_or_else(|| anyhow::anyhow!("Failed to get structure from caps"))?;
+    let original_width =
+        s.get::<i32>("width")
+            .map_err(|_| anyhow::anyhow!("Failed to get width from caps"))? as u32;
+    let original_height =
+        s.get::<i32>("height")
+            .map_err(|_| anyhow::anyhow!("Failed to get height from caps"))? as u32;
 
     // Calculate the new width based on the target height while keeping the aspect ratio
     let new_width = (original_width as f64 / original_height as f64 * target_height as f64) as u32;
