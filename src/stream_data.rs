@@ -250,10 +250,6 @@ pub fn pull_images(
                         if let Some(image) =
                             ImageBuffer::<Rgb<u8>, _>::from_raw(width, height, data.clone())
                         {
-                            let scaled_height = image_height;
-                            let scaled_width =
-                                (width as f32 / height as f32 * scaled_height as f32) as u32;
-
                             if save_images {
                                 // Save the resized JPEG image with timecode
                                 let filename = format!("images/frame_{:04}.jpg", frame_count);
@@ -267,13 +263,12 @@ pub fn pull_images(
 
                             if filmstrip_images.len() >= filmstrip_length {
                                 // Create a new image buffer for the filmstrip
-                                let filmstrip_width = scaled_width * filmstrip_length as u32;
-                                let mut filmstrip =
-                                    ImageBuffer::new(filmstrip_width, scaled_height);
+                                let filmstrip_width = width * filmstrip_length as u32;
+                                let mut filmstrip = ImageBuffer::new(filmstrip_width, image_height);
 
                                 // Concatenate the images into the filmstrip
                                 for (i, img) in filmstrip_images.iter().enumerate() {
-                                    let x_offset = i as u32 * scaled_width;
+                                    let x_offset = i as u32 * width;
                                     image::imageops::overlay(
                                         &mut filmstrip,
                                         img,
