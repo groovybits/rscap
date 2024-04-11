@@ -1505,7 +1505,9 @@ async fn rscap() {
 
     let mut video_stream_type = 0;
 
-    info!("Startup System OS Stats:\n{:?}", system_stats);
+    log::info!("RsCap: Starting up with Probe ID: {}", args.probe_id);
+
+    log::info!("Startup System OS Stats:\n{:?}", system_stats);
 
     let mut dot_last_sent_ts = Instant::now();
     while let Some((packet, timestamp, iat)) = prx.recv().await {
