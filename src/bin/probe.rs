@@ -467,7 +467,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.17",
+    version = "0.5.18",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {
@@ -1688,7 +1688,7 @@ async fn rscap() {
                 // Watch file
                 if args.watch_file != "" {
                     if let Ok(line) = watch_file_receiver.try_recv() {
-                        log::debug!("WatchFile Received line: {}", line);
+                        log::info!("WatchFile Received line: {}", line);
                         // attach to stream_data.log_message
                         stream_data.log_message = line;
                     }

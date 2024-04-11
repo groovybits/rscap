@@ -473,6 +473,10 @@ fn flatten_streams(
             format!("{}.image_pts", prefix),
             json!(stream_data.image_pts),
         );
+        flat_structure.insert(
+            format!("{}.log_message", prefix),
+            json!(stream_data.log_message),
+        );
         flat_structure.insert(format!("{}.id", prefix), json!(stream_data.probe_id));
     }
 
@@ -519,7 +523,7 @@ async fn produce_message(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.17",
+    version = "0.5.18",
     about = "RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe."
 )]
 struct Args {
@@ -1412,12 +1416,11 @@ async fn main() {
                         "base64_image".to_string(),
                         serde_json::json!(base64_image_tag),
                     );
-                    // check if we have a log_message in log_messages Vector, if so add it to the flattened_data map
-                    if log_messages.len() > 0 {
-                        //let log_message = log_messages.join("\n");
-                        // get 1 log message and attach it to the flattened_data map
+                    // Check if we have a log_message in log_messages Vector, if so add it to the flattened_data map
+                    if !log_messages.is_empty() {
+                        // Get 1 log message and attach it to the flattened_data map
                         let log_message = log_messages[0].clone();
-                        // remove the log message from the log_messages Vector
+                        // Remove the log message from the log_messages Vector
                         log_messages.remove(0);
                         flattened_data
                             .insert("log_message".to_string(), serde_json::json!(log_message));
