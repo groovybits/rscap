@@ -657,7 +657,7 @@ struct Args {
     image_height: u32,
 
     /// filmstrip length
-    #[clap(long, env = "FILMSTRIP_LENGTH", default_value_t = 12)]
+    #[clap(long, env = "FILMSTRIP_LENGTH", default_value_t = 10)]
     filmstrip_length: usize,
 
     /// font size - font size for the text overlay
