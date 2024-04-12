@@ -686,6 +686,10 @@ struct Args {
     /// Scale Images - Scale the images to the specified height
     #[clap(long, env = "SCALE_IMAGES", default_value_t = false)]
     scale_images: bool,
+
+    /// Jpeg Quality - Quality of the Jpeg images
+    #[clap(long, env = "JPEG_QUALITY", default_value_t = 70)]
+    jpeg_quality: u8,
 }
 
 // MAIN Function
@@ -1486,6 +1490,7 @@ async fn rscap() {
         args.image_sample_rate_ns,
         args.image_height,
         args.filmstrip_length,
+        args.jpeg_quality,
         /*args.max_pending_filmstrips,*/
     );
 

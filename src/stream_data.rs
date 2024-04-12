@@ -163,6 +163,7 @@ pub fn pull_images(
     sample_interval: u64,
     image_height: u32,
     filmstrip_length: usize,
+    jpeg_quality: u8,
 ) {
     tokio::spawn(async move {
         let mut frame_count = 0;
@@ -271,7 +272,7 @@ pub fn pull_images(
                                 let mut encoder =
                                     image::codecs::jpeg::JpegEncoder::new_with_quality(
                                         &mut jpeg_data,
-                                        80,
+                                        jpeg_quality,
                                     );
                                 encoder
                                     .encode_image(&filmstrip)
