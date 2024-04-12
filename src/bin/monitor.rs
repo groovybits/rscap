@@ -20,7 +20,6 @@ use rdkafka::admin::{AdminClient, AdminOptions, NewTopic};
 use rdkafka::client::DefaultClientContext;
 use rdkafka::config::ClientConfig;
 use rdkafka::producer::{FutureProducer, FutureRecord};
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::time::Instant;
@@ -53,12 +52,6 @@ use tokio::task;
 lazy_static! {
     static ref STREAM_GROUPINGS: RwLock<AHashMap<u16, StreamGrouping>> =
         RwLock::new(AHashMap::new());
-}
-
-struct ProbeData {
-    flattened_data: serde_json::Map<String, Value>,
-    last_kafka_send_time: Instant,
-    log_messages: Vec<String>,
 }
 
 struct StreamGrouping {
@@ -530,7 +523,7 @@ async fn produce_message(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.27",
+    version = "0.5.28",
     about = "RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe."
 )]
 struct Args {
@@ -1132,6 +1125,7 @@ async fn main() {
     let mut dot_last_file_write = Instant::now();
     let mut dot_last_sent_stats = Instant::now();
     let mut dot_last_sent_ts = Instant::now();
+    let mut last_kafka_send_time = Instant::now();
 
     let mut kafka_conf = ClientConfig::new();
     kafka_conf.set("bootstrap.servers", &kafka_broker);
@@ -1156,8 +1150,6 @@ async fn main() {
 
     let mut output_file_counter = 0;
     let mut log_messages = Vec::new();
-
-    let mut probe_data_map: HashMap<String, ProbeData> = HashMap::new();
 
     loop {
         // check for packet count
@@ -1342,10 +1334,6 @@ async fn main() {
                                 image_pts = stream_data.image_pts;
                             }
                             if stream_data.log_message != "" {
-                                log::info!(
-                                    "Monitor Log message received: {}",
-                                    stream_data.log_message
-                                );
                                 log_messages.push(stream_data.log_message.clone());
                             }
                             if stream_data.probe_id != "" {
@@ -1361,16 +1349,6 @@ async fn main() {
                             stream_count += 1;
                         }
                     }
-
-                    // Get the ProbeData for the current probe_id or create a new one if it doesn't exist
-                    let probe_data =
-                        probe_data_map
-                            .entry(probe_id.clone())
-                            .or_insert_with(|| ProbeData {
-                                flattened_data: serde_json::Map::new(),
-                                last_kafka_send_time: Instant::now(),
-                                log_messages: Vec::new(),
-                            });
 
                     // Continuity Counter errors
                     let global_cc_errors = total_cc_errors;
@@ -1439,53 +1417,36 @@ async fn main() {
                         serde_json::json!(base64_image_tag),
                     );
                     // Check if we have a log_message in log_messages Vector, if so add it to the flattened_data map
-                    let mut got_log_message = false;
-                    if !probe_data.log_messages.is_empty() {
-                        // get a log_message
-                        let log_message = probe_data.log_messages.remove(0);
+                    if !log_messages.is_empty() {
+                        // Get 1 log message and attach it to the flattened_data map
+                        let log_message = log_messages[0].clone();
+                        // Remove the log message from the log_messages Vector
+                        log_messages.remove(0);
                         flattened_data
                             .insert("log_message".to_string(), serde_json::json!(log_message));
-                        got_log_message = true;
-                    } else if !log_messages.is_empty() {
-                        // get a log_message
-                        let log_message = log_messages.remove(0);
-                        flattened_data
-                            .insert("log_message".to_string(), serde_json::json!(log_message));
-                        got_log_message = true;
                     } else {
                         flattened_data.insert("log_message".to_string(), serde_json::json!(""));
                     }
                     // probe id
                     flattened_data.insert("id".to_string(), serde_json::json!(probe_id));
 
-                    // Update the flattened_data for the current probe_id
-                    probe_data.flattened_data = flattened_data;
-
                     // Convert the Map directly to a Value for serialization
-                    let combined_stats =
-                        serde_json::Value::Object(probe_data.flattened_data.clone());
+                    let combined_stats = serde_json::Value::Object(flattened_data);
 
-                    // Update the log_messages for the current probe_id
-                    if !log_messages.is_empty() {
-                        probe_data.log_messages.extend(log_messages.drain(..));
+                    // Serialization
+                    let ser_data =
+                        serde_json::to_vec(&combined_stats).expect("Failed to serialize for Kafka");
+
+                    // Debug output if enabled
+                    if debug_on {
+                        let ser_data_str = String::from_utf8_lossy(&ser_data);
+                        debug!("MONITOR::PACKET:SERIALIZED_DATA: {}", ser_data_str);
                     }
 
                     // Check if it's time to send data to Kafka based on the interval
                     if base64_image_tag != ""
-                        || got_log_message
-                        || probe_data.last_kafka_send_time.elapsed().as_millis()
-                            >= args.kafka_interval as u128
+                        || last_kafka_send_time.elapsed().as_millis() >= args.kafka_interval as u128
                     {
-                        // Serialization
-                        let ser_data = serde_json::to_vec(&combined_stats)
-                            .expect("Failed to serialize for Kafka");
-
-                        // Debug output if enabled
-                        if debug_on {
-                            let ser_data_str = String::from_utf8_lossy(&ser_data);
-                            debug!("MONITOR::PACKET:SERIALIZED_DATA: {}", ser_data_str);
-                        }
-
                         // Kafka message production
                         let future = produce_message(
                             ser_data,
@@ -1500,7 +1461,7 @@ async fn main() {
 
                         // Await the future for sending the message
                         future.await;
-                        probe_data.last_kafka_send_time = Instant::now();
+                        last_kafka_send_time = Instant::now();
                     }
                 }
             }
