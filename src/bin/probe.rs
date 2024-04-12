@@ -22,7 +22,7 @@ use futures::stream::StreamExt;
 use gstreamer as gst;
 #[cfg(feature = "gst")]
 use gstreamer::prelude::*;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use pcap::{Active, Capture, Device, PacketCodec};
 use rscap::stream_data::{
     identify_video_pid, is_mpegts_or_smpte2110, parse_and_store_pat, process_packet,
@@ -373,7 +373,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.32",
+    version = "0.5.33",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {
@@ -513,6 +513,18 @@ struct Args {
     #[clap(long, env = "DEBUG_SMPTE2110", default_value_t = false)]
     debug_smpte2110: bool,
 
+    /// Watch File - File we watch for changes to send as the streams.PID.log_line string
+    #[clap(long, env = "WATCH_FILE", default_value = "")]
+    watch_file: String,
+
+    /// Input Codec - Expected codec type for Video stream, limited to h264, h265 or mpeg2.
+    #[clap(long, env = "INPUT_CODEC", default_value = "h264")]
+    input_codec: String,
+
+    /// Loglevel - Log level for the application
+    #[clap(long, env = "LOGLEVEL", default_value = "info")]
+    loglevel: String,
+
     /// Extract Images from the video stream (requires feature gst)
     #[clap(long, env = "EXTRACT_IMAGES", default_value_t = false)]
     extract_images: bool,
@@ -526,45 +538,33 @@ struct Args {
     #[clap(long, env = "IMAGE_SAMPLE_RATE_NS", default_value_t = 0)]
     image_sample_rate_ns: u64,
 
+    /// Scale Images using gstreamer - Scale the images with gstreamer instead of separately
+    #[clap(long, env = "SCALE_IMAGES_AFTER_GSTREAMER", default_value_t = false)]
+    scale_images_after_gstreamer: bool,
+
+    /// Jpeg Quality - Quality of the Jpeg images
+    #[clap(long, env = "JPEG_QUALITY", default_value_t = 60)]
+    jpeg_quality: u8,
+
     /// Image Height - Image height in pixels of Thumbnail extracted images
-    #[clap(long, env = "IMAGE_HEIGHT", default_value_t = 240)]
+    #[clap(long, env = "IMAGE_HEIGHT", default_value_t = 96)]
     image_height: u32,
 
     /// filmstrip length
-    #[clap(long, env = "FILMSTRIP_LENGTH", default_value_t = 10)]
+    #[clap(long, env = "FILMSTRIP_LENGTH", default_value_t = 8)]
     filmstrip_length: usize,
 
-    /// Watch File - File we watch for changes to send as the streams.PID.log_line string
-    #[clap(long, env = "WATCH_FILE", default_value = "")]
-    watch_file: String,
-
     /// Gstreamer Queue Buffers
-    #[clap(long, env = "GST_QUEUE_BUFFERS", default_value_t = 1)]
+    #[clap(long, env = "GST_QUEUE_BUFFERS", default_value_t = 120)]
     gst_queue_buffers: u32,
 
-    /// Scale Images - Scale the images to the specified height
-    #[clap(long, env = "SCALE_IMAGES", default_value_t = false)]
-    scale_images_with_gstreamer: bool,
-
-    /// Jpeg Quality - Quality of the Jpeg images
-    #[clap(long, env = "JPEG_QUALITY", default_value_t = 70)]
-    jpeg_quality: u8,
-
-    /// Input Codec - Expected codec type for Video stream, limited to h264, h265 or mpeg2.
-    #[clap(long, env = "INPUT_CODEC", default_value = "h264")]
-    input_codec: String,
-
     /// image framerate - Framerate of the images extracted in 1/1 format
-    #[clap(long, env = "IMAGE_FRAMERATE", default_value = "1/10")]
+    #[clap(long, env = "IMAGE_FRAMERATE", default_value = "1/1")]
     image_framerate: String,
 
-    /// image_frame_increment - Increment the frame number by this amount for jpeg image strip
+    /// image_frame_increment - Increment the frame number by this amount for jpeg image strip, 0 matches filmstrip-length
     #[clap(long, env = "IMAGE_FRAME_INCREMENT", default_value_t = 1)]
     image_frame_increment: u8,
-
-    /// Loglevel - Log level for the application
-    #[clap(long, env = "LOGLEVEL", default_value = "info")]
-    loglevel: String,
 }
 
 // MAIN Function
@@ -588,7 +588,9 @@ async fn main() {
 async fn rscap(running: Arc<AtomicBool>) {
     let running_capture = running.clone();
     let running_zmq = running.clone();
+    #[cfg(feature = "gst")]
     let running_gstreamer_process = running.clone();
+    #[cfg(feature = "gst")]
     let running_gstreamer_pull = running.clone();
     let running_watch_file = running.clone();
 
@@ -923,7 +925,7 @@ async fn rscap(running: Arc<AtomicBool>) {
         &args.input_codec,
         args.image_height,
         args.gst_queue_buffers,
-        args.scale_images_with_gstreamer,
+        !args.scale_images_after_gstreamer,
         &args.image_framerate,
     ) {
         Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
@@ -1183,7 +1185,7 @@ async fn rscap(running: Arc<AtomicBool>) {
                             .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
                         {
                             // If the channel is full, drop the packet
-                            warn!("Video packet channel is full. Dropping packet.");
+                            log::warn!("Video packet channel is full. Dropping packet.");
                         }
                     }
 

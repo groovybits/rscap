@@ -8,8 +8,11 @@ use crate::current_unix_timestamp_ms;
 use crate::system_stats::get_system_stats;
 use crate::system_stats::SystemStats;
 use ahash::AHashMap;
+#[cfg(feature = "gst")]
 use std::io;
+#[cfg(feature = "gst")]
 use std::io::Write;
+#[cfg(feature = "gst")]
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(feature = "gst")]
@@ -130,34 +133,6 @@ pub fn initialize_pipeline(
     // Set appsink properties
     appsink.set_property("max-buffers", &buffer_count);
     appsink.set_property("drop", &true);
-    /*
-    appsink.set_property("emit-signals", &true);
-    appsink.set_property("sync", &true);
-    appsink.set_property("async", &true);
-    appsink.set_property("enable-last-sample", &false);
-    appsink.set_property(
-        "max-lateness",
-        &(gst::ClockTime::from_seconds(60).nseconds() as i64),
-    );
-
-    // Set appsrc properties
-    appsrc.set_property("block", &false);
-    appsrc.set_property("is-live", &false);
-    appsrc.set_property(
-        "min-latency",
-        &(gst::ClockTime::from_seconds(30).nseconds() as i64),
-    );
-    appsrc.set_property(
-        "max-latency",
-        &(gst::ClockTime::from_seconds(60).nseconds() as i64),
-    );
-    appsrc.set_property("do-timestamp", &true);
-    appsrc.set_property("format", &gst::Format::Time);
-    */
-
-    // These make it fail
-    ////appsink.set_property("qos", &false);
-    ////appsink.set_property("wait-on-eos", &true);
 
     Ok((pipeline, appsrc, appsink))
 }
