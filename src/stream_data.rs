@@ -30,8 +30,8 @@ use std::collections::VecDeque;
 use std::{fmt, sync::Arc, sync::Mutex};
 #[cfg(feature = "gst")]
 use tokio::sync::mpsc;
-//#[cfg(feature = "gst")]
-//use tokio::time::Duration;
+#[cfg(feature = "gst")]
+use tokio::time::Duration;
 
 const IAT_CAPTURE_WINDOW_SIZE: usize = 1000;
 
@@ -55,6 +55,7 @@ pub fn initialize_pipeline(
     stream_type_number: u8,
     height: u32,
     buffer_count: u32,
+    scale: bool,
 ) -> Result<(gst::Pipeline, AppSrc, AppSink), anyhow::Error> {
     // Initialize GStreamer
     gst::init()?;
@@ -68,16 +69,22 @@ pub fn initialize_pipeline(
         height
     );
 
+    let scale_string = if scale {
+        format!("! videoscale ! video/x-raw,width={width},height={height}")
+    } else {
+        String::new()
+    };
+
     // Create a pipeline to extract video frames
     let pipeline = match stream_type_number {
         0x02 => create_pipeline(
-            &format!("appsrc name=src ! tsdemux ! mpeg2dec ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! video/x-raw,format=RGB ! videoscale ! video/x-raw,width={width},height={height} ! appsink name=sink"),
+            &format!("appsrc name=src ! tsdemux ! mpeg2dec ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", scale_string),
         )?,
         0x1B => create_pipeline(
-            &format!("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! video/x-raw,format=RGB ! videoscale ! video/x-raw,width={width},height={height} ! appsink name=sink"),
+            &format!("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", scale_string),
         )?,
         0x24 => create_pipeline(
-            &format!("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! video/x-raw,format=RGB ! videoscale ! video/x-raw,width={width},height={height} appsink name=sink"),
+            &format!("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", scale_string),
         )?,
         _ => {
             return Err(anyhow::anyhow!(
@@ -106,9 +113,30 @@ pub fn initialize_pipeline(
         .downcast::<AppSink>()
         .unwrap();
 
-    // Set appsink to drop old buffers and only keep the most recent one
-    appsink.set_drop(true);
-    appsink.set_max_buffers(buffer_count);
+    // Set appsink properties
+    appsink.set_property("emit-signals", &true);
+    appsink.set_property("max-buffers", &buffer_count);
+    appsink.set_property("drop", &true);
+    appsink.set_property("sync", &false);
+    appsink.set_property("qos", &false);
+    appsink.set_property("async", &false);
+    appsink.set_property("enable-last-sample", &false);
+    appsink.set_property("wait-on-eos", &false);
+    appsink.set_property(
+        "max-lateness",
+        &(gst::ClockTime::from_seconds(1).nseconds() as u64),
+    );
+
+    // Set appsrc properties
+    appsrc.set_property("block", &true);
+    appsrc.set_property("is-live", &true);
+    appsrc.set_property("min-latency", &(gst::ClockTime::ZERO.nseconds() as u64));
+    appsrc.set_property(
+        "max-latency",
+        &(gst::ClockTime::from_seconds(1).nseconds() as u64),
+    );
+    appsrc.set_property("do-timestamp", &true);
+    appsrc.set_property("format", &gst::Format::Time);
 
     Ok((pipeline, appsrc, appsink))
 }
@@ -147,85 +175,129 @@ pub fn pull_images(
                 if let Some(buffer) = sample.buffer() {
                     let pts = buffer.pts().map_or(0, |pts| pts.nseconds());
 
-                    // Check if the sample interval is set and skip frames if necessary
-                    if sample_interval > 0 && (pts - last_processed_pts < sample_interval as u64) {
-                        continue;
-                    }
-                    last_processed_pts = pts;
+                    if pts >= last_processed_pts + sample_interval {
+                        last_processed_pts = pts;
 
-                    let map = buffer.map_readable().unwrap();
-                    let data = map.as_slice();
+                        let map = buffer.map_readable().unwrap();
+                        let data = map.as_slice();
 
-                    // Check if the data length matches the expected dimensions for RGB format
-                    let info = VideoInfo::from_caps(&sample.caps().expect("Sample without caps"))
-                        .expect("Failed to parse caps");
-                    let width = info.width() as usize;
-                    let height = info.height() as usize;
-                    let expected_length = width * height * 3; // 3 bytes per pixel for RGB
+                        // Check if the data length matches the expected dimensions for RGB format
+                        let info =
+                            VideoInfo::from_caps(&sample.caps().expect("Sample without caps"))
+                                .expect("Failed to parse caps");
+                        let width = info.width() as usize;
+                        let height = info.height() as usize;
 
-                    log::debug!("pull_images: Gstreamer scaled to {}x{}", width, height);
+                        // Check if height is the same as our image_height, if not, scale it to image_height while keeping the aspect ratio
+                        let (scaled_width, scaled_height, scaled_data) =
+                            if height != image_height as usize {
+                                let aspect_ratio = width as f32 / height as f32;
+                                let scaled_height = image_height as usize;
+                                let scaled_width = (scaled_height as f32 * aspect_ratio) as usize;
 
-                    if data.len() == expected_length {
-                        let image = ImageBuffer::<Rgb<u8>, _>::from_raw(
-                            width as u32,
-                            height as u32,
-                            data.to_vec(),
-                        )
-                        .expect("Failed to create ImageBuffer");
+                                let scaled = image::imageops::resize(
+                                    &image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(
+                                        width as u32,
+                                        height as u32,
+                                        data.to_vec(),
+                                    )
+                                    .unwrap(),
+                                    scaled_width as u32,
+                                    scaled_height as u32,
+                                    image::imageops::FilterType::Triangle,
+                                );
 
-                        // Save the image as a JPEG with timecode
-                        if save_images {
-                            let filename = format!("images/frame_{:04}.jpg", frame_count);
-                            let mut jpeg_data = Vec::new();
-                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
-                                &mut jpeg_data,
-                                80,
-                            );
-                            encoder
-                                .encode_image(&image)
-                                .expect("Failed to encode image to JPEG");
-                            std::fs::write(&filename, &jpeg_data)
-                                .expect("Failed to save JPEG image");
-                        }
-                        frame_count += 1;
+                                (scaled_width, scaled_height, scaled.into_raw())
+                            } else {
+                                (width, height, data.to_vec())
+                            };
 
-                        filmstrip_images.push(image);
+                        let expected_length = scaled_width * scaled_height * 3; // 3 bytes per pixel for RGB
 
-                        if filmstrip_images.len() >= filmstrip_length {
-                            // Create a new image buffer for the filmstrip
-                            let filmstrip_width = (width * filmstrip_length) as u32;
-                            let mut filmstrip = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(
-                                filmstrip_width,
-                                image_height as u32,
-                            );
+                        log::debug!(
+                            "pull_images: Gstreamer scaled to {}x{}",
+                            scaled_width,
+                            scaled_height
+                        );
 
-                            // Concatenate the images into the filmstrip
-                            for (i, img) in filmstrip_images.iter().enumerate() {
-                                let x_offset = i as u32 * width as u32;
-                                image::imageops::overlay(&mut filmstrip, img, x_offset.into(), 0);
+                        if scaled_data.len() == expected_length {
+                            let image = ImageBuffer::<Rgb<u8>, _>::from_raw(
+                                scaled_width as u32,
+                                scaled_height as u32,
+                                scaled_data,
+                            )
+                            .expect("Failed to create ImageBuffer");
+
+                            // Save the image as a JPEG with timecode
+                            if save_images {
+                                let filename = format!("images/frame_{:04}.jpg", frame_count);
+                                let mut jpeg_data = Vec::new();
+                                let mut encoder =
+                                    image::codecs::jpeg::JpegEncoder::new_with_quality(
+                                        &mut jpeg_data,
+                                        80,
+                                    );
+                                encoder
+                                    .encode_image(&image)
+                                    .expect("Failed to encode image to JPEG");
+                                std::fs::write(&filename, &jpeg_data)
+                                    .expect("Failed to save JPEG image");
                             }
+                            frame_count += 1;
 
-                            // Encode the filmstrip to a JPEG vector
-                            let mut jpeg_data = Vec::new();
-                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
-                                &mut jpeg_data,
-                                80,
-                            );
-                            encoder
-                                .encode_image(&filmstrip)
-                                .expect("JPEG encoding failed");
+                            filmstrip_images.push(image);
 
-                            // Send the filmstrip over the channel
-                            if let Err(err) = image_sender.send((jpeg_data, pts)).await {
-                                log::error!("Failed to send image data through channel: {}", err);
-                                break;
+                            if filmstrip_images.len() >= filmstrip_length {
+                                // Create a new image buffer for the filmstrip
+                                let filmstrip_width = (scaled_width * filmstrip_length) as u32;
+                                let mut filmstrip = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(
+                                    filmstrip_width,
+                                    scaled_height as u32,
+                                );
+
+                                // Concatenate the images into the filmstrip
+                                for (i, img) in filmstrip_images.iter().enumerate() {
+                                    let x_offset = i as u32 * scaled_width as u32;
+                                    image::imageops::overlay(
+                                        &mut filmstrip,
+                                        img,
+                                        x_offset.into(),
+                                        0,
+                                    );
+                                }
+
+                                // Encode the filmstrip to a JPEG vector
+                                let mut jpeg_data = Vec::new();
+                                let mut encoder =
+                                    image::codecs::jpeg::JpegEncoder::new_with_quality(
+                                        &mut jpeg_data,
+                                        80,
+                                    );
+                                encoder
+                                    .encode_image(&filmstrip)
+                                    .expect("JPEG encoding failed");
+
+                                // Send the filmstrip over the channel
+                                if let Err(err) = image_sender.send((jpeg_data, pts)).await {
+                                    log::error!(
+                                        "Failed to send image data through channel: {}",
+                                        err
+                                    );
+                                    break;
+                                }
+
+                                // Clear the filmstrip images for the next set
+                                filmstrip_images.clear();
                             }
-
-                            // Clear the filmstrip images for the next set
-                            filmstrip_images.clear();
+                        } else {
+                            log::error!(
+                                "Received image data with unexpected length: {}",
+                                scaled_data.len()
+                            );
                         }
                     } else {
-                        log::error!("Received image data with unexpected length: {}", data.len());
+                        // Sleep for a short time to prevent a busy loop
+                        tokio::time::sleep(Duration::from_millis(10)).await;
                     }
                 }
             }

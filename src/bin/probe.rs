@@ -660,7 +660,7 @@ struct Args {
     save_images: bool,
 
     /// Image Sample Rate Ns - Image sample rate in nano seconds
-    #[clap(long, env = "IMAGE_SAMPLE_RATE_NS", default_value_t = 0)]
+    #[clap(long, env = "IMAGE_SAMPLE_RATE_NS", default_value_t = 1_000_000_000)]
     image_sample_rate_ns: u64,
 
     /// Image Height - Image height in pixels of Thumbnail extracted images
@@ -682,6 +682,10 @@ struct Args {
     /// Max Pending Filmstrips
     #[clap(long, env = "MAX_PENDING_FILMSTRIPS", default_value_t = 10)]
     max_pending_filmstrips: usize,
+
+    /// Scale Images - Scale the images to the specified height
+    #[clap(long, env = "SCALE_IMAGES", default_value_t = false)]
+    scale_images: bool,
 }
 
 // MAIN Function
@@ -1447,14 +1451,18 @@ async fn rscap() {
 
     // Initialize the pipeline
     #[cfg(feature = "gst")]
-    let (pipeline, appsrc, appsink) =
-        match initialize_pipeline(0x1B, args.image_height, args.gst_queue_buffers) {
-            Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
-            Err(err) => {
-                eprintln!("Failed to initialize the pipeline: {}", err);
-                return;
-            }
-        };
+    let (pipeline, appsrc, appsink) = match initialize_pipeline(
+        0x1B,
+        args.image_height,
+        args.gst_queue_buffers,
+        args.scale_images,
+    ) {
+        Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
+        Err(err) => {
+            eprintln!("Failed to initialize the pipeline: {}", err);
+            return;
+        }
+    };
 
     // Start the pipeline
     #[cfg(feature = "gst")]
