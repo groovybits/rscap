@@ -36,8 +36,8 @@ use rscap::system_stats::get_system_stats;
 use rscap::watch_file::watch_daemon;
 use rscap::{current_unix_timestamp_ms, hexdump};
 use std::sync::mpsc::channel;
-#[cfg(feature = "gst")]
-use std::sync::Mutex;
+//#[cfg(feature = "gst")]
+//use std::sync::Mutex;
 use std::thread;
 use std::{
     error::Error as StdError,
@@ -1472,12 +1472,13 @@ async fn rscap() {
     #[cfg(feature = "gst")]
     pull_images(
         appsink,
-        Arc::new(Mutex::new(image_sender)),
+        /*Arc::new(Mutex::new(image_sender)),*/
+        image_sender,
         args.save_images,
         args.image_sample_rate_ns,
         args.image_height,
         args.filmstrip_length,
-        args.max_pending_filmstrips,
+        /*args.max_pending_filmstrips,*/
     );
 
     // Watch file thread and sender/receiver for log file input
