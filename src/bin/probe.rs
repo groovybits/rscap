@@ -544,7 +544,7 @@ struct Args {
 
     /// Scale Images - Scale the images to the specified height
     #[clap(long, env = "SCALE_IMAGES", default_value_t = false)]
-    scale_images: bool,
+    scale_images_with_gstreamer: bool,
 
     /// Jpeg Quality - Quality of the Jpeg images
     #[clap(long, env = "JPEG_QUALITY", default_value_t = 70)]
@@ -590,6 +590,7 @@ async fn rscap(running: Arc<AtomicBool>) {
     let running_zmq = running.clone();
     let running_gstreamer_process = running.clone();
     let running_gstreamer_pull = running.clone();
+    let running_watch_file = running.clone();
 
     dotenv::dotenv().ok(); // read .env file
 
@@ -922,7 +923,7 @@ async fn rscap(running: Arc<AtomicBool>) {
         &args.input_codec,
         args.image_height,
         args.gst_queue_buffers,
-        args.scale_images,
+        args.scale_images_with_gstreamer,
         &args.image_framerate,
     ) {
         Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
@@ -970,7 +971,11 @@ async fn rscap(running: Arc<AtomicBool>) {
     if args.watch_file != "" {
         let watch_file_clone = args.watch_file.clone();
         thread::spawn(move || {
-            watch_daemon(&watch_file_clone, watch_file_sender_clone);
+            watch_daemon(
+                &watch_file_clone,
+                watch_file_sender_clone,
+                running_watch_file,
+            );
         });
     } else {
         info!("No watch file provided, skipping watch file thread.");

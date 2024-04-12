@@ -1,18 +1,20 @@
 use std::fs::File;
 use std::io::Read;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-pub fn watch_daemon(file_path: &str, sender: Sender<String>) {
+pub fn watch_daemon(file_path: &str, sender: Sender<String>, running: Arc<AtomicBool>) {
     // Initialize last_offset to the current end of the file.
     let mut last_offset = match File::open(file_path) {
         Ok(file) => file.metadata().map_or(0, |m| m.len()),
         Err(_) => 0,
     };
 
-    loop {
+    while running.load(Ordering::SeqCst) {
         if let Ok(file) = File::open(file_path) {
             let mut reader = BufReader::new(file);
             // Use seek with the reader.

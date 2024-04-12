@@ -202,9 +202,11 @@ pub fn pull_images(
             let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
             if let Some(sample) = sample {
                 if let Some(buffer) = sample.buffer() {
-                    let pts = buffer.pts().map_or(0, |pts| pts.nseconds());
+                    let pts = buffer
+                        .pts()
+                        .map_or(last_processed_pts, |pts| pts.nseconds());
 
-                    if pts >= last_processed_pts + sample_interval {
+                    if last_processed_pts == 0 || pts >= last_processed_pts + sample_interval {
                         last_processed_pts = pts;
 
                         let map = buffer.map_readable().unwrap();
@@ -244,7 +246,7 @@ pub fn pull_images(
                         let expected_length = scaled_width * scaled_height * 3; // 3 bytes per pixel for RGB
 
                         log::debug!(
-                            "pull_images: Gstreamer scaled to {}x{}",
+                            "pull_images: Image scaled to {}x{}",
                             scaled_width,
                             scaled_height
                         );
