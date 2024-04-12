@@ -124,29 +124,34 @@ pub fn initialize_pipeline(
         .unwrap();
 
     // Set appsink properties
-    appsink.set_property("emit-signals", &true);
     appsink.set_property("max-buffers", &buffer_count);
     appsink.set_property("drop", &true);
-    appsink.set_property("sync", &false);
-    appsink.set_property("qos", &false);
-    appsink.set_property("async", &false);
+    appsink.set_property("emit-signals", &true);
+    appsink.set_property("sync", &true);
+    appsink.set_property("async", &true);
     appsink.set_property("enable-last-sample", &false);
-    appsink.set_property("wait-on-eos", &false);
     appsink.set_property(
         "max-lateness",
-        &(gst::ClockTime::from_seconds(1).nseconds() as i64),
+        &(gst::ClockTime::from_seconds(60).nseconds() as i64),
     );
 
     // Set appsrc properties
-    appsrc.set_property("block", &true);
-    appsrc.set_property("is-live", &true);
-    appsrc.set_property("min-latency", &(gst::ClockTime::ZERO.nseconds() as i64));
+    appsrc.set_property("block", &false);
+    appsrc.set_property("is-live", &false);
+    appsrc.set_property(
+        "min-latency",
+        &(gst::ClockTime::from_seconds(30).nseconds() as i64),
+    );
     appsrc.set_property(
         "max-latency",
-        &(gst::ClockTime::from_seconds(1).nseconds() as i64),
+        &(gst::ClockTime::from_seconds(60).nseconds() as i64),
     );
     appsrc.set_property("do-timestamp", &true);
     appsrc.set_property("format", &gst::Format::Time);
+
+    // These make it fail
+    ////appsink.set_property("qos", &false);
+    ////appsink.set_property("wait-on-eos", &true);
 
     Ok((pipeline, appsrc, appsink))
 }
