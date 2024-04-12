@@ -886,7 +886,7 @@ async fn main() {
                     demux.push(&mut demux_ctx, &demux_buf[0..buf_end]);
                 }
                 None => {
-                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    break;
                 }
             }
         }
@@ -1507,7 +1507,7 @@ async fn main() {
                                 probe_data.last_kafka_send_time = Instant::now();
                             } else {
                                 // No message to send, wait for a short duration before the next iteration
-                                tokio::time::sleep(Duration::from_millis(1)).await;
+                                //tokio::time::sleep(Duration::from_millis(1)).await;
                             }
                         }
                     }

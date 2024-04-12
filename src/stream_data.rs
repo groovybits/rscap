@@ -153,7 +153,7 @@ pub fn pull_images(
                     // Check if the sample interval is set and skip frames if necessary
                     if sample_interval > 0 && (pts - last_processed_pts < sample_interval as u64) {
                         // Add a small delay to prevent a tight loop
-                        tokio::time::sleep(Duration::from_millis(1)).await;
+                        // tokio::time::sleep(Duration::from_millis(1)).await;
                         continue;
                     }
                     last_processed_pts = pts;
@@ -193,7 +193,7 @@ pub fn pull_images(
                                 .expect("Failed to save JPEG image");
 
                             // free up memory
-                            jpeg_data.clear();
+                            //jpeg_data.clear();
                         }
                         frame_count += 1;
 
