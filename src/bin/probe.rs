@@ -469,7 +469,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.25",
+    version = "0.5.27",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {
@@ -676,7 +676,7 @@ struct Args {
     watch_file: String,
 
     /// Gstreamer Queue Buffers
-    #[clap(long, env = "GST_QUEUE_BUFFERS", default_value_t = 1)]
+    #[clap(long, env = "GST_QUEUE_BUFFERS", default_value_t = 60)]
     gst_queue_buffers: u32,
 
     /// Max Pending Filmstrips
