@@ -558,6 +558,10 @@ struct Args {
     #[clap(long, env = "IMAGE_FRAMERATE", default_value = "1/10")]
     image_framerate: String,
 
+    /// image_frame_increment - Increment the frame number by this amount for jpeg image strip
+    #[clap(long, env = "IMAGE_FRAME_INCREMENT", default_value_t = 1)]
+    image_frame_increment: u8,
+
     /// Loglevel - Log level for the application
     #[clap(long, env = "LOGLEVEL", default_value = "info")]
     loglevel: String,
@@ -955,6 +959,7 @@ async fn rscap(running: Arc<AtomicBool>) {
         args.image_height,
         args.filmstrip_length,
         args.jpeg_quality,
+        args.image_frame_increment,
         running_gstreamer_pull,
     );
 

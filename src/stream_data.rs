@@ -190,6 +190,7 @@ pub fn pull_images(
     image_height: u32,
     filmstrip_length: usize,
     jpeg_quality: u8,
+    frame_increment: u8,
     running: Arc<AtomicBool>,
 ) {
     tokio::spawn(async move {
@@ -319,7 +320,21 @@ pub fn pull_images(
                                 }
 
                                 // Clear the filmstrip images for the next set
-                                filmstrip_images.clear();
+                                if frame_increment > 1 {
+                                    let increment = if frame_increment as usize > filmstrip_length {
+                                        filmstrip_length
+                                    } else {
+                                        frame_increment.into()
+                                    };
+                                    // remove the number of frames by frame_increment
+                                    if filmstrip_images.len() > increment as usize {
+                                        filmstrip_images.drain(0..increment as usize);
+                                    } else {
+                                        filmstrip_images.clear();
+                                    }
+                                } else {
+                                    filmstrip_images.clear();
+                                }
                             }
                         } else {
                             log::error!(
