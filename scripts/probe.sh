@@ -43,4 +43,4 @@ sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     --filmstrip-length $FILMSTRIP_FRAMES \
     --image-sample-rate-ns $IMAGE_RATE \
     --image-height $IMAGE_HEIGHT \
-    --zmq-batch-size 10000 $@
+    $@

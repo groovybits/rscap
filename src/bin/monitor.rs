@@ -516,7 +516,7 @@ async fn produce_message(
         .await;
     match delivery_future {
         Ok(delivery_result) => delivery_report(Ok(delivery_result)).await,
-        Err(e) => println!("Failed to send message: {:?}", e),
+        Err(e) => log::error!("Failed to send message: {:?}", e),
     }
 }
 
@@ -576,7 +576,7 @@ struct Args {
     send_to_kafka: bool,
 
     /// Kafka timeout to drop packets
-    #[clap(long, env = "KAFKA_TIMEOUT", default_value_t = 10)]
+    #[clap(long, env = "KAFKA_TIMEOUT", default_value_t = 100)]
     kafka_timeout: u64,
 
     /// Kafka Key
@@ -1334,6 +1334,7 @@ async fn main() {
                                 image_pts = stream_data.image_pts;
                             }
                             if stream_data.log_message != "" {
+                                log::info!("Got Log Message: {}", stream_data.log_message);
                                 log_messages.push(stream_data.log_message.clone());
                             }
                             if stream_data.probe_id != "" {
@@ -1405,9 +1406,13 @@ async fn main() {
                     flattened_data
                         .insert("source_port".to_string(), serde_json::json!(source_port));
 
+                    let mut force_send_message = false;
+
                     // Insert the base64_image field into the flattened_data map
                     flattened_data.insert("image_pts".to_string(), serde_json::json!(image_pts));
                     let base64_image_tag = if base64_image != "" {
+                        log::info!("Got Image: {} bytes", base64_image.len());
+                        force_send_message = true;
                         format!("data:image/jpeg;base64,{}", base64_image)
                     } else {
                         "".to_string()
@@ -1418,10 +1423,9 @@ async fn main() {
                     );
                     // Check if we have a log_message in log_messages Vector, if so add it to the flattened_data map
                     if !log_messages.is_empty() {
-                        // Get 1 log message and attach it to the flattened_data map
-                        let log_message = log_messages[0].clone();
-                        // Remove the log message from the log_messages Vector
-                        log_messages.remove(0);
+                        force_send_message = true;
+                        // remove one log message from the log_messages array
+                        let log_message = log_messages.pop().unwrap();
                         flattened_data
                             .insert("log_message".to_string(), serde_json::json!(log_message));
                     } else {
@@ -1444,7 +1448,7 @@ async fn main() {
                     }
 
                     // Check if it's time to send data to Kafka based on the interval
-                    if base64_image_tag != ""
+                    if force_send_message
                         || last_kafka_send_time.elapsed().as_millis() >= args.kafka_interval as u128
                     {
                         // Kafka message production

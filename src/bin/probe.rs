@@ -490,7 +490,7 @@ struct Args {
     packet_size: usize,
 
     /// Sets the read timeout
-    #[clap(long, env = "READ_TIME_OUT", default_value_t = 60_000)]
+    #[clap(long, env = "READ_TIME_OUT", default_value_t = 300_000)]
     read_time_out: i32,
 
     /// Sets the target port
@@ -574,11 +574,11 @@ struct Args {
     pcap_stats: bool,
 
     ///  MPSC Channel Size for ZeroMQ
-    #[clap(long, env = "PCAP_CHANNEL_SIZE", default_value_t = 1_000)]
+    #[clap(long, env = "PCAP_CHANNEL_SIZE", default_value_t = 10_000)]
     pcap_channel_size: usize,
 
     /// MPSC Channel Size for PCAP
-    #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 1_000)]
+    #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 100_000)]
     zmq_channel_size: usize,
 
     /// MPSC Channel Size for Decoder
@@ -610,7 +610,7 @@ struct Args {
     no_zmq_thread: bool,
 
     /// ZMQ Batch size
-    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 100)]
+    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 1000)]
     zmq_batch_size: usize,
 
     /// Decode Video
