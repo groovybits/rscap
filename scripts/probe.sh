@@ -1,7 +1,6 @@
-#!/bin/bash
+#!/bin/sh
 #
 BUILD=release-with-debug
-LOGLEVEL=info
 GST_DEBUG_LEVEL=1
 BACKTRACE=full
 SOURCE_IP=224.0.0.200
@@ -10,8 +9,8 @@ SOURCE_PORT=10000
 TARGET_PORT=5556
 GST_PLUGIN_PATH=/opt/rscap/lib64/gstreamer-1.0
 IMAGE_HEIGHT=120
-IMAGE_RATE=1000000000
-FILMSTRIP_FRAMES=10
+IMAGE_RATE=0 #1000000000
+FILMSTRIP_FRAMES=1
 LD_LIBRARY_PATH=/opt/rscap/lib64:$LD_LIBRARY_PATH
 if [ -f "target/$BUILD/probe" ]; then
     PROBE_BIN=target/$BUILD/probe
@@ -22,6 +21,8 @@ else
     exit 1
 fi
 
+echo "Using $PROBE_BIN"
+
 $PROBE_BIN -V
 
 #VALGRIND="valgrind --show-leak-kinds=definite,possible --leak-check=full"
@@ -30,7 +31,6 @@ sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     LD_LIBRARY_PATH=$LD_LIBRARY_PATH \
     GST_DEBUG=$GST_DEBUG_LEVEL \
     RUST_BACKTRACE=$BACKTRACE \
-    RUST_LOG=$LOGLEVEL \
     $VALGRIND $PROBE_BIN \
     --pcap-stats \
     --source-ip $SOURCE_IP \

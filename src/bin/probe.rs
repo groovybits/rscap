@@ -22,10 +22,8 @@ use futures::stream::StreamExt;
 use gstreamer as gst;
 #[cfg(feature = "gst")]
 use gstreamer::prelude::*;
-use log::{debug, error, info};
-use mpeg2ts_reader::demultiplex;
+use log::{debug, error, info, warn};
 use pcap::{Active, Capture, Device, PacketCodec};
-use rscap::mpegts;
 use rscap::stream_data::{
     identify_video_pid, is_mpegts_or_smpte2110, parse_and_store_pat, process_packet,
     update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
@@ -54,15 +52,9 @@ use tokio::sync::mpsc::{self};
 use zmq::PUSH;
 // Include the generated paths for the Cap'n Proto schema
 include!("../stream_data_capnp.rs");
-// Video Processor Decoder
-use h264_reader::annexb::AnnexBReader;
-use h264_reader::nal::{pps, sei, slice, sps, Nal, RefNal, UnitType};
-use h264_reader::push::NalInterest;
-use h264_reader::Context;
 //use rscap::videodecoder::VideoProcessor;
+use env_logger::{Builder as LogBuilder, Env};
 use rscap::stream_data::{process_mpegts_packet, process_smpte2110_packet};
-use tokio::task;
-use tokio::time::Duration;
 
 // Define your custom PacketCodec
 pub struct BoxCodec;
@@ -79,94 +71,6 @@ impl PacketCodec for BoxCodec {
             );
         (packet.data.into(), timestamp)
     }
-}
-
-fn is_cea_608(itu_t_t35_data: &sei::user_data_registered_itu_t_t35::ItuTT35) -> bool {
-    // In this example, we check if the ITU-T T.35 data matches the known format for CEA-608.
-    // This is a simplified example and might need adjustment based on the actual data format.
-    match itu_t_t35_data {
-        sei::user_data_registered_itu_t_t35::ItuTT35::UnitedStates => true,
-        _ => false,
-    }
-}
-
-// This function checks if the byte is a standard ASCII character
-fn is_standard_ascii(byte: u8) -> bool {
-    byte >= 0x20 && byte <= 0x7F
-}
-
-// Function to check if the byte pair represents XDS data
-fn is_xds(byte1: u8, byte2: u8) -> bool {
-    // Implement logic to identify XDS data
-    // Placeholder logic: Example only
-    byte1 == 0x01 && byte2 >= 0x20 && byte2 <= 0x7F
-}
-
-// Function to decode CEA-608 CC1/CC2
-fn decode_cea_608_cc1_cc2(byte1: u8, byte2: u8) -> Option<String> {
-    decode_character(byte1, byte2)
-    // The above line replaces the previous implementation and uses decode_character
-    // to handle both ASCII and control codes.
-}
-
-fn decode_cea_608_xds(byte1: u8, byte2: u8) -> Option<String> {
-    if is_xds(byte1, byte2) {
-        Some(format!("XDS: {:02X} {:02X}", byte1, byte2))
-    } else {
-        None
-    }
-}
-
-// Decode CEA-608 characters, including control codes
-fn decode_character(byte1: u8, byte2: u8) -> Option<String> {
-    debug!("Decoding: {:02X} {:02X}", byte1, byte2); // Debugging
-
-    // Handle standard ASCII characters
-    if is_standard_ascii(byte1) && is_standard_ascii(byte2) {
-        return Some(format!("{}{}", byte1 as char, byte2 as char));
-    }
-
-    // Handle special control characters (Example)
-    // This is a simplified version, actual implementation may vary based on control characters
-    match (byte1, byte2) {
-        (0x14, 0x2C) => Some(String::from("[Clear Caption]")),
-        (0x14, 0x20) => Some(String::from("[Roll-Up Caption]")),
-        // Add more control character handling here
-        _ => {
-            error!("Unhandled control character: {:02X} {:02X}", byte1, byte2); // Debugging
-            None
-        }
-    }
-}
-
-// Simplified CEA-608 decoding function
-// Main CEA-608 decoding function
-fn decode_cea_608(data: &[u8]) -> (Vec<String>, Vec<String>, Vec<String>) {
-    let mut captions_cc1 = Vec::new();
-    let mut captions_cc2 = Vec::new();
-    let mut xds_data = Vec::new();
-
-    for chunk in data.chunks(3) {
-        if chunk.len() == 3 {
-            match chunk[0] {
-                0x04 => {
-                    if let Some(decoded) = decode_cea_608_cc1_cc2(chunk[1], chunk[2]) {
-                        captions_cc1.push(decoded);
-                    } else if let Some(decoded) = decode_cea_608_xds(chunk[1], chunk[2]) {
-                        xds_data.push(decoded);
-                    }
-                }
-                0x05 => {
-                    if let Some(decoded) = decode_cea_608_cc1_cc2(chunk[1], chunk[2]) {
-                        captions_cc2.push(decoded);
-                    }
-                }
-                _ => debug!("Unknown caption channel: {:02X}", chunk[0]),
-            }
-        }
-    }
-
-    (captions_cc1, captions_cc2, xds_data)
 }
 
 // convert stream data sructure to capnp message
@@ -581,14 +485,6 @@ struct Args {
     #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 100_000)]
     zmq_channel_size: usize,
 
-    /// MPSC Channel Size for Decoder
-    #[clap(long, env = "DECODER_CHANNEL_SIZE", default_value_t = 1_000)]
-    decoder_channel_size: usize,
-
-    /// Demuxer Channel size
-    #[clap(long, env = "DEMUXER_CHANNEL_SIZE", default_value_t = 1_000)]
-    demuxer_channel_size: usize,
-
     /// DPDK enable
     #[clap(long, env = "DPDK", default_value_t = false)]
     dpdk: bool,
@@ -613,42 +509,9 @@ struct Args {
     #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 1000)]
     zmq_batch_size: usize,
 
-    /// Decode Video
-    #[clap(long, env = "DECODE_VIDEO", default_value_t = false)]
-    decode_video: bool,
-
-    /// Decode Video Batch Size
-    #[clap(long, env = "DECODE_VIDEO_BATCH_SIZE", default_value_t = 100)]
-    decode_video_batch_size: usize,
-
     /// Debug SMPTE2110
     #[clap(long, env = "DEBUG_SMPTE2110", default_value_t = false)]
     debug_smpte2110: bool,
-
-    /// Debug NALs
-    #[clap(long, env = "DEBUG_NALS", default_value_t = false)]
-    debug_nals: bool,
-
-    /// List of NAL types to debug, comma separated: all, sps, pps, pic_timing, sei, slice, user_data_registered_itu_tt35, user_data_unregistered, buffering_period, unknown
-    #[clap(
-        long,
-        env = "DEBUG_NAL_TYPES",
-        default_value = "",
-        help = "List of NAL types to debug, comma separated: all, sps, pps, pic_timing, sei, slice, user_data_registered_itu_tt35, user_data_unregistered, buffering_period, unknown"
-    )]
-    debug_nal_types: String,
-
-    // Parse short NALs that are 0x000001
-    #[clap(long, env = "PARSE_SHORT_NALS", default_value_t = false)]
-    parse_short_nals: bool,
-
-    // MpegTS Reader use
-    #[clap(long, env = "MPEGTS_READER", default_value_t = false)]
-    mpegts_reader: bool,
-
-    /// Sampling time for the MPEGTS Reader
-    #[clap(long, env = "MPEGTS_READER_SAMPLING_TIME", default_value_t = 1_000)]
-    mpegts_reader_sampling_time: u64,
 
     /// Extract Images from the video stream (requires feature gst)
     #[clap(long, env = "EXTRACT_IMAGES", default_value_t = false)]
@@ -659,12 +522,12 @@ struct Args {
     #[clap(long, env = "SAVE_IMAGES", default_value_t = false)]
     save_images: bool,
 
-    /// Image Sample Rate Ns - Image sample rate in nano seconds
-    #[clap(long, env = "IMAGE_SAMPLE_RATE_NS", default_value_t = 1_000_000_000)]
+    /// Image Sample Rate Ns - Image sample rate in nano seconds (fails to get images as frequently)
+    #[clap(long, env = "IMAGE_SAMPLE_RATE_NS", default_value_t = 0)]
     image_sample_rate_ns: u64,
 
     /// Image Height - Image height in pixels of Thumbnail extracted images
-    #[clap(long, env = "IMAGE_HEIGHT", default_value_t = 120)]
+    #[clap(long, env = "IMAGE_HEIGHT", default_value_t = 240)]
     image_height: u32,
 
     /// filmstrip length
@@ -676,12 +539,8 @@ struct Args {
     watch_file: String,
 
     /// Gstreamer Queue Buffers
-    #[clap(long, env = "GST_QUEUE_BUFFERS", default_value_t = 60)]
+    #[clap(long, env = "GST_QUEUE_BUFFERS", default_value_t = 1)]
     gst_queue_buffers: u32,
-
-    /// Max Pending Filmstrips
-    #[clap(long, env = "MAX_PENDING_FILMSTRIPS", default_value_t = 10)]
-    max_pending_filmstrips: usize,
 
     /// Scale Images - Scale the images to the specified height
     #[clap(long, env = "SCALE_IMAGES", default_value_t = false)]
@@ -694,6 +553,14 @@ struct Args {
     /// Input Codec - Expected codec type for Video stream, limited to h264, h265 or mpeg2.
     #[clap(long, env = "INPUT_CODEC", default_value = "h264")]
     input_codec: String,
+
+    /// image framerate - Framerate of the images extracted in 1/1 format
+    #[clap(long, env = "IMAGE_FRAMERATE", default_value = "1/10")]
+    image_framerate: String,
+
+    /// Loglevel - Log level for the application
+    #[clap(long, env = "LOGLEVEL", default_value = "info")]
+    loglevel: String,
 }
 
 // MAIN Function
@@ -741,24 +608,14 @@ async fn rscap() {
     let pcap_stats = args.pcap_stats;
     let mut pcap_channel_size = args.pcap_channel_size;
     let mut zmq_channel_size = args.zmq_channel_size;
-    let mut decoder_channel_size = args.decoder_channel_size;
     #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
     let use_dpdk = args.dpdk;
     let output_file = args.output_file;
     let no_zmq_thread = args.no_zmq_thread;
     let mut zmq_batch_size = args.zmq_batch_size;
     let debug_smpte2110 = args.debug_smpte2110;
-    let decode_video = args.decode_video;
-    let mut decode_video_batch_size = args.decode_video_batch_size;
-    let debug_nals = args.debug_nals;
-    let debug_nal_types = args.debug_nal_types;
-    let parse_short_nals = args.parse_short_nals;
 
     println!("Starting RsCap Probe...");
-
-    // turn debug_nal_types into a vector
-    // Assuming debug_nal_types is a String
-    let debug_nal_types: Vec<String> = debug_nal_types.split(',').map(|s| s.to_string()).collect();
 
     // SMPTE2110 specific settings
     if args.smpte2110 {
@@ -766,10 +623,8 @@ async fn rscap() {
         buffer_size = 10_000_000_000; // set pcap buffer size to 10GB for smpte2110
         pcap_channel_size = 1_000_000; // set pcap channel size for smpte2110
         zmq_channel_size = 1_000_000; // set zmq channel size for smpte2110
-        decoder_channel_size = 1_000_000; // set decoder channel size for smpte2110
         packet_size = 1_220; // set packet size to 1220 (body) + 12 (header) for RTP
         batch_size = 3; // N x 1220 size packets for pcap read size
-        decode_video_batch_size = 7; // N x 1220 size packets for pcap read size
         zmq_batch_size = 1080; // N x packets for how many packets to send to ZMQ per batch
     }
 
@@ -784,14 +639,36 @@ async fn rscap() {
     let mut is_mpegts = true; // Default to true, update based on actual packet type
 
     // Initialize logging
-    let _ = env_logger::try_init();
+    let env = Env::default().filter_or("RUST_LOG", "info"); // Default to `info` if `RUST_LOG` is not set
+    LogBuilder::from_env(env).init();
+
+    // Set Rust log level with --loglevel if it is set
+    let loglevel = args.loglevel.to_lowercase();
+    match loglevel.as_str() {
+        "error" => {
+            log::set_max_level(log::LevelFilter::Error);
+        }
+        "warn" => {
+            log::set_max_level(log::LevelFilter::Warn);
+        }
+        "info" => {
+            log::set_max_level(log::LevelFilter::Info);
+        }
+        "debug" => {
+            log::set_max_level(log::LevelFilter::Debug);
+        }
+        "trace" => {
+            log::set_max_level(log::LevelFilter::Trace);
+        }
+        _ => {
+            log::set_max_level(log::LevelFilter::Info);
+        }
+    }
 
     let (ptx, mut prx) = mpsc::channel::<(Arc<Vec<u8>>, u64, u64)>(pcap_channel_size);
 
     let running = Arc::new(AtomicBool::new(true));
     let running_capture = running.clone();
-    let running_decoder = running.clone();
-    let running_demuxer = running.clone();
     let running_zmq = running.clone();
 
     // Spawn a new thread for packet capture
@@ -954,428 +831,6 @@ async fn rscap() {
         })
     };
 
-    let mut ctx = Context::default();
-    let mut scratch = Vec::new();
-    // Use the `move` keyword to move ownership of `ctx` and `scratch` into the closure
-    let mut annexb_reader = AnnexBReader::accumulate(move |nal: RefNal<'_>| {
-        if !nal.is_complete() {
-            return NalInterest::Buffer;
-        }
-        let hdr = match nal.header() {
-            Ok(h) => h,
-            Err(e) => {
-                // check if we are in debug mode for nals, else check if this is a ForbiddenZeroBit error, which we ignore
-                let e_str = format!("{:?}", e);
-                if !debug_nals && e_str == "ForbiddenZeroBit" {
-                    // ignore forbidden zero bit error unless we are in debug mode
-                } else {
-                    // show nal contents
-                    debug!("---\n{:?}\n---", nal);
-                    error!("Failed to parse NAL header: {:?}", e);
-                }
-                return NalInterest::Buffer;
-            }
-        };
-        match hdr.nal_unit_type() {
-            UnitType::SeqParameterSet => {
-                if let Ok(sps) = sps::SeqParameterSet::from_bits(nal.rbsp_bits()) {
-                    // check if debug_nal_types has sps
-                    if debug_nal_types.contains(&"sps".to_string())
-                        || debug_nal_types.contains(&"all".to_string())
-                    {
-                        println!("Found SPS: {:?}", sps);
-                    }
-                    ctx.put_seq_param_set(sps);
-                }
-            }
-            UnitType::PicParameterSet => {
-                if let Ok(pps) = pps::PicParameterSet::from_bits(&ctx, nal.rbsp_bits()) {
-                    // check if debug_nal_types has pps
-                    if debug_nal_types.contains(&"pps".to_string())
-                        || debug_nal_types.contains(&"all".to_string())
-                    {
-                        println!("Found PPS: {:?}", pps);
-                    }
-                    ctx.put_pic_param_set(pps);
-                }
-            }
-            UnitType::SEI => {
-                let mut r = sei::SeiReader::from_rbsp_bytes(nal.rbsp_bytes(), &mut scratch);
-                while let Ok(Some(msg)) = r.next() {
-                    match msg.payload_type {
-                        sei::HeaderType::PicTiming => {
-                            let sps = match ctx.sps().next() {
-                                Some(s) => s,
-                                None => continue,
-                            };
-                            let pic_timing = sei::pic_timing::PicTiming::read(sps, &msg);
-                            match pic_timing {
-                                Ok(pic_timing_data) => {
-                                    // Check if debug_nal_types has pic_timing or all
-                                    if debug_nal_types.contains(&"pic_timing".to_string())
-                                        || debug_nal_types.contains(&"all".to_string())
-                                    {
-                                        println!("Found PicTiming: {:?}", pic_timing_data);
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("Error parsing PicTiming SEI: {:?}", e);
-                                }
-                            }
-                        }
-                        h264_reader::nal::sei::HeaderType::BufferingPeriod => {
-                            let sps = match ctx.sps().next() {
-                                Some(s) => s,
-                                None => continue,
-                            };
-                            let buffering_period =
-                                sei::buffering_period::BufferingPeriod::read(&ctx, &msg);
-                            // check if debug_nal_types has buffering_period
-                            if debug_nal_types.contains(&"buffering_period".to_string())
-                                || debug_nal_types.contains(&"all".to_string())
-                            {
-                                println!(
-                                    "Found BufferingPeriod: {:?} Payload: [{:?}] - {:?}",
-                                    buffering_period, msg.payload, sps
-                                );
-                            }
-                        }
-                        h264_reader::nal::sei::HeaderType::UserDataRegisteredItuTT35 => {
-                            match sei::user_data_registered_itu_t_t35::ItuTT35::read(&msg) {
-                                Ok((itu_t_t35_data, remaining_data)) => {
-                                    if debug_nal_types
-                                        .contains(&"user_data_registered_itu_tt35".to_string())
-                                        || debug_nal_types.contains(&"all".to_string())
-                                    {
-                                        println!("Found UserDataRegisteredItuTT35: {:?}, Remaining Data: {:?}", itu_t_t35_data, remaining_data);
-                                    }
-                                    if is_cea_608(&itu_t_t35_data) {
-                                        let (captions_cc1, captions_cc2, xds_data) =
-                                            decode_cea_608(remaining_data);
-                                        debug!(
-                                            "CEA-608 Data: {:?} cc1: {:?} cc2: {:?} xds: {:?}",
-                                            itu_t_t35_data, captions_cc1, captions_cc2, xds_data
-                                        );
-                                        if !captions_cc1.is_empty() {
-                                            debug!("CEA-608 CC1 Captions: {:?}", captions_cc1);
-                                        }
-                                        if !captions_cc2.is_empty() {
-                                            debug!("CEA-608 CC2 Captions: {:?}", captions_cc2);
-                                        }
-                                        if !xds_data.is_empty() {
-                                            debug!("CEA-608 XDS Data: {:?}", xds_data);
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("Error parsing ITU T.35 data: {:?}", e);
-                                }
-                            }
-                        }
-                        h264_reader::nal::sei::HeaderType::UserDataUnregistered => {
-                            // Check if debug_nal_types has user_data_unregistered or all
-                            if debug_nal_types.contains(&"user_data_unregistered".to_string())
-                                || debug_nal_types.contains(&"all".to_string())
-                            {
-                                println!(
-                                    "Found SEI type UserDataUnregistered {:?} payload: [{:?}]",
-                                    msg.payload_type, msg.payload
-                                );
-                            }
-                        }
-                        _ => {
-                            // check if debug_nal_types has sei
-                            if debug_nal_types.contains(&"sei".to_string())
-                                || debug_nal_types.contains(&"all".to_string())
-                            {
-                                println!(
-                                    "Unknown Found SEI type {:?} payload: [{:?}]",
-                                    msg.payload_type, msg.payload
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            UnitType::SliceLayerWithoutPartitioningIdr
-            | UnitType::SliceLayerWithoutPartitioningNonIdr => {
-                let msg = slice::SliceHeader::from_bits(&ctx, &mut nal.rbsp_bits(), hdr);
-                // check if debug_nal_types has slice
-                if debug_nal_types.contains(&"slice".to_string())
-                    || debug_nal_types.contains(&"all".to_string())
-                {
-                    println!("Found NAL Slice: {:?}", msg);
-                }
-            }
-            _ => {
-                // check if debug_nal_types has nal
-                if debug_nal_types.contains(&"unknown".to_string())
-                    || debug_nal_types.contains(&"all".to_string())
-                {
-                    println!("Found Unknown NAL: {:?}", nal);
-                }
-            }
-        }
-        NalInterest::Buffer
-    });
-
-    // Setup demuxer async processing thread
-    let (dmtx, mut dmrx) = mpsc::channel::<Vec<u8>>(args.demuxer_channel_size);
-
-    // Setup asynchronous demuxer processing thread
-    let (sync_dmtx, mut sync_dmrx) = mpsc::channel::<Vec<u8>>(args.demuxer_channel_size);
-
-    // Running a synchronous task in the background
-    let running_demuxer_clone = running_demuxer.clone();
-    task::spawn_blocking(move || {
-        let mut demux_ctx = mpegts::DumpDemuxContext::new();
-        let mut demux = demultiplex::Demultiplex::new(&mut demux_ctx);
-        let mut demux_buf = [0u8; 1880 * 1024];
-        let mut buf_end = 0;
-
-        while running_demuxer_clone.load(Ordering::SeqCst) {
-            match sync_dmrx.blocking_recv() {
-                Some(packet) => {
-                    let packet_len = packet.len();
-                    let space_left = demux_buf.len() - buf_end;
-
-                    if space_left < packet_len {
-                        buf_end = 0; // Reset buffer on overflow
-                    }
-
-                    demux_buf[buf_end..buf_end + packet_len].copy_from_slice(&packet);
-                    buf_end += packet_len;
-
-                    /*info!("Demuxer push packet of size: {}", packet_len);
-                    let packet_arc = Arc::new(packet);
-                    hexdump(&packet_arc, 0, packet_len);*/
-                    demux.push(&mut demux_ctx, &demux_buf[0..buf_end]);
-                    // Additional processing as required
-                }
-                None => {
-                    // Handle error or shutdown
-                    break;
-                }
-            }
-        }
-    });
-
-    // Initialize the mpegts demuxer thread using Tokio
-    let demuxer_thread = tokio::spawn(async move {
-        loop {
-            if !running_demuxer.load(Ordering::SeqCst) {
-                debug!("Demuxer thread received stop signal.");
-                break;
-            }
-
-            if !args.mpegts_reader {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                continue;
-            }
-
-            if let Some(packet) = dmrx.recv().await {
-                // Send packet data to the synchronous processing thread
-                //info!("Demuxer thread received packet of size: {}", packet.len());
-                sync_dmtx.send(packet).await.unwrap();
-            }
-        }
-    });
-
-    // Initialize the video processor
-    // Setup channel for passing data between threads
-    let (dtx, mut drx) = mpsc::channel::<Vec<StreamData>>(decoder_channel_size);
-    // Spawn a new thread for Decoder communication
-    let decoder_thread = tokio::spawn(async move {
-        loop {
-            if !running_decoder.load(Ordering::SeqCst) {
-                debug!("Decoder thread received stop signal.");
-                break;
-            }
-
-            if !args.mpegts_reader && !decode_video {
-                // Sleep for a short duration to prevent a tight loop
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                continue;
-            }
-
-            // Use tokio::select to simultaneously wait for a new batch or a stop signal
-            tokio::select! {
-                Some(mut batch) = drx.recv() => {
-                    debug!("Processing {} video packets in decoder thread", batch.len());
-                    for stream_data in &batch {
-                        // packet is a subset of the original packet, starting at the payload
-                        let packet_start = stream_data.packet_start;
-                        let packet_end = stream_data.packet_start + stream_data.packet_len;
-
-                        if packet_end - packet_start > packet_size {
-                            error!("NAL Parser: Packet size {} is larger than packet buffer size {}. Skipping packet.",
-                                packet_end - packet_start, packet_size);
-                            continue;
-                        }
-
-                        // check if packet_start + 4 is less than packet_end
-                        if packet_start + 4 >= packet_end {
-                            error!("NAL Parser: Packet size {} {} - {} is less than 4 bytes. Skipping packet.",
-                                packet_end - packet_start, packet_start, packet_end);
-                            continue;
-                        }
-
-                        if args.mpegts_reader {
-                            // Send packet data to the synchronous processing thread
-                            dmtx.send(stream_data.packet[packet_start..packet_end].to_vec()).await.unwrap();
-
-                            // check if we are decoding video
-                            if !decode_video {
-                                continue;
-                            }
-                        }
-
-                        // Skip MPEG-TS header and adaptation field
-                        let header_len = 4;
-                        let adaptation_field_control = (stream_data.packet[packet_start + 3] & 0b00110000) >> 4;
-
-                        if adaptation_field_control == 0b10 {
-                            continue; // Skip packets with only adaptation field (no payload)
-                        }
-
-                        let payload_start = if adaptation_field_control != 0b01 {
-                            header_len + 1 + stream_data.packet[packet_start + 4] as usize
-                        } else {
-                            header_len
-                        };
-
-                        // confirm payload_start is sane
-                        if payload_start >= packet_end || packet_end - payload_start < 4 {
-                            error!("NAL Parser: Payload start {} is invalid with packet_start as {} and packet_end as {}. Skipping packet.",
-                                payload_start, packet_start, packet_end);
-                            continue;
-                        } else {
-                            debug!("NAL Parser: Payload start {} is valid with packet_start as {} and packet_end as {}.",
-                                payload_start, packet_start, packet_end);
-                        }
-
-                        // Process payload, skipping padding bytes
-                        let mut pos = payload_start;
-                        while pos + 4 < packet_end {
-                            if parse_short_nals && stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x01] {
-                                let nal_start = pos;
-                                pos += 3; // Move past the short start code
-
-                                // Search for the next start code
-                                while pos + 4 <= packet_end &&
-                                      stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
-                                    // Check for short start code, 0xff padding, or 0x00000000 sequence
-                                    if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x01] && pos > nal_start + 3 {
-                                        // Found a short start code, so back up and process the NAL unit
-                                        break;
-                                    } else if stream_data.packet[pos + 1] == 0xff && pos > nal_start + 3 {
-                                        // check for 0xff padding and that we are at least 2 bytes into the nal
-                                        break;
-                                    } else if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x00] && pos > nal_start + 3 {
-                                        // check for 0x00 0x00 0x00 0x00 sequence to stop at
-                                        break;
-                                    }
-                                    pos += 1;
-                                }
-
-                                // check if we only have 4 bytes left in the packet, if so then collect them too
-                                if pos + 4 >= packet_end {
-                                    while pos < packet_end {
-                                        if stream_data.packet[pos..pos + 1] == [0xff] {
-                                            // check for 0xff padding and that we are at least 2 bytes into the nal
-                                            break;
-                                        } else if pos + 2 < packet_end && stream_data.packet[pos..pos + 2] == [0x00, 0x00] {
-                                            // check for 0x00 0x00 sequence to stop at
-                                            break;
-                                        }
-                                        pos += 1;
-                                    }
-                                }
-
-                                let nal_end = pos; // End of NAL unit found or end of packet
-                                if nal_end - nal_start > 3 { // Threshold for significant NAL unit size
-                                    let nal_unit = &stream_data.packet[nal_start..nal_end];
-
-                                    // Debug print the NAL unit
-                                    if debug_nals {
-                                        let packet_len = nal_end - nal_start;
-                                        info!("Extracted {} byte Short NAL Unit from packet range {}-{}:", packet_len, nal_start, nal_end);
-                                        let nal_unit_arc = Arc::new(nal_unit.to_vec());
-                                        hexdump(&nal_unit_arc, 0, packet_len);
-                                    }
-
-                                    // Process the NAL unit
-                                    annexb_reader.push(nal_unit);
-                                    annexb_reader.reset();
-                                }
-                            } else if pos + 4 < packet_end && stream_data.packet[pos..pos + 4] == [0x00, 0x00, 0x00, 0x01] {
-                                let nal_start = pos;
-                                pos += 4; // Move past the long start code
-
-                                // Search for the next start code
-                                while pos + 4 <= packet_end &&
-                                      stream_data.packet[pos..pos + 4] != [0x00, 0x00, 0x00, 0x01] {
-                                    // Check for short start code
-                                    if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x01] && pos > nal_start + 3 {
-                                        // Found a short start code, so back up and process the NAL unit
-                                        break;
-                                    } else if stream_data.packet[pos + 1] == 0xff && pos > nal_start + 3 {
-                                        // check for 0xff padding and that we are at least 2 bytes into the nal
-                                        break;
-                                    } else if stream_data.packet[pos..pos + 3] == [0x00, 0x00, 0x00] && pos > nal_start + 3 {
-                                        // check for 0x00 0x00 0x00 0x00 sequence to stop at
-                                        break;
-                                    }
-                                    pos += 1;
-                                }
-
-                                // check if we only have 4 bytes left in the packet, if so then collect them too
-                                if pos + 4 >= packet_end {
-                                    while pos < packet_end {
-                                        if stream_data.packet[pos..pos + 1] == [0xff] {
-                                            // check for 0xff padding and that we are at least 2 bytes into the nal
-                                            break;
-                                        } else if pos + 2 < packet_end && stream_data.packet[pos..pos + 2] == [0x00, 0x00] {
-                                            // check for 0x00 0x00 sequence to stop at
-                                            break;
-                                        }
-                                        pos += 1;
-                                    }
-                                }
-
-                                let nal_end = pos; // End of NAL unit found or end of packet
-                                if nal_end - nal_start > 3 { // Threshold for significant NAL unit size
-                                    let nal_unit = &stream_data.packet[nal_start..nal_end];
-
-                                    // Debug print the NAL unit
-                                    if debug_nals {
-                                        let packet_len = nal_end - nal_start;
-                                        let nal_unit_arc = Arc::new(nal_unit.to_vec());
-                                        hexdump(&nal_unit_arc, 0, packet_len);
-                                        info!("Extracted {} byte Long NAL Unit from packet range {}-{}:", packet_len, nal_start, nal_end);
-                                    }
-
-                                    // Process the NAL unit
-                                    annexb_reader.push(nal_unit);
-                                    annexb_reader.reset();
-                                }
-                            } else {
-                                pos += 1; // Move to the next byte if no start code found
-                            }
-                        }
-                    }
-                    // Clear the batch after processing
-                    batch.clear();
-                }
-                _ = tokio::time::sleep(Duration::from_millis(10)), if !running_decoder.load(Ordering::SeqCst) => {
-                    // This branch allows checking the running flag regularly
-                    info!("Decoder thread received stop signal.");
-                    break;
-                }
-            }
-        }
-    });
-
     // Setup channel for passing stream_data for ZMQ thread sending the stream data to monitor process
     let (tx, mut rx) = mpsc::channel::<Vec<StreamData>>(zmq_channel_size);
 
@@ -1464,6 +919,7 @@ async fn rscap() {
         args.image_height,
         args.gst_queue_buffers,
         args.scale_images,
+        &args.image_framerate,
     ) {
         Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
         Err(err) => {
@@ -1495,7 +951,6 @@ async fn rscap() {
         args.image_height,
         args.filmstrip_length,
         args.jpeg_quality,
-        /*args.max_pending_filmstrips,*/
     );
 
     // Watch file thread and sender/receiver for log file input
@@ -1521,7 +976,6 @@ async fn rscap() {
 
     // Start packet capture
     let mut batch = Vec::new();
-    let mut video_batch = Vec::new();
     let mut video_pid: Option<u16> = Some(0xFFFF);
     let mut video_codec: Option<Codec> = Some(Codec::NONE);
     let mut current_video_frame = Vec::<StreamData>::new();
@@ -1535,9 +989,9 @@ async fn rscap() {
 
     let mut video_stream_type = 0;
 
-    log::info!("RsCap: Starting up with Probe ID: {}", args.probe_id);
+    info!("RsCap: Starting up with Probe ID: {}", args.probe_id);
 
-    log::info!("Startup System OS Stats:\n{:?}", system_stats);
+    info!("Startup System OS Stats:\n{:?}", system_stats);
 
     let mut dot_last_sent_ts = Instant::now();
     while let Some((packet, timestamp, iat)) = prx.recv().await {
@@ -1678,7 +1132,7 @@ async fn rscap() {
             {
                 let old_stream_type = video_stream_type;
                 video_stream_type = stream_data.stream_type_number;
-                log::info!(
+                info!(
                     "STATUS::VIDEO_STREAM:FOUND: to {}/{} from {}/{}",
                     video_pid.unwrap(),
                     video_stream_type,
@@ -1698,23 +1152,6 @@ async fn rscap() {
 
             // If MpegTS, Check if this is a video PID and if so parse NALS and decode video
             if is_mpegts {
-                // Check if this is a video PID or if demuxing all PIDs
-                if pid == video_pid.unwrap_or(0xFFFF) || args.mpegts_reader {
-                    // Check if Decoding or if Demuxing
-                    if decode_video || args.mpegts_reader {
-                        if video_batch.len() >= decode_video_batch_size {
-                            dtx.send(video_batch).await.unwrap(); // Clone if necessary
-                            video_batch = Vec::new();
-                        } else {
-                            let mut stream_data_clone = stream_data.clone();
-                            stream_data_clone.packet_start = stream_data.packet_start;
-                            stream_data_clone.packet_len = stream_data.packet_len;
-                            stream_data_clone.packet = Arc::new(stream_data.packet.to_vec());
-                            video_batch.push(stream_data_clone);
-                        }
-                    }
-                }
-
                 // Process video packets
                 #[cfg(feature = "gst")]
                 if args.extract_images {
@@ -1731,7 +1168,7 @@ async fn rscap() {
                             .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
                         {
                             // If the channel is full, drop the packet
-                            log::warn!("Video packet channel is full. Dropping packet.");
+                            warn!("Video packet channel is full. Dropping packet.");
                         }
                     }
 
@@ -1746,7 +1183,7 @@ async fn rscap() {
                         stream_data.image_pts = pts;
 
                         // Process the received image data
-                        log::debug!(
+                        debug!(
                             "Probe: Received a jpeg image with size: {} bytes",
                             image_data.len()
                         );
@@ -1764,7 +1201,7 @@ async fn rscap() {
             // Watch file
             if args.watch_file != "" {
                 if let Ok(line) = watch_file_receiver.try_recv() {
-                    log::info!("WatchFile Received line: {}", line);
+                    info!("WatchFile Received line: {}", line);
                     // attach to stream_data.log_message
                     stream_data.log_message = line.clone();
                 }
@@ -1828,25 +1265,15 @@ async fn rscap() {
         }
     }
 
+    println!("\nWaiting for threads to finish...");
+
     // Send ZMQ stop signal
     tx.send(Vec::new()).await.unwrap();
     drop(tx);
 
-    // Send Decoder stop signal
-    /*dtx.send(Vec::new()).await.unwrap();
-    drop(dtx);*/
-
-    // Send Demuxer stop signal
-    /*dmtx.send(Vec::new()).await.unwrap();
-    drop(dmtx);*/
-
-    println!("\nWaiting for threads to finish...");
-
     // Wait for the zmq_thread to finish
     capture_task.await.unwrap();
     zmq_thread.await.unwrap();
-    demuxer_thread.await.unwrap();
-    decoder_thread.await.unwrap();
 
     println!("\nThreads finished, exiting rscap probe");
 }

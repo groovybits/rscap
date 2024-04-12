@@ -8,6 +8,8 @@ use crate::current_unix_timestamp_ms;
 use crate::system_stats::get_system_stats;
 use crate::system_stats::SystemStats;
 use ahash::AHashMap;
+use std::io;
+use std::io::Write;
 
 #[cfg(feature = "gst")]
 use gst_app::{AppSink, AppSrc};
@@ -56,6 +58,7 @@ pub fn initialize_pipeline(
     height: u32,
     buffer_count: u32,
     scale: bool,
+    framerate: &str,
 ) -> Result<(gst::Pipeline, AppSrc, AppSink), anyhow::Error> {
     // Initialize GStreamer
     gst::init()?;
@@ -88,13 +91,13 @@ pub fn initialize_pipeline(
     // Create a pipeline to extract video frames
     let pipeline = match stream_type_number {
         0x02 => create_pipeline(
-            &format!("appsrc name=src ! tsdemux ! mpeg2dec ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", scale_string),
+            &format!("appsrc name=src ! tsdemux |capsfiter caps=video/mpeg ! mpeg2dec ! videorate ! video/x-raw,framerate={} ! videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
         )?,
         0x1B => create_pipeline(
-            &format!("appsrc name=src ! tsdemux ! h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", scale_string),
+            &format!("appsrc name=src ! tsdemux ! capsfilter caps=video/x-h264 ! h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate={} ! videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
         )?,
         0x24 => create_pipeline(
-            &format!("appsrc name=src ! tsdemux ! h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate=1/1 ! videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", scale_string),
+            &format!("appsrc name=src ! tsdemux ! capsfilter caps=video/x-h265 ! h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate={} ! videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
         )?,
         _ => {
             return Err(anyhow::anyhow!(
@@ -126,6 +129,7 @@ pub fn initialize_pipeline(
     // Set appsink properties
     appsink.set_property("max-buffers", &buffer_count);
     appsink.set_property("drop", &true);
+    /*
     appsink.set_property("emit-signals", &true);
     appsink.set_property("sync", &true);
     appsink.set_property("async", &true);
@@ -148,6 +152,7 @@ pub fn initialize_pipeline(
     );
     appsrc.set_property("do-timestamp", &true);
     appsrc.set_property("format", &gst::Format::Time);
+    */
 
     // These make it fail
     ////appsink.set_property("qos", &false);
@@ -162,10 +167,8 @@ pub fn process_video_packets(appsrc: AppSrc, mut video_packet_receiver: mpsc::Re
         while let Some(packet) = video_packet_receiver.recv().await {
             let buffer = gst::Buffer::from_slice(packet);
             if let Err(err) = appsrc.push_buffer(buffer) {
-                eprintln!("Failed to push buffer to appsrc: {}", err);
+                log::error!("Failed to push buffer to appsrc: {}", err);
             }
-            // Add a small delay to prevent a tight loop
-            //tokio::time::sleep(Duration::from_millis(1)).await;
         }
     });
 }
@@ -251,7 +254,7 @@ pub fn pull_images(
                                 let mut encoder =
                                     image::codecs::jpeg::JpegEncoder::new_with_quality(
                                         &mut jpeg_data,
-                                        80,
+                                        jpeg_quality,
                                     );
                                 encoder
                                     .encode_image(&image)
@@ -261,9 +264,13 @@ pub fn pull_images(
                             }
                             frame_count += 1;
 
+                            print!("*");
+                            // flush stdout
+                            io::stdout().flush().unwrap();
+
                             filmstrip_images.push(image);
 
-                            if filmstrip_images.len() >= filmstrip_length {
+                            if filmstrip_length <= 1 || filmstrip_images.len() >= filmstrip_length {
                                 // Create a new image buffer for the filmstrip
                                 let filmstrip_width = (scaled_width * filmstrip_length) as u32;
                                 let mut filmstrip = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 #
 BUILD=release-with-debug
 OUTPUT_FILE=images/test.jpg
@@ -17,13 +17,13 @@ else
     exit 1
 fi
 
+echo "Using $MONITOR_BIN"
 $MONITOR_BIN -V
 
 GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     GST_DEBUG=$GST_DEBUG_LEVEL \
     LD_LIBRARY_PATH=$LD_LIBRARY_PATH \
     RUST_BACKTRACE=$BACKTRACE \
-    RUST_LOG=$LOGLEVEL \
     $MONITOR_BIN \
     --kafka-broker $KAFKA_BROKER \
     --send-to-kafka \
