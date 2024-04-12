@@ -24,12 +24,14 @@ fi
 
 $PROBE_BIN -V
 
+#VALGRIND="valgrind --show-leak-kinds=definite,possible --leak-check=full"
+
 sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     LD_LIBRARY_PATH=$LD_LIBRARY_PATH \
     GST_DEBUG=$GST_DEBUG_LEVEL \
     RUST_BACKTRACE=$BACKTRACE \
     RUST_LOG=$LOGLEVEL \
-    $PROBE_BIN \
+    $VALGRIND $PROBE_BIN \
     --pcap-stats \
     --source-ip $SOURCE_IP \
     --source-port $SOURCE_PORT \

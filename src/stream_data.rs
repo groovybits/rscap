@@ -53,6 +53,7 @@ fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
 pub fn initialize_pipeline(
     stream_type_number: u8,
     height: u32,
+    buffer_count: u32,
 ) -> Result<(gst::Pipeline, AppSrc, AppSink), anyhow::Error> {
     // Initialize GStreamer
     gst::init()?;
@@ -106,7 +107,7 @@ pub fn initialize_pipeline(
 
     // Set appsink to drop old buffers and only keep the most recent one
     appsink.set_drop(true);
-    appsink.set_max_buffers(60);
+    appsink.set_max_buffers(buffer_count);
 
     Ok((pipeline, appsrc, appsink))
 }

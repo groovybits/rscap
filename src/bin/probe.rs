@@ -467,7 +467,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.23",
+    version = "0.5.24",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {
@@ -672,6 +672,10 @@ struct Args {
     /// Watch File - File we watch for changes to send as the streams.PID.log_line string
     #[clap(long, env = "WATCH_FILE", default_value = "")]
     watch_file: String,
+
+    /// Gstreamer Queue Buffers
+    #[clap(long, env = "GST_QUEUE_BUFFERS", default_value_t = 1)]
+    gst_queue_buffers: u32,
 }
 
 // MAIN Function
@@ -1437,13 +1441,14 @@ async fn rscap() {
 
     // Initialize the pipeline
     #[cfg(feature = "gst")]
-    let (pipeline, appsrc, appsink) = match initialize_pipeline(0x1B, args.image_height) {
-        Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
-        Err(err) => {
-            eprintln!("Failed to initialize the pipeline: {}", err);
-            return;
-        }
-    };
+    let (pipeline, appsrc, appsink) =
+        match initialize_pipeline(0x1B, args.image_height, args.gst_queue_buffers) {
+            Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
+            Err(err) => {
+                eprintln!("Failed to initialize the pipeline: {}", err);
+                return;
+            }
+        };
 
     // Start the pipeline
     #[cfg(feature = "gst")]
