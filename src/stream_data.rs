@@ -129,16 +129,19 @@ pub fn process_video_packets(appsrc: AppSrc, mut video_packet_receiver: mpsc::Re
 #[cfg(feature = "gst")]
 pub fn pull_images(
     appsink: AppSink,
-    image_sender: mpsc::Sender<(Vec<u8>, u64)>,
+    image_sender: Arc<Mutex<mpsc::Sender<(Vec<u8>, u64)>>>,
     save_images: bool,
     sample_interval: u64,
     image_height: u32,
     filmstrip_length: usize,
+    max_pending_filmstrips: usize,
 ) {
+    let pending_filmstrips = Arc::new(Mutex::new(0));
+
     tokio::spawn(async move {
         let mut frame_count = 0;
         let mut last_processed_pts = 0;
-        let mut filmstrip_images = Vec::new();
+        let filmstrip_images = Arc::new(Mutex::new(Vec::new()));
 
         loop {
             let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
@@ -193,40 +196,78 @@ pub fn pull_images(
                         }
                         frame_count += 1;
 
-                        filmstrip_images.push(image);
+                        {
+                            let mut images = filmstrip_images.lock().unwrap();
+                            images.push(image);
 
-                        if filmstrip_images.len() >= filmstrip_length {
-                            // Create a new image buffer for the filmstrip
-                            let filmstrip_width = (width * filmstrip_length) as u32;
-                            let mut filmstrip = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(
-                                filmstrip_width,
-                                image_height as u32,
-                            );
+                            if images.len() >= filmstrip_length {
+                                // Check if the number of pending filmstrips exceeds the limit
+                                let mut pending = pending_filmstrips.lock().unwrap();
+                                if *pending >= max_pending_filmstrips {
+                                    // Drop the oldest filmstrip
+                                    images.drain(..filmstrip_length);
+                                    *pending -= 1;
+                                }
 
-                            // Concatenate the images into the filmstrip
-                            for (i, img) in filmstrip_images.iter().enumerate() {
-                                let x_offset = i as u32 * width as u32;
-                                image::imageops::overlay(&mut filmstrip, img, x_offset.into(), 0);
+                                let images_clone = Arc::clone(&filmstrip_images);
+                                let sender_clone = Arc::clone(&image_sender);
+                                let pending_clone = Arc::clone(&pending_filmstrips);
+
+                                // Spawn a blocking task to handle the filmstrip creation and sending
+                                tokio::task::spawn_blocking(move || {
+                                    let images = images_clone.lock().unwrap();
+                                    let filmstrip_images: Vec<_> =
+                                        images.iter().take(filmstrip_length).cloned().collect();
+
+                                    // Create a new image buffer for the filmstrip
+                                    let filmstrip_width = (width * filmstrip_length) as u32;
+                                    let mut filmstrip = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(
+                                        filmstrip_width,
+                                        image_height as u32,
+                                    );
+
+                                    // Concatenate the images into the filmstrip
+                                    for (i, img) in filmstrip_images.iter().enumerate() {
+                                        let x_offset = i as u32 * width as u32;
+                                        image::imageops::overlay(
+                                            &mut filmstrip,
+                                            img,
+                                            x_offset.into(),
+                                            0,
+                                        );
+                                    }
+
+                                    // Encode the filmstrip to a JPEG vector
+                                    let mut jpeg_data = Vec::new();
+                                    let mut encoder =
+                                        image::codecs::jpeg::JpegEncoder::new_with_quality(
+                                            &mut jpeg_data,
+                                            80,
+                                        );
+                                    encoder
+                                        .encode_image(&filmstrip)
+                                        .expect("JPEG encoding failed");
+
+                                    // Send the filmstrip over the channel
+                                    let sender = sender_clone.lock().unwrap();
+                                    if let Err(err) = sender.blocking_send((jpeg_data, pts)) {
+                                        log::error!(
+                                            "Failed to send image data through channel: {}",
+                                            err
+                                        );
+                                    }
+
+                                    // Decrement the pending filmstrips count
+                                    let mut pending = pending_clone.lock().unwrap();
+                                    *pending -= 1;
+                                });
+
+                                // Increment the pending filmstrips count
+                                *pending += 1;
+
+                                // Clear the filmstrip images for the next set
+                                images.clear();
                             }
-
-                            // Encode the filmstrip to a JPEG vector
-                            let mut jpeg_data = Vec::new();
-                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
-                                &mut jpeg_data,
-                                80,
-                            );
-                            encoder
-                                .encode_image(&filmstrip)
-                                .expect("JPEG encoding failed");
-
-                            // Send the filmstrip over the channel
-                            if let Err(err) = image_sender.send((jpeg_data, pts)).await {
-                                log::error!("Failed to send image data through channel: {}", err);
-                                break;
-                            }
-
-                            // Clear the filmstrip images for the next set
-                            filmstrip_images.clear();
                         }
                     } else {
                         log::error!("Received image data with unexpected length: {}", data.len());

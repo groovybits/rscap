@@ -36,6 +36,7 @@ use rscap::system_stats::get_system_stats;
 use rscap::watch_file::watch_daemon;
 use rscap::{current_unix_timestamp_ms, hexdump};
 use std::sync::mpsc::channel;
+use std::sync::Mutex;
 use std::thread;
 use std::{
     error::Error as StdError,
@@ -676,6 +677,10 @@ struct Args {
     /// Gstreamer Queue Buffers
     #[clap(long, env = "GST_QUEUE_BUFFERS", default_value_t = 1)]
     gst_queue_buffers: u32,
+
+    /// Max Pending Filmstrips
+    #[clap(long, env = "MAX_PENDING_FILMSTRIPS", default_value_t = 10)]
+    max_pending_filmstrips: usize,
 }
 
 // MAIN Function
@@ -1466,11 +1471,12 @@ async fn rscap() {
     #[cfg(feature = "gst")]
     pull_images(
         appsink,
-        image_sender,
+        Arc::new(Mutex::new(image_sender)),
         args.save_images,
         args.image_sample_rate_ns,
         args.image_height,
         args.filmstrip_length,
+        args.max_pending_filmstrips,
     );
 
     // Watch file thread and sender/receiver for log file input
