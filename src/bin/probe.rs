@@ -567,19 +567,26 @@ struct Args {
 #[tokio::main]
 async fn main() {
     let ctrl_c = tokio::signal::ctrl_c();
+    let running = Arc::new(AtomicBool::new(true));
 
     tokio::select! {
         _ = ctrl_c => {
             println!("\nCtrl-C received, shutting down");
+            running.store(false, Ordering::SeqCst);
         }
-        _ = rscap() => {
+        _ = rscap(running.clone()) => {
             println!("\nRsCap exited");
         }
     }
 }
 
 // RsCap Function
-async fn rscap() {
+async fn rscap(running: Arc<AtomicBool>) {
+    let running_capture = running.clone();
+    let running_zmq = running.clone();
+    let running_gstreamer_process = running.clone();
+    let running_gstreamer_pull = running.clone();
+
     dotenv::dotenv().ok(); // read .env file
 
     let args = Args::parse();
@@ -610,10 +617,7 @@ async fn rscap() {
     let mut zmq_channel_size = args.zmq_channel_size;
     #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
     let use_dpdk = args.dpdk;
-    let output_file = args.output_file;
-    let no_zmq_thread = args.no_zmq_thread;
     let mut zmq_batch_size = args.zmq_batch_size;
-    let debug_smpte2110 = args.debug_smpte2110;
 
     println!("Starting RsCap Probe...");
 
@@ -638,10 +642,6 @@ async fn rscap() {
 
     let mut is_mpegts = true; // Default to true, update based on actual packet type
 
-    // Initialize logging
-    let env = Env::default().filter_or("RUST_LOG", "info"); // Default to `info` if `RUST_LOG` is not set
-    LogBuilder::from_env(env).init();
-
     // Set Rust log level with --loglevel if it is set
     let loglevel = args.loglevel.to_lowercase();
     match loglevel.as_str() {
@@ -665,11 +665,11 @@ async fn rscap() {
         }
     }
 
-    let (ptx, mut prx) = mpsc::channel::<(Arc<Vec<u8>>, u64, u64)>(pcap_channel_size);
+    // Initialize logging
+    let env = Env::default().filter_or("RUST_LOG", loglevel.as_str()); // Default to `info` if `RUST_LOG` is not set
+    LogBuilder::from_env(env).init();
 
-    let running = Arc::new(AtomicBool::new(true));
-    let running_capture = running.clone();
-    let running_zmq = running.clone();
+    let (ptx, mut prx) = mpsc::channel::<(Arc<Vec<u8>>, u64, u64)>(pcap_channel_size);
 
     // Spawn a new thread for packet capture
     let capture_task = if cfg!(feature = "dpdk_enabled") && args.dpdk {
@@ -849,8 +849,8 @@ async fn rscap() {
         publisher.bind(&endpoint).unwrap();
 
         // Initialize an Option<File> to None
-        let mut file = if !output_file.is_empty() {
-            Some(File::create(&output_file).unwrap())
+        let mut file = if !args.output_file.is_empty() {
+            Some(File::create(&args.output_file).unwrap())
         } else {
             None
         };
@@ -940,7 +940,11 @@ async fn rscap() {
 
     // Spawn separate tasks for processing video packets and pulling images
     #[cfg(feature = "gst")]
-    process_video_packets(appsrc, video_packet_receiver);
+    process_video_packets(
+        appsrc,
+        video_packet_receiver,
+        running_gstreamer_process.clone(),
+    );
     #[cfg(feature = "gst")]
     pull_images(
         appsink,
@@ -951,6 +955,7 @@ async fn rscap() {
         args.image_height,
         args.filmstrip_length,
         args.jpeg_quality,
+        running_gstreamer_pull,
     );
 
     // Watch file thread and sender/receiver for log file input
@@ -1040,7 +1045,7 @@ async fn rscap() {
                 packet,
                 packet_size,
                 start_time,
-                debug_smpte2110,
+                args.debug_smpte2110,
                 timestamp,
                 iat,
                 args.source_ip.clone(),
@@ -1231,7 +1236,7 @@ async fn rscap() {
 
             //info!("STATUS::PACKETS:CAPTURED: {}", packets_captured);
             // Check if batch is full
-            if !no_zmq_thread {
+            if !args.no_zmq_thread {
                 if batch.len() >= zmq_batch_size {
                     //info!("STATUS::BATCH:SEND: {}", batch.len());
                     // Send the batch to the channel

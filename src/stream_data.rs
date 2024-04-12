@@ -10,6 +10,7 @@ use crate::system_stats::SystemStats;
 use ahash::AHashMap;
 use std::io;
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(feature = "gst")]
 use gst_app::{AppSink, AppSrc};
@@ -162,9 +163,16 @@ pub fn initialize_pipeline(
 }
 
 #[cfg(feature = "gst")]
-pub fn process_video_packets(appsrc: AppSrc, mut video_packet_receiver: mpsc::Receiver<Vec<u8>>) {
+pub fn process_video_packets(
+    appsrc: AppSrc,
+    mut video_packet_receiver: mpsc::Receiver<Vec<u8>>,
+    running: Arc<AtomicBool>,
+) {
     tokio::spawn(async move {
         while let Some(packet) = video_packet_receiver.recv().await {
+            if !running.load(Ordering::SeqCst) {
+                break;
+            }
             let buffer = gst::Buffer::from_slice(packet);
             if let Err(err) = appsrc.push_buffer(buffer) {
                 log::error!("Failed to push buffer to appsrc: {}", err);
@@ -182,13 +190,14 @@ pub fn pull_images(
     image_height: u32,
     filmstrip_length: usize,
     jpeg_quality: u8,
+    running: Arc<AtomicBool>,
 ) {
     tokio::spawn(async move {
         let mut frame_count = 0;
         let mut last_processed_pts = 0;
         let mut filmstrip_images = Vec::new();
 
-        loop {
+        while running.load(Ordering::SeqCst) {
             let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
             if let Some(sample) = sample {
                 if let Some(buffer) = sample.buffer() {

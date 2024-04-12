@@ -427,7 +427,7 @@ async fn produce_message(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.30",
+    version = "0.5.31",
     about = "RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe."
 )]
 struct Args {
@@ -542,10 +542,6 @@ async fn main() {
         std::env::set_var("RUST_LOG", "error");
     }
 
-    // Initialize logging
-    let env = Env::default().filter_or("RUST_LOG", "info"); // Default to `info` if `RUST_LOG` is not set
-    Builder::from_env(env).init();
-
     // Set Rust log level with --loglevel if it is set
     let loglevel = args.loglevel.to_lowercase();
     match loglevel.as_str() {
@@ -568,6 +564,10 @@ async fn main() {
             log::set_max_level(log::LevelFilter::Info);
         }
     }
+
+    // Initialize logging
+    let env = Env::default().filter_or("RUST_LOG", loglevel.as_str()); // Default to `info` if `RUST_LOG` is not set
+    Builder::from_env(env).init();
 
     // Setup ZeroMQ subscriber
     let context = async_zmq::Context::new();
