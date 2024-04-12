@@ -332,6 +332,9 @@ pub fn pull_images(
                         tokio::time::sleep(Duration::from_millis(10)).await;
                     }
                 }
+            } else {
+                // Sleep for a short time to prevent a busy loop
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }
     });
