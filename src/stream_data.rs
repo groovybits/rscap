@@ -134,16 +134,16 @@ pub fn initialize_pipeline(
     appsink.set_property("wait-on-eos", &false);
     appsink.set_property(
         "max-lateness",
-        &(gst::ClockTime::from_seconds(1).nseconds() as u64),
+        &(gst::ClockTime::from_seconds(1).nseconds() as i64),
     );
 
     // Set appsrc properties
     appsrc.set_property("block", &true);
     appsrc.set_property("is-live", &true);
-    appsrc.set_property("min-latency", &(gst::ClockTime::ZERO.nseconds() as u64));
+    appsrc.set_property("min-latency", &(gst::ClockTime::ZERO.nseconds() as i64));
     appsrc.set_property(
         "max-latency",
-        &(gst::ClockTime::from_seconds(1).nseconds() as u64),
+        &(gst::ClockTime::from_seconds(1).nseconds() as i64),
     );
     appsrc.set_property("do-timestamp", &true);
     appsrc.set_property("format", &gst::Format::Time);
