@@ -36,6 +36,7 @@ use rscap::system_stats::get_system_stats;
 use rscap::watch_file::watch_daemon;
 use rscap::{current_unix_timestamp_ms, hexdump};
 use std::sync::mpsc::channel;
+#[cfg(feature = "gst")]
 use std::sync::Mutex;
 use std::thread;
 use std::{
