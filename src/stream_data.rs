@@ -122,7 +122,7 @@ pub fn process_video_packets(appsrc: AppSrc, mut video_packet_receiver: mpsc::Re
                 eprintln!("Failed to push buffer to appsrc: {}", err);
             }
             // Add a small delay to prevent a tight loop
-            tokio::time::sleep(Duration::from_millis(1)).await;
+            //tokio::time::sleep(Duration::from_millis(1)).await;
         }
     });
 }
