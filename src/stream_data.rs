@@ -52,7 +52,7 @@ fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
 
 #[cfg(feature = "gst")]
 pub fn initialize_pipeline(
-    stream_type_number: u8,
+    input_codec: &str,
     height: u32,
     buffer_count: u32,
     scale: bool,
@@ -73,6 +73,16 @@ pub fn initialize_pipeline(
         format!("! videoscale ! video/x-raw,width={width},height={height}")
     } else {
         String::new()
+    };
+
+    let stream_type_number = if input_codec == "mpeg2" {
+        0x02
+    } else if input_codec == "h264" {
+        0x1B
+    } else if input_codec == "h265" {
+        0x24
+    } else {
+        return Err(anyhow::anyhow!("Unsupported video codec {}", input_codec));
     };
 
     // Create a pipeline to extract video frames

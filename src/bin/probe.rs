@@ -690,6 +690,10 @@ struct Args {
     /// Jpeg Quality - Quality of the Jpeg images
     #[clap(long, env = "JPEG_QUALITY", default_value_t = 70)]
     jpeg_quality: u8,
+
+    /// Input Codec - Expected codec type for Video stream, limited to h264, h265 or mpeg2.
+    #[clap(long, env = "INPUT_CODEC", default_value = "h264")]
+    input_codec: String,
 }
 
 // MAIN Function
@@ -1456,7 +1460,7 @@ async fn rscap() {
     // Initialize the pipeline
     #[cfg(feature = "gst")]
     let (pipeline, appsrc, appsink) = match initialize_pipeline(
-        0x1B,
+        &args.input_codec,
         args.image_height,
         args.gst_queue_buffers,
         args.scale_images,
