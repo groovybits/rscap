@@ -6,7 +6,7 @@ Summary:        RsCap and GStreamer with essential dependencies
 License:        MIT
 URL:            https://github.com/groovybits/rscap
 
-BuildRequires:  gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3, libxml2-devel, glib2-devel, pango-devel, cairo-devel, zvbi-devel
+BuildRequires:  gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3, libxml2-devel, glib2-devel, pango-devel, cairo-devel, zvbi-devel, ladspa-devel
 Requires:       glib2, orc
 
 %description
@@ -104,50 +104,6 @@ cd ..
 rm -rf orc-$ORC_VERSION
 rm -f orc-$ORC_VERSION.tar.xz
 
-# Install Gstreamer core
-echo "---"
-echo "Installing Gstreamer core..."
-echo "---"
-# Download, compile, and install GStreamer core
-wget https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-$GST_VERSION.tar.xz
-tar xf gstreamer-$GST_VERSION.tar.xz
-cd gstreamer-$GST_VERSION
-run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
-run_with_scl ninja -C _build
-ninja -C _build install
-cd ..
-rm -rf gstreamer-$GST_VERSION
-rm -f gstreamer-$GST_VERSION.tar.xz
-
-# Install GStreamer base plugins
-echo "---"
-echo "Installing Gstreamer base..."
-echo "---"
-# Download, compile, and install gst-plugins-base
-wget https://gstreamer.freedesktop.org/src/gst-plugins-base/gst-plugins-base-$GST_VERSION.tar.xz
-tar xf gst-plugins-base-$GST_VERSION.tar.xz
-cd gst-plugins-base-$GST_VERSION
-run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
-run_with_scl ninja -C _build
-ninja -C _build install
-cd ..
-rm -rf gst-plugins-base-$GST_VERSION
-rm -f gst-plugins-base-$GST_VERSION.tar.xz
-
-# Install GStreamer bad plugins (includes tsdemux)
-echo "---"
-echo "Installing Gstreamer bad plugins..."
-echo "---"
-wget https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-$GST_VERSION.tar.xz
-tar xf gst-plugins-bad-$GST_VERSION.tar.xz
-cd gst-plugins-bad-$GST_VERSION
-run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
-run_with_scl ninja -C _build
-ninja -C _build install
-cd ..
-rm -rf gst-plugins-bad-$GST_VERSION
-rm -f gst-plugins-bad-$GST_VERSION.tar.xz
-
 echo "---"
 echo "Downloading and compiling NASM (Netwide Assembler)..."
 echo "---"
@@ -210,6 +166,50 @@ cd ..
 rm -rf ffmpeg-$FFMPEG_VERSION
 rm -f ffmpeg-$FFMPEG_VERSION.tar.bz2
 
+# Install Gstreamer core
+echo "---"
+echo "Installing Gstreamer core..."
+echo "---"
+# Download, compile, and install GStreamer core
+wget https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-$GST_VERSION.tar.xz
+tar xf gstreamer-$GST_VERSION.tar.xz
+cd gstreamer-$GST_VERSION
+run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+run_with_scl ninja -C _build
+ninja -C _build install
+cd ..
+rm -rf gstreamer-$GST_VERSION
+rm -f gstreamer-$GST_VERSION.tar.xz
+
+# Install GStreamer base plugins
+echo "---"
+echo "Installing Gstreamer base..."
+echo "---"
+# Download, compile, and install gst-plugins-base
+wget https://gstreamer.freedesktop.org/src/gst-plugins-base/gst-plugins-base-$GST_VERSION.tar.xz
+tar xf gst-plugins-base-$GST_VERSION.tar.xz
+cd gst-plugins-base-$GST_VERSION
+run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+run_with_scl ninja -C _build
+ninja -C _build install
+cd ..
+rm -rf gst-plugins-base-$GST_VERSION
+rm -f gst-plugins-base-$GST_VERSION.tar.xz
+
+# Install GStreamer bad plugins (includes tsdemux)
+echo "---"
+echo "Installing Gstreamer bad plugins..."
+echo "---"
+wget https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-$GST_VERSION.tar.xz
+tar xf gst-plugins-bad-$GST_VERSION.tar.xz
+cd gst-plugins-bad-$GST_VERSION
+run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+run_with_scl ninja -C _build
+ninja -C _build install
+cd ..
+rm -rf gst-plugins-bad-$GST_VERSION
+rm -f gst-plugins-bad-$GST_VERSION.tar.xz
+
 # GStreamer libav plugins
 echo "---"
 echo "Installing Gstreamer libav plugins..."
@@ -254,14 +254,8 @@ run_with_scl cargo install cargo-c --root=$PREFIX
 git clone https://github.com/sdroege/gst-plugin-rs.git
 cd gst-plugin-rs
 git checkout $GST_PLUGINS_RS_VERSION
-run_with_scl cargo cbuild --release --package gst-plugin-cdg
-run_with_scl cargo cinstall --release --package gst-plugin-cdg --prefix=$PREFIX --libdir=$PREFIX/lib64
-run_with_scl cargo cbuild --release --package gst-plugin-ccdetect
-run_with_scl cargo cinstall --release --package gst-plugin-ccdetect --prefix=$PREFIX --libdir=$PREFIX/lib64
 run_with_scl cargo cbuild --release --package gst-plugin-closedcaption
 run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64
-run_with_scl cargo cbuild --release --package gst-plugin-cc608overlay
-run_with_scl cargo cinstall --release --package gst-plugin-cc608overlay --prefix=$PREFIX --libdir=$PREFIX/lib64
 cd ..
 rm -rf gst-plugin-rs
 

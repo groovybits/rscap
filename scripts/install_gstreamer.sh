@@ -46,7 +46,7 @@ export PATH=$PREFIX/bin:$PATH
 if [ "$OS" = "Linux" ]; then
     # Ensure the system is up to date and has the basic build tools
     sudo yum groupinstall -y "Development Tools"
-    sudo yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel libxml2-devel glib2-devel zvbi-devel pango-devel cairo-devel capnproto-devel capnproto
+    sudo yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel libxml2-devel glib2-devel zvbi-devel pango-devel cairo-devel capnproto-devel capnproto ladspa-devel
 else
     export CXXFLAGS="-stdlib=libc++"
     export LDFLAGS="-lc++"
@@ -127,71 +127,6 @@ if [ "$OS" = "Linux" ]; then
 else
     brew install orc
 fi
-
-# Install Gstreamer core
-if [ ! -f "gstreamer-installed.done" ] ; then
-    echo "---"
-    echo "Installing Gstreamer core..."
-    echo "---"
-    # Download, compile, and install GStreamer core
-    if [ ! -f gstreamer-$GST_VERSION.tar.xz ]; then
-        curl https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-$GST_VERSION.tar.xz -o gstreamer-$GST_VERSION.tar.xz
-    fi
-    if [ ! -d gstreamer-$GST_VERSION ]; then
-        tar xf gstreamer-$GST_VERSION.tar.xz
-    fi
-    cd gstreamer-$GST_VERSION
-    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
-    run_with_scl ninja -C _build
-    ninja -C _build install
-    cd ..
-fi
-touch gstreamer-installed.done
-
-# Install GStreamer base plugins
-if [ ! -f "gst-plugins-base-installed.done" ] ; then
-    echo "---"
-    echo "Installing Gstreamer base..."
-    echo "---"
-    # Download, compile, and install gst-plugins-base
-    if [ ! -f gst-plugins-base-$GST_VERSION.tar.xz ]; then
-        curl https://gstreamer.freedesktop.org/src/gst-plugins-base/gst-plugins-base-$GST_VERSION.tar.xz -o gst-plugins-base-$GST_VERSION.tar.xz
-    fi
-    if [ ! -d gst-plugins-base-$GST_VERSION ]; then
-        tar xf gst-plugins-base-$GST_VERSION.tar.xz
-    fi
-    cd gst-plugins-base-$GST_VERSION
-    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
-    run_with_scl ninja -C _build
-    ninja -C _build install
-    cd ..
-fi
-touch gst-plugins-base-installed.done
-
-# Install GStreamer bad plugins (includes tsdemux)
-if [ ! -f "gst-plugins-bad-installed.done" ] ; then
-    # Install GStreamer bad plugins (includes tsdemux)
-    echo "---"
-    echo "Installing Gstreamer bad plugins..."
-    echo "---"
-    if [ ! -f gst-plugins-bad-$GST_VERSION.tar.xz ]; then
-        curl https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-$GST_VERSION.tar.xz -o gst-plugins-bad-$GST_VERSION.tar.xz
-    fi
-    if [ ! -d gst-plugins-bad-$GST_VERSION ]; then
-        tar xf gst-plugins-bad-$GST_VERSION.tar.xz
-    fi
-    cd gst-plugins-bad-$GST_VERSION
-    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE -Dopenexr=disabled
-    run_with_scl ninja -C _build
-    ninja -C _build install
-    cd ..
-fi
-touch gst-plugins-bad-installed.done
-
-echo "---"
-echo "Downloading and compiling NASM (Netwide Assembler)..."
-echo "---"
-
 
 # Download and compile NASM
 if [ "$OS" = "Linux" ]; then
@@ -314,6 +249,70 @@ fi
 #    brew install ffmpeg
 #fi
 
+# Install Gstreamer core
+if [ ! -f "gstreamer-installed.done" ] ; then
+    echo "---"
+    echo "Installing Gstreamer core..."
+    echo "---"
+    # Download, compile, and install GStreamer core
+    if [ ! -f gstreamer-$GST_VERSION.tar.xz ]; then
+        curl https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-$GST_VERSION.tar.xz -o gstreamer-$GST_VERSION.tar.xz
+    fi
+    if [ ! -d gstreamer-$GST_VERSION ]; then
+        tar xf gstreamer-$GST_VERSION.tar.xz
+    fi
+    cd gstreamer-$GST_VERSION
+    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+    run_with_scl ninja -C _build
+    ninja -C _build install
+    cd ..
+fi
+touch gstreamer-installed.done
+
+# Install GStreamer base plugins
+if [ ! -f "gst-plugins-base-installed.done" ] ; then
+    echo "---"
+    echo "Installing Gstreamer base..."
+    echo "---"
+    # Download, compile, and install gst-plugins-base
+    if [ ! -f gst-plugins-base-$GST_VERSION.tar.xz ]; then
+        curl https://gstreamer.freedesktop.org/src/gst-plugins-base/gst-plugins-base-$GST_VERSION.tar.xz -o gst-plugins-base-$GST_VERSION.tar.xz
+    fi
+    if [ ! -d gst-plugins-base-$GST_VERSION ]; then
+        tar xf gst-plugins-base-$GST_VERSION.tar.xz
+    fi
+    cd gst-plugins-base-$GST_VERSION
+    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+    run_with_scl ninja -C _build
+    ninja -C _build install
+    cd ..
+fi
+touch gst-plugins-base-installed.done
+
+# Install GStreamer bad plugins (includes tsdemux)
+if [ ! -f "gst-plugins-bad-installed.done" ] ; then
+    # Install GStreamer bad plugins (includes tsdemux)
+    echo "---"
+    echo "Installing Gstreamer bad plugins..."
+    echo "---"
+    if [ ! -f gst-plugins-bad-$GST_VERSION.tar.xz ]; then
+        curl https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-$GST_VERSION.tar.xz -o gst-plugins-bad-$GST_VERSION.tar.xz
+    fi
+    if [ ! -d gst-plugins-bad-$GST_VERSION ]; then
+        tar xf gst-plugins-bad-$GST_VERSION.tar.xz
+    fi
+    cd gst-plugins-bad-$GST_VERSION
+    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE -Dopenexr=disabled
+    run_with_scl ninja -C _build
+    ninja -C _build install
+    cd ..
+fi
+touch gst-plugins-bad-installed.done
+
+echo "---"
+echo "Downloading and compiling NASM (Netwide Assembler)..."
+echo "---"
+
 # GStreamer libav plugins
 if [ ! -f "gst-libav-installed.done" ] ; then
     echo "---"
@@ -381,12 +380,8 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   run_with_scl cargo cbuild --release --package gst-plugin-cdg
   run_with_scl cargo cinstall --release --package gst-plugin-cdg --prefix=$PREFIX --libdir=$PREFIX/lib64
   run_with_scl cargo cbuild --release --package gst-plugin-cdg
-  run_with_scl cargo cbuild --release --package gst-plugin-ccdetect
-  run_with_scl cargo cinstall --release --package gst-plugin-ccdetect --prefix=$PREFIX --libdir=$PREFIX/lib64
   run_with_scl cargo cbuild --release --package gst-plugin-closedcaption
   run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64
-  run_with_scl cargo cbuild --release --package gst-plugin-cc608overlay
-  run_with_scl cargo cinstall --release --package gst-plugin-cc608overlay --prefix=$PREFIX --libdir=$PREFIX/lib64
   cd ..
   rm -rf gst-plugin-rs
 fi
