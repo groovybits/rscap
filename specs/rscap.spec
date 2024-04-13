@@ -30,6 +30,7 @@ cd $BUILD_DIR
 GLIB_VERSION=2.56.4
 ORC_VERSION=0.4.31
 GST_VERSION=1.20.0
+GST_PLUGINS_RS_VERSION=gstreamer-1.24.2
 LIBFFI_VERSION=3.3
 NASM_VERSION=2.15.05
 FFMPEG_VERSION=5.1.4
@@ -86,7 +87,7 @@ run_with_scl make
 make install
 cd ..
 rm -rf libffi-$LIBFFI_VERSION
-rm -rf libffi-$LIBFFI_VERSION.tar.gz
+rm -f libffi-$LIBFFI_VERSION.tar.gz
 
 # Install ORC
 echo "---"
@@ -101,7 +102,7 @@ run_with_scl ninja -C _build
 ninja -C _build install
 cd ..
 rm -rf orc-$ORC_VERSION
-rm -rf orc-$ORC_VERSION.tar.xz
+rm -f orc-$ORC_VERSION.tar.xz
 
 # Install Gstreamer core
 echo "---"
@@ -116,7 +117,7 @@ run_with_scl ninja -C _build
 ninja -C _build install
 cd ..
 rm -rf gstreamer-$GST_VERSION
-rm -rf gstreamer-$GST_VERSION.tar.xz
+rm -f gstreamer-$GST_VERSION.tar.xz
 
 # Install GStreamer base plugins
 echo "---"
@@ -131,7 +132,7 @@ run_with_scl ninja -C _build
 ninja -C _build install
 cd ..
 rm -rf gst-plugins-base-$GST_VERSION
-rm -rf gst-plugins-base-$GST_VERSION.tar.xz
+rm -f gst-plugins-base-$GST_VERSION.tar.xz
 
 # Install GStreamer bad plugins (includes tsdemux)
 echo "---"
@@ -145,7 +146,7 @@ run_with_scl ninja -C _build
 ninja -C _build install
 cd ..
 rm -rf gst-plugins-bad-$GST_VERSION
-rm -rf gst-plugins-bad-$GST_VERSION.tar.xz
+rm -f gst-plugins-bad-$GST_VERSION.tar.xz
 
 echo "---"
 echo "Downloading and compiling NASM (Netwide Assembler)..."
@@ -160,7 +161,7 @@ make
 make install
 cd ..
 rm -rf nasm-$NASM_VERSION
-rm -rf nasm-$NASM_VERSION.tar.gz
+rm -f nasm-$NASM_VERSION.tar.gz
 
 # libx264
 echo "---"
@@ -207,7 +208,7 @@ make install
 ldconfig
 cd ..
 rm -rf ffmpeg-$FFMPEG_VERSION
-rm -rf ffmpeg-$FFMPEG_VERSION.tar.bz2
+rm -f ffmpeg-$FFMPEG_VERSION.tar.bz2
 
 # GStreamer libav plugins
 echo "---"
@@ -223,7 +224,7 @@ run_with_scl ninja -C _build
 ninja -C _build install
 cd ..
 rm -rf gst-libav-$GST_VERSION
-rm -rf gst-libav-$GST_VERSION.tar.xz
+rm -f gst-libav-$GST_VERSION.tar.xz
 
 # GStreamer good plugins
 echo "---"
@@ -239,6 +240,25 @@ cd ..
 rm -rf gst-plugins-good-$GST_VERSION
 rm -rf gst-plugins-good-$GST_VERSION.tar.xz
 
+# Set RUSTFLAGS for RPATH
+export RUSTFLAGS="-C link-args=-Wl,-rpath,/opt/rscap/lib:/opt/rscap/lib64"
+
+# Set environment variables for Rust
+export CARGO_HOME=$PREFIX/cargo
+export CARGO=$PREFIX/bin/cargo
+export RUSTC=$PREFIX/bin/rustc
+
+# GStreamer Rust plugins
+run_with_scl cargo install cargo-c --root=$PREFIX
+
+git clone https://github.com/sdroege/gst-plugin-rs.git
+cd gst-plugin-rs
+git checkout $GST_PLUGINS_RS_VERSION
+run_with_scl cargo cbuild --release --package gst-plugin-cdg
+run_with_scl cargo cinstall --release --package gst-plugin-cdg --prefix=$PREFIX --libdir=$PREFIX/lib64
+cd ..
+rm -rf gst-plugin-rs
+
 # Verify GStreamer installation
 echo "------------------------------------------------------------"
 echo "Verifying GStreamer installation..."
@@ -249,20 +269,10 @@ echo "------------------------------------------------------------"
 echo "GStreamer and essential dependencies installed."
 echo "------------------------------------------------------------"
 
-echo "------------------------------------------------------------"
-echo "Building RsCap..."
-echo "------------------------------------------------------------"
-
-# Set RUSTFLAGS for RPATH
-export RUSTFLAGS="-C link-args=-Wl,-rpath,/opt/rscap/lib:/opt/rscap/lib64"
-
-# Set environment variables for Rust
-export CARGO_HOME=$PREFIX/cargo
-export CARGO=$PREFIX/bin/cargo
-export RUSTC=$PREFIX/bin/rustc
-
 # Build RsCap
+echo "------------------------------------------------------------"
 echo "Building RsCap..."
+echo "------------------------------------------------------------"
 
 # Clone RsCap repository and checkout the specific tag
 git clone https://github.com/groovybits/rscap.git

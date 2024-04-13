@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
 # Function to run a command within the SCL environment for CentOS
@@ -25,6 +25,7 @@ cd $BUILD_DIR
 ORC_VERSION=0.4.31
 GST_VERSION=1.20.0
 LIBFFI_VERSION=3.3
+GST_PLUGINS_RS_VERSION=gstreamer-1.24.2
 NASM_VERSION=2.15.05
 FFMPEG_VERSION=5.1.4
 
@@ -355,6 +356,34 @@ if [ ! -f "gst-plugins-good-installed.done" ] ; then
     cd ..
 fi
 touch gst-plugins-good-installed.done
+
+if [ ! -f "gst-plugins-rs-installed.done" ]; then
+  echo "---"
+  echo "Installing GStreamer Rust plugins..."
+  echo "---"
+
+  # Install cargo-c
+  run_with_scl cargo install cargo-c --root $PREFIX
+
+  # Download gst-plugins-rs source code
+  if [ ! -f gst-plugin-rs ]; then
+    git clone https://github.com/sdroege/gst-plugin-rs.git
+    cd gst-plugin-rs
+    git checkout $GST_PLUGINS_RS_VERSION
+    cd ..
+  fi
+
+  # Build gst-plugin-cdg
+  cd gst-plugin-rs
+  run_with_scl cargo cbuild --release --package gst-plugin-cdg
+  USER=$(whoami)
+  sudo chown -R $USER /opt/rscap
+  run_with_scl cargo cinstall --release --package gst-plugin-cdg --prefix=$PREFIX --libdir=$PREFIX/lib64
+  cd ..
+  rm -rf gst-plugin-rs
+fi
+
+touch gst-plugins-rs-installed.done
 
 # Verify GStreamer installation
 echo "------------------------------------------------------------"
