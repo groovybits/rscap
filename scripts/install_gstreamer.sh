@@ -40,6 +40,7 @@ if [ ! -d "$PREFIX" ]; then
     sudo mkdir -p $PREFIX
 fi
 sudo chown $USER -R $PREFIX
+# Ensure necessary tools are installed
 
 # For pkg-config to find .pc files
 export PKG_CONFIG_PATH=$PREFIX/lib64/pkgconfig:$PREFIX/lib/pkgconfig:/usr/lib64/pkgconfig:$PKG_CONFIG_PATH
@@ -52,6 +53,8 @@ if [ "$OS" = "Linux" ]; then
     sudo yum groupinstall -y "Development Tools"
     sudo yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel libxml2-devel glib2-devel cairo-devel capnproto-devel capnproto ladspa-devel pango-devel cairo-gobject-devel cairo-gobject
     sudo yum install --enablerepo=epel* -y zvbi-devel
+    sudo yum install -y git
+    sudo yum install -y cmake3 git
 else
     export CXXFLAGS="-stdlib=libc++"
     export LDFLAGS="-lc++"
@@ -166,7 +169,6 @@ if [ "$OS" = "Linux" ]; then
         echo "Cloning and compiling libx264..."
         echo "---"
         # Ensure git is installed
-        sudo yum install -y git
 
         # Clone the repository
         if [ ! -d "x264" ]; then
@@ -178,7 +180,6 @@ if [ "$OS" = "Linux" ]; then
         run_with_scl ./configure --prefix=$PREFIX --enable-shared --enable-static --enable-pic
         run_with_scl make
         make install
-        sudo ldconfig
         cd ..
     fi
     touch x264-installed.done
@@ -192,8 +193,6 @@ if [ "$OS" = "Linux" ]; then
         echo "---"
         echo "Cloning and compiling x265..."
         echo "---"
-        # Ensure necessary tools are installed
-        sudo yum install -y cmake3 git
 
         # Clone the x265 repository if it doesn't already exist
         if [ ! -d "x265" ]; then
@@ -211,7 +210,6 @@ if [ "$OS" = "Linux" ]; then
         # Compile and install
         run_with_scl make
         make install
-        sudo ldconfig
 
         # Navigate back to the initial directory
         cd ../..
@@ -244,9 +242,6 @@ fi
             --extra-cflags="-I$PREFIX/include" --extra-ldflags="-L$PREFIX/lib"
         run_with_scl make
         make install
-        if [ "$OS" = "Linux" ]; then
-            sudo ldconfig
-        fi
         cd ..
     fi
     touch ffmpeg-installed.done
@@ -395,3 +390,7 @@ gst-launch-1.0 --version
 echo "------------------------------------------------------------"
 echo "GStreamer and essential dependencies installed."
 echo "------------------------------------------------------------"
+
+if [ "$OS" = "Linux" ]; then
+    sudo ldconfig
+fi
