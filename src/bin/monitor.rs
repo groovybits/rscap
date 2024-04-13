@@ -139,6 +139,9 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         log_message: reader.get_log_message()?.to_string()?,
         probe_id: reader.get_probe_id()?.to_string()?,
         captions: reader.get_captions()?.to_string()?,
+        pid_map: reader.get_pid_map()?.to_string()?,
+        scte35: reader.get_scte35()?.to_string()?,
+        audio_loudness: reader.get_audio_loudness()?.to_string()?,
     };
 
     Ok(stream_data)
@@ -778,6 +781,9 @@ async fn main() {
                             let mut image_pts: u64 = 0;
                             let mut probe_id: String = String::new();
                             let mut captions: String = String::new();
+                            let mut pid_map: String = String::new();
+                            let mut scte35: String = String::new();
+                            let mut audio_loudness: String = String::new();
 
                             // Process each stream to accumulate averages
                             for (_, grouping) in stream_groupings.iter() {
@@ -809,6 +815,21 @@ async fn main() {
                                     if stream_data.captions != "" {
                                         // concatenate captions
                                         captions = format!("{}{}", captions, stream_data.captions);
+                                    }
+                                    if stream_data.pid_map != "" {
+                                        // concatenate pid_map
+                                        pid_map = format!("{}{}", pid_map, stream_data.pid_map);
+                                    }
+                                    if stream_data.scte35 != "" {
+                                        // concatenate scte35
+                                        scte35 = format!("{}{}", scte35, stream_data.scte35);
+                                    }
+                                    if stream_data.audio_loudness != "" {
+                                        // concatenate audio_loudness
+                                        audio_loudness = format!(
+                                            "{}{}",
+                                            audio_loudness, stream_data.audio_loudness
+                                        );
                                     }
                                     stream_count += 1;
                                 }
@@ -909,6 +930,15 @@ async fn main() {
                             }
                             // probe id
                             flattened_data.insert("id".to_string(), serde_json::json!(probe_id));
+
+                            // insert the pid_map, scte35, and audio_loudness fields into the flattened_data map
+                            flattened_data
+                                .insert("pid_map".to_string(), serde_json::json!(pid_map));
+                            flattened_data.insert("scte35".to_string(), serde_json::json!(scte35));
+                            flattened_data.insert(
+                                "audio_loudness".to_string(),
+                                serde_json::json!(audio_loudness),
+                            );
 
                             // Convert the Map directly to a Value for serialization
                             let combined_stats = serde_json::Value::Object(flattened_data);

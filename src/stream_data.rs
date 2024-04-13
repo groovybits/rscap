@@ -481,6 +481,9 @@ pub struct StreamData {
     pub log_message: String,
     pub probe_id: String,
     pub captions: String,
+    pub pid_map: String,
+    pub scte35: String,
+    pub audio_loudness: String,
 }
 
 impl Clone for StreamData {
@@ -546,6 +549,9 @@ impl Clone for StreamData {
             log_message: self.log_message.clone(),
             probe_id: self.probe_id.clone(),
             captions: self.captions.clone(),
+            pid_map: self.pid_map.clone(),
+            scte35: self.scte35.clone(),
+            audio_loudness: self.audio_loudness.clone(),
         }
     }
 }
@@ -635,6 +641,9 @@ impl StreamData {
             log_message: "".to_string(),
             probe_id,
             captions: "".to_string(),
+            pid_map: "".to_string(),
+            scte35: "".to_string(),
+            audio_loudness: "".to_string(),
         }
     }
     // set RTP fields

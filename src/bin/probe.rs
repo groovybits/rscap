@@ -142,6 +142,9 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
         stream_data_msg.set_capture_iat_max(stream_data.capture_iat_max);
         stream_data_msg.set_log_message(stream_data.log_message.as_str().into());
         stream_data_msg.set_probe_id(stream_data.probe_id.as_str().into());
+        stream_data_msg.set_pid_map(stream_data.pid_map.as_str().into());
+        stream_data_msg.set_scte35(stream_data.scte35.as_str().into());
+        stream_data_msg.set_audio_loudness(stream_data.audio_loudness.as_str().into());
     }
 
     Ok(message)
