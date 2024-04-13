@@ -327,6 +327,8 @@ pub fn pull_images(
                                 }
                                 current_captions.truncate(filmstrip_images.len());
 
+                                log::info!("Captions: {:?}", current_captions.clone());
+
                                 // Send the filmstrip and captions over the channel
                                 if let Err(err) = image_sender
                                     .send((jpeg_data, pts, current_captions.clone()))
