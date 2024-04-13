@@ -34,8 +34,10 @@ PREFIX=/opt/rscap
 export PATH=$PREFIX/bin:$PATH
 
 USER=$(whoami)
-sudo mkdir -p $PREFIX
-sudo chown $USER $PREFIX
+if [ ! -d "$PREFIX" ]; then
+    sudo mkdir -p $PREFIX
+fi
+sudo chown $USER -R $PREFIX
 
 # For pkg-config to find .pc files
 export PKG_CONFIG_PATH=$PREFIX/lib64/pkgconfig:$PREFIX/lib/pkgconfig:/usr/lib64/pkgconfig:$PKG_CONFIG_PATH
@@ -46,7 +48,8 @@ export PATH=$PREFIX/bin:$PATH
 if [ "$OS" = "Linux" ]; then
     # Ensure the system is up to date and has the basic build tools
     sudo yum groupinstall -y "Development Tools"
-    sudo yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel libxml2-devel glib2-devel zvbi-devel pango-devel cairo-devel capnproto-devel capnproto ladspa-devel
+    sudo yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel libxml2-devel glib2-devel cairo-devel capnproto-devel capnproto ladspa-devel
+    sudo yum install --enablerepo=epel* -y zvbi-devel
 else
     export CXXFLAGS="-stdlib=libc++"
     export LDFLAGS="-lc++"
@@ -371,9 +374,6 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
     git checkout $GST_PLUGINS_RS_VERSION
     cd ..
   fi
-
-  USER=$(whoami)
-  sudo chown -R $USER /opt/rscap
 
   # Build gst-plugin-cdg
   cd gst-plugin-rs
