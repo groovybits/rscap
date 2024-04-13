@@ -375,17 +375,13 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
     cd ..
   fi
 
-  # Build gst-plugin-cdg
+  # Build gst-plugin-closedcaption
   cd gst-plugin-rs
-  run_with_scl cargo cbuild --release --package gst-plugin-cdg
-  run_with_scl cargo cinstall --release --package gst-plugin-cdg --prefix=$PREFIX --libdir=$PREFIX/lib64
-  run_with_scl cargo cbuild --release --package gst-plugin-cdg
   run_with_scl cargo cbuild --release --package gst-plugin-closedcaption
   run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64
   cd ..
   rm -rf gst-plugin-rs
 fi
-
 touch gst-plugins-rs-installed.done
 
 # Verify GStreamer installation
