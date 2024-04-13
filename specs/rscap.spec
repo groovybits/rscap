@@ -256,6 +256,12 @@ cd gst-plugin-rs
 git checkout $GST_PLUGINS_RS_VERSION
 run_with_scl cargo cbuild --release --package gst-plugin-cdg
 run_with_scl cargo cinstall --release --package gst-plugin-cdg --prefix=$PREFIX --libdir=$PREFIX/lib64
+run_with_scl cargo cbuild --release --package gst-plugin-ccdetect
+run_with_scl cargo cinstall --release --package gst-plugin-ccdetect --prefix=$PREFIX --libdir=$PREFIX/lib64
+run_with_scl cargo cbuild --release --package gst-plugin-closedcaption
+run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64
+run_with_scl cargo cbuild --release --package gst-plugin-cc608overlay
+run_with_scl cargo cinstall --release --package gst-plugin-cc608overlay --prefix=$PREFIX --libdir=$PREFIX/lib64
 cd ..
 rm -rf gst-plugin-rs
 

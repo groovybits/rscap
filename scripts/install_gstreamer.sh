@@ -373,12 +373,20 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
     cd ..
   fi
 
+  USER=$(whoami)
+  sudo chown -R $USER /opt/rscap
+
   # Build gst-plugin-cdg
   cd gst-plugin-rs
   run_with_scl cargo cbuild --release --package gst-plugin-cdg
-  USER=$(whoami)
-  sudo chown -R $USER /opt/rscap
   run_with_scl cargo cinstall --release --package gst-plugin-cdg --prefix=$PREFIX --libdir=$PREFIX/lib64
+  run_with_scl cargo cbuild --release --package gst-plugin-cdg
+  run_with_scl cargo cbuild --release --package gst-plugin-ccdetect
+  run_with_scl cargo cinstall --release --package gst-plugin-ccdetect --prefix=$PREFIX --libdir=$PREFIX/lib64
+  run_with_scl cargo cbuild --release --package gst-plugin-closedcaption
+  run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64
+  run_with_scl cargo cbuild --release --package gst-plugin-cc608overlay
+  run_with_scl cargo cinstall --release --package gst-plugin-cc608overlay --prefix=$PREFIX --libdir=$PREFIX/lib64
   cd ..
   rm -rf gst-plugin-rs
 fi
