@@ -46,7 +46,7 @@ export PATH=$PREFIX/bin:$PATH
 if [ "$OS" = "Linux" ]; then
     # Ensure the system is up to date and has the basic build tools
     sudo yum groupinstall -y "Development Tools"
-    sudo yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel
+    sudo yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel libxml2-devel glib2-devel zvbi-devel pango-devel cairo-devel capnproto-devel capnproto
 else
     export CXXFLAGS="-stdlib=libc++"
     export LDFLAGS="-lc++"

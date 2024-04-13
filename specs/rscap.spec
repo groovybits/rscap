@@ -1,12 +1,12 @@
 Name:           rscap
-Version:        0.5.35
+Version:        0.5.36
 Release:        1%{?dist}
 Summary:        RsCap and GStreamer with essential dependencies
 
 License:        MIT
 URL:            https://github.com/groovybits/rscap
 
-BuildRequires:  gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3
+BuildRequires:  gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3, libxml2-devel, glib2-devel
 Requires:       glib2, orc
 
 %description

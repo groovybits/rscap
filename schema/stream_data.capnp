@@ -56,4 +56,5 @@ struct StreamDataCapnp {
     captureIatMax @52 :UInt64;
     logMessage @53 :Text;
     probeId @54 :Text;
+    captions @55 :Text;
 }

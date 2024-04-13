@@ -138,6 +138,7 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         capture_iat_max: reader.get_capture_iat_max(),
         log_message: reader.get_log_message()?.to_string()?,
         probe_id: reader.get_probe_id()?.to_string()?,
+        captions: reader.get_captions()?.to_string()?,
     };
 
     Ok(stream_data)
@@ -382,6 +383,7 @@ fn flatten_streams(
             json!(stream_data.log_message),
         );
         flat_structure.insert(format!("{}.id", prefix), json!(stream_data.probe_id));
+        flat_structure.insert(format!("{}.captions", prefix), json!(stream_data.captions));
     }
 
     flat_structure
@@ -427,7 +429,7 @@ async fn produce_message(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.35",
+    version = "0.5.36",
     about = "RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe."
 )]
 struct Args {
@@ -775,6 +777,7 @@ async fn main() {
                             let mut source_port: u32 = 0;
                             let mut image_pts: u64 = 0;
                             let mut probe_id: String = String::new();
+                            let mut captions: String = String::new();
 
                             // Process each stream to accumulate averages
                             for (_, grouping) in stream_groupings.iter() {
@@ -802,6 +805,10 @@ async fn main() {
                                             );
                                         }
                                         probe_id = stream_data.probe_id.clone();
+                                    }
+                                    if stream_data.captions != "" {
+                                        // concatenate captions
+                                        captions = format!("{}{}", captions, stream_data.captions);
                                     }
                                     stream_count += 1;
                                 }
@@ -862,8 +869,16 @@ async fn main() {
                                 .insert("source_ip".to_string(), serde_json::json!(source_ip));
                             flattened_data
                                 .insert("source_port".to_string(), serde_json::json!(source_port));
+                            flattened_data
+                                .insert("captions".to_string(), serde_json::json!(captions));
 
                             let mut force_send_message = false;
+
+                            if captions != "" {
+                                force_send_message = true;
+                            }
+                            flattened_data
+                                .insert("captions".to_string(), serde_json::json!(captions));
 
                             // Insert the base64_image field into the flattened_data map
                             flattened_data
