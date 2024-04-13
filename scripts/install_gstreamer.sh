@@ -18,6 +18,8 @@ echo "Detected OS: $OS"
 BUILD_DIR=$(pwd)/build
 if [ ! -d $BUILD_DIR ]; then
     mkdir -p $BUILD_DIR
+else
+    rm -rf build/*
 fi
 cd $BUILD_DIR
 
