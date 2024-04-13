@@ -374,7 +374,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.36",
+    version = "0.5.37",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {
