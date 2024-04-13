@@ -48,7 +48,7 @@ export PATH=$PREFIX/bin:$PATH
 if [ "$OS" = "Linux" ]; then
     # Ensure the system is up to date and has the basic build tools
     sudo yum groupinstall -y "Development Tools"
-    sudo yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel libxml2-devel glib2-devel cairo-devel capnproto-devel capnproto ladspa-devel
+    sudo yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel libxml2-devel glib2-devel cairo-devel capnproto-devel capnproto ladspa-devel pango-devel
     sudo yum install --enablerepo=epel* -y zvbi-devel
 else
     export CXXFLAGS="-stdlib=libc++"
