@@ -925,14 +925,14 @@ async fn rscap(running: Arc<AtomicBool>) {
 
     // Initialize the pipeline
     #[cfg(feature = "gst")]
-    let (pipeline, appsrc, appsink, captionsink) = match initialize_pipeline(
+    let (pipeline, appsrc, appsink) = match initialize_pipeline(
         &args.input_codec,
         args.image_height,
         args.gst_queue_buffers,
         !args.scale_images_after_gstreamer,
         &args.image_framerate,
     ) {
-        Ok((pipeline, appsrc, appsink, captionsink)) => (pipeline, appsrc, appsink, captionsink),
+        Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
         Err(err) => {
             eprintln!("Failed to initialize the pipeline: {}", err);
             return;
@@ -959,7 +959,6 @@ async fn rscap(running: Arc<AtomicBool>) {
     #[cfg(feature = "gst")]
     pull_images(
         appsink,
-        captionsink,
         /*Arc::new(Mutex::new(image_sender)),*/
         image_sender,
         args.save_images,
@@ -1196,21 +1195,13 @@ async fn rscap(running: Arc<AtomicBool>) {
 
                     // Receive and process images
                     #[cfg(feature = "gst")]
-                    if let Ok((image_data, pts, captions)) = image_receiver.try_recv() {
+                    if let Ok((image_data, pts)) = image_receiver.try_recv() {
                         // attach image to the stream_data.packet arc, clearing the current arc value
                         stream_data.packet = Arc::new(image_data.clone());
                         stream_data.has_image = image_data.len() as u8;
                         stream_data.packet_start = 0;
                         stream_data.packet_len = image_data.len();
                         stream_data.image_pts = pts;
-                        stream_data.captions = captions
-                            .clone()
-                            .into_iter()
-                            .flatten()
-                            .collect::<Vec<String>>()
-                            .join("\n");
-
-                        info!("Probe: Received captions: {}", stream_data.captions);
 
                         // Process the received image data
                         debug!(

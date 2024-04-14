@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 BUILD=release-with-debug
-GST_DEBUG_LEVEL=1
+GST_DEBUG_LEVEL=3
 BACKTRACE=full
 SOURCE_IP=224.0.0.200
 SOURCE_DEVICE=eth0
@@ -23,8 +23,10 @@ echo "Using $PROBE_BIN"
 
 $PROBE_BIN -V
 
-gst-inspect-1.0 ccdetect
-gst-inspect-1.0 closedcaption
+#gst-inspect-1.0 ccdetect
+#gst-inspect-1.0 closedcaption
+#gst-inspect-1.0 ccextractor
+#gst-inspect-1.0 cc708overlay
 
 #VALGRIND="valgrind --show-leak-kinds=definite,possible --leak-check=full"
 

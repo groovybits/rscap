@@ -63,19 +63,10 @@ pub fn initialize_pipeline(
     buffer_count: u32,
     scale: bool,
     framerate: &str,
-) -> Result<(gst::Pipeline, AppSrc, AppSink, AppSink), anyhow::Error> {
-    // Initialize GStreamer
+) -> Result<(gst::Pipeline, gst_app::AppSrc, gst_app::AppSink), anyhow::Error> {
     gst::init()?;
 
-    // get width from height with a 16:9 aspect ratio, ensuring it's divisible by 16
     let width = (((height as f32 * 16.0 / 9.0) / 16.0).round() * 16.0) as u32;
-
-    log::debug!(
-        "initialize_pipeline: Gstreamer set to scale image to {}x{}",
-        width,
-        height
-    );
-
     let scale_string = if scale {
         format!("! videoscale ! video/x-raw,width={width},height={height}")
     } else {
@@ -95,13 +86,19 @@ pub fn initialize_pipeline(
     // Create a pipeline to extract video frames
     let pipeline = match stream_type_number {
         0x02 => create_pipeline(
-            &format!("appsrc name=src ! tsdemux name=demux demux. ! queue ! capsfiter caps=video/mpeg ! mpeg2dec ! videorate ! video/x-raw,framerate={} ! videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
+           &format!("appsrc name=src ! tsdemux |capsfiter caps=video/mpeg ! \
+               mpeg2dec ! videorate ! video/x-raw,framerate={} ! videoconvert ! video/x-raw,format=RGB {} ! \
+               appsink name=sink", framerate, scale_string),
         )?,
         0x1B => create_pipeline(
-            &format!("appsrc name=src ! tsdemux name=demux demux. ! queue ! capsfilter caps=video/x-h264 ! h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate={} ! videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink demux. ! queue ! ccdetect ! appsink name=caption_sink", framerate, scale_string),
+           &format!("appsrc name=src ! tsdemux ! capsfilter caps=video/x-h264 ! \
+               h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate={} ! \
+               videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
         )?,
         0x24 => create_pipeline(
-            &format!("appsrc name=src ! tsdemux name=demux demux. ! queue ! capsfilter caps=video/x-h265 ! h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate={} ! videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink demux. ! queue ! ccdetect ! appsink name=caption_sink", framerate, scale_string),
+                &format!("appsrc name=src ! tsdemux ! capsfilter caps=video/x-h265 ! \
+                    h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate={} ! \
+                    videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
         )?,
         _ => {
             return Err(anyhow::anyhow!(
@@ -111,42 +108,21 @@ pub fn initialize_pipeline(
         }
     };
 
-    // Get references to the appsrc and appsink elements
     let appsrc = pipeline
-        .clone()
-        .dynamic_cast::<gst::Bin>()
-        .unwrap()
         .by_name("src")
-        .unwrap()
-        .downcast::<AppSrc>()
-        .unwrap();
-
+        .ok_or_else(|| anyhow::anyhow!("Failed to get appsrc"))?
+        .downcast::<gst_app::AppSrc>()
+        .map_err(|_| anyhow::anyhow!("AppSrc casting failed"))?;
     let appsink = pipeline
-        .clone()
-        .dynamic_cast::<gst::Bin>()
-        .unwrap()
         .by_name("sink")
-        .unwrap()
-        .downcast::<AppSink>()
-        .unwrap();
+        .ok_or_else(|| anyhow::anyhow!("Failed to get appsink"))?
+        .downcast::<gst_app::AppSink>()
+        .map_err(|_| anyhow::anyhow!("AppSink casting failed"))?;
 
-    // Set appsink properties
-    appsink.set_property("max-buffers", &buffer_count);
-    appsink.set_property("drop", &true);
+    appsink.set_property("max-buffers", buffer_count);
+    appsink.set_property("drop", true);
 
-    let caption_sink = pipeline
-        .clone()
-        .dynamic_cast::<gst::Bin>()
-        .unwrap()
-        .by_name("caption_sink")
-        .unwrap()
-        .downcast::<AppSink>()
-        .unwrap();
-
-    caption_sink.set_property("max-buffers", &buffer_count);
-    caption_sink.set_property("drop", &true);
-
-    Ok((pipeline, appsrc, appsink, caption_sink))
+    Ok((pipeline, appsrc, appsink))
 }
 
 #[cfg(feature = "gst")]
@@ -171,8 +147,7 @@ pub fn process_video_packets(
 #[cfg(feature = "gst")]
 pub fn pull_images(
     appsink: AppSink,
-    caption_sink: AppSink,
-    image_sender: mpsc::Sender<(Vec<u8>, u64, Vec<Option<String>>)>,
+    image_sender: mpsc::Sender<(Vec<u8>, u64)>,
     save_images: bool,
     sample_interval: u64,
     image_height: u32,
@@ -185,7 +160,6 @@ pub fn pull_images(
         let mut frame_count = 0;
         let mut last_processed_pts = 0;
         let mut filmstrip_images = Vec::new();
-        let mut current_captions = Vec::new();
 
         while running.load(Ordering::SeqCst) {
             let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
@@ -197,26 +171,6 @@ pub fn pull_images(
 
                     if last_processed_pts == 0 || pts >= last_processed_pts + sample_interval {
                         last_processed_pts = pts;
-
-                        // Check for new captions
-                        while let Some(caption_sample) =
-                            caption_sink.try_pull_sample(gst::ClockTime::ZERO)
-                        {
-                            if let Some(caption_buffer) = caption_sample.buffer() {
-                                let caption_pts =
-                                    caption_buffer.pts().map_or(0, |pts| pts.nseconds());
-
-                                if caption_pts <= pts {
-                                    let map = caption_buffer.map_readable().unwrap();
-                                    let caption_data = map.as_slice();
-                                    let caption =
-                                        String::from_utf8_lossy(caption_data).into_owned();
-                                    current_captions.push(Some(caption));
-                                } else {
-                                    break;
-                                }
-                            }
-                        }
 
                         let map = buffer.map_readable().unwrap();
                         let data = map.as_slice();
@@ -321,19 +275,8 @@ pub fn pull_images(
                                     .encode_image(&filmstrip)
                                     .expect("JPEG encoding failed");
 
-                                // Ensure the number of captions matches the number of frames
-                                while current_captions.len() < filmstrip_images.len() {
-                                    current_captions.push(None);
-                                }
-                                current_captions.truncate(filmstrip_images.len());
-
-                                log::info!("Captions: {:?}", current_captions.clone());
-
-                                // Send the filmstrip and captions over the channel
-                                if let Err(err) = image_sender
-                                    .send((jpeg_data, pts, current_captions.clone()))
-                                    .await
-                                {
+                                // Send the filmstrip over the channel
+                                if let Err(err) = image_sender.send((jpeg_data, pts)).await {
                                     log::error!(
                                         "Failed to send image data through channel: {}",
                                         err
@@ -351,14 +294,11 @@ pub fn pull_images(
                                     // remove the number of frames by frame_increment
                                     if filmstrip_images.len() > increment as usize {
                                         filmstrip_images.drain(0..increment as usize);
-                                        current_captions.drain(0..increment as usize);
                                     } else {
                                         filmstrip_images.clear();
-                                        current_captions.clear();
                                     }
                                 } else {
                                     filmstrip_images.clear();
-                                    current_captions.clear();
                                 }
                             }
                         } else {
