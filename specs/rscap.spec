@@ -1,5 +1,5 @@
 Name:           rscap
-Version:        0.5.38
+Version:        0.5.39
 Release:        1%{?dist}
 Summary:        RsCap and GStreamer with essential dependencies
 
