@@ -238,7 +238,7 @@ fi
         run_with_scl ./configure --prefix=$PREFIX \
             --enable-shared --enable-static \
             --enable-pic --enable-gpl --enable-libx264 \
-            --enable-libx265 \
+            --enable-libx265 --enable-libzvbi \
             --extra-cflags="-I$PREFIX/include" --extra-ldflags="-L$PREFIX/lib"
         run_with_scl make
         make install
