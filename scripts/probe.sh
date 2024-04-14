@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 BUILD=release-with-debug
-GST_DEBUG_LEVEL=1
+GST_DEBUG_LEVEL=3
 BACKTRACE=full
 SOURCE_IP=224.0.0.200
 SOURCE_DEVICE=eth0
@@ -9,6 +9,7 @@ SOURCE_PORT=10000
 TARGET_PORT=5556
 GST_PLUGIN_PATH=/opt/rscap/lib64/gstreamer-1.0
 LD_LIBRARY_PATH=/opt/rscap/lib64:$LD_LIBRARY_PATH
+PATH=/opt/rscap/bin:$PATH
 if [ -f "target/$BUILD/probe" ]; then
     PROBE_BIN=target/$BUILD/probe
 elif [ -f "/opt/rscap/bin/probe" ]; then
@@ -21,6 +22,11 @@ fi
 echo "Using $PROBE_BIN"
 
 $PROBE_BIN -V
+
+#gst-inspect-1.0 ccdetect
+#gst-inspect-1.0 closedcaption
+#gst-inspect-1.0 ccextractor
+#gst-inspect-1.0 cc708overlay
 
 #VALGRIND="valgrind --show-leak-kinds=definite,possible --leak-check=full"
 

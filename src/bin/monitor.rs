@@ -138,6 +138,10 @@ fn capnp_to_stream_data(bytes: &[u8]) -> capnp::Result<StreamData> {
         capture_iat_max: reader.get_capture_iat_max(),
         log_message: reader.get_log_message()?.to_string()?,
         probe_id: reader.get_probe_id()?.to_string()?,
+        captions: reader.get_captions()?.to_string()?,
+        pid_map: reader.get_pid_map()?.to_string()?,
+        scte35: reader.get_scte35()?.to_string()?,
+        audio_loudness: reader.get_audio_loudness()?.to_string()?,
     };
 
     Ok(stream_data)
@@ -382,6 +386,7 @@ fn flatten_streams(
             json!(stream_data.log_message),
         );
         flat_structure.insert(format!("{}.id", prefix), json!(stream_data.probe_id));
+        flat_structure.insert(format!("{}.captions", prefix), json!(stream_data.captions));
     }
 
     flat_structure
@@ -427,7 +432,7 @@ async fn produce_message(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.35",
+    version = "0.5.38",
     about = "RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe."
 )]
 struct Args {
@@ -775,6 +780,10 @@ async fn main() {
                             let mut source_port: u32 = 0;
                             let mut image_pts: u64 = 0;
                             let mut probe_id: String = String::new();
+                            let mut captions: String = String::new();
+                            let mut pid_map: String = String::new();
+                            let mut scte35: String = String::new();
+                            let mut audio_loudness: String = String::new();
 
                             // Process each stream to accumulate averages
                             for (_, grouping) in stream_groupings.iter() {
@@ -802,6 +811,25 @@ async fn main() {
                                             );
                                         }
                                         probe_id = stream_data.probe_id.clone();
+                                    }
+                                    if stream_data.captions != "" {
+                                        // concatenate captions
+                                        captions = format!("{}{}", captions, stream_data.captions);
+                                    }
+                                    if stream_data.pid_map != "" {
+                                        // concatenate pid_map
+                                        pid_map = format!("{}{}", pid_map, stream_data.pid_map);
+                                    }
+                                    if stream_data.scte35 != "" {
+                                        // concatenate scte35
+                                        scte35 = format!("{}{}", scte35, stream_data.scte35);
+                                    }
+                                    if stream_data.audio_loudness != "" {
+                                        // concatenate audio_loudness
+                                        audio_loudness = format!(
+                                            "{}{}",
+                                            audio_loudness, stream_data.audio_loudness
+                                        );
                                     }
                                     stream_count += 1;
                                 }
@@ -862,8 +890,16 @@ async fn main() {
                                 .insert("source_ip".to_string(), serde_json::json!(source_ip));
                             flattened_data
                                 .insert("source_port".to_string(), serde_json::json!(source_port));
+                            flattened_data
+                                .insert("captions".to_string(), serde_json::json!(captions));
 
                             let mut force_send_message = false;
+
+                            if captions != "" {
+                                force_send_message = true;
+                            }
+                            flattened_data
+                                .insert("captions".to_string(), serde_json::json!(captions));
 
                             // Insert the base64_image field into the flattened_data map
                             flattened_data
@@ -894,6 +930,15 @@ async fn main() {
                             }
                             // probe id
                             flattened_data.insert("id".to_string(), serde_json::json!(probe_id));
+
+                            // insert the pid_map, scte35, and audio_loudness fields into the flattened_data map
+                            flattened_data
+                                .insert("pid_map".to_string(), serde_json::json!(pid_map));
+                            flattened_data.insert("scte35".to_string(), serde_json::json!(scte35));
+                            flattened_data.insert(
+                                "audio_loudness".to_string(),
+                                serde_json::json!(audio_loudness),
+                            );
 
                             // Convert the Map directly to a Value for serialization
                             let combined_stats = serde_json::Value::Object(flattened_data);

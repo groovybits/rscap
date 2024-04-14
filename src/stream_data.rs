@@ -63,19 +63,10 @@ pub fn initialize_pipeline(
     buffer_count: u32,
     scale: bool,
     framerate: &str,
-) -> Result<(gst::Pipeline, AppSrc, AppSink), anyhow::Error> {
-    // Initialize GStreamer
+) -> Result<(gst::Pipeline, gst_app::AppSrc, gst_app::AppSink), anyhow::Error> {
     gst::init()?;
 
-    // get width from height with a 16:9 aspect ratio, ensuring it's divisible by 16
     let width = (((height as f32 * 16.0 / 9.0) / 16.0).round() * 16.0) as u32;
-
-    log::debug!(
-        "initialize_pipeline: Gstreamer set to scale image to {}x{}",
-        width,
-        height
-    );
-
     let scale_string = if scale {
         format!("! videoscale ! video/x-raw,width={width},height={height}")
     } else {
@@ -95,13 +86,19 @@ pub fn initialize_pipeline(
     // Create a pipeline to extract video frames
     let pipeline = match stream_type_number {
         0x02 => create_pipeline(
-            &format!("appsrc name=src ! tsdemux |capsfiter caps=video/mpeg ! mpeg2dec ! videorate ! video/x-raw,framerate={} ! videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
+           &format!("appsrc name=src ! tsdemux |capsfiter caps=video/mpeg ! \
+               mpeg2dec ! videorate ! video/x-raw,framerate={} ! videoconvert ! video/x-raw,format=RGB {} ! \
+               appsink name=sink", framerate, scale_string),
         )?,
         0x1B => create_pipeline(
-            &format!("appsrc name=src ! tsdemux ! capsfilter caps=video/x-h264 ! h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate={} ! videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
+           &format!("appsrc name=src ! tsdemux ! capsfilter caps=video/x-h264 ! \
+               h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate={} ! \
+               videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
         )?,
         0x24 => create_pipeline(
-            &format!("appsrc name=src ! tsdemux ! capsfilter caps=video/x-h265 ! h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate={} ! videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
+                &format!("appsrc name=src ! tsdemux ! capsfilter caps=video/x-h265 ! \
+                    h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate={} ! \
+                    videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
         )?,
         _ => {
             return Err(anyhow::anyhow!(
@@ -111,28 +108,19 @@ pub fn initialize_pipeline(
         }
     };
 
-    // Get references to the appsrc and appsink elements
     let appsrc = pipeline
-        .clone()
-        .dynamic_cast::<gst::Bin>()
-        .unwrap()
         .by_name("src")
-        .unwrap()
-        .downcast::<AppSrc>()
-        .unwrap();
-
+        .ok_or_else(|| anyhow::anyhow!("Failed to get appsrc"))?
+        .downcast::<gst_app::AppSrc>()
+        .map_err(|_| anyhow::anyhow!("AppSrc casting failed"))?;
     let appsink = pipeline
-        .clone()
-        .dynamic_cast::<gst::Bin>()
-        .unwrap()
         .by_name("sink")
-        .unwrap()
-        .downcast::<AppSink>()
-        .unwrap();
+        .ok_or_else(|| anyhow::anyhow!("Failed to get appsink"))?
+        .downcast::<gst_app::AppSink>()
+        .map_err(|_| anyhow::anyhow!("AppSink casting failed"))?;
 
-    // Set appsink properties
-    appsink.set_property("max-buffers", &buffer_count);
-    appsink.set_property("drop", &true);
+    appsink.set_property("max-buffers", buffer_count);
+    appsink.set_property("drop", true);
 
     Ok((pipeline, appsrc, appsink))
 }
@@ -434,6 +422,10 @@ pub struct StreamData {
     pub capture_iat_max: u64,
     pub log_message: String,
     pub probe_id: String,
+    pub captions: String,
+    pub pid_map: String,
+    pub scte35: String,
+    pub audio_loudness: String,
 }
 
 impl Clone for StreamData {
@@ -498,6 +490,10 @@ impl Clone for StreamData {
             capture_iat_max: self.capture_iat_max,
             log_message: self.log_message.clone(),
             probe_id: self.probe_id.clone(),
+            captions: self.captions.clone(),
+            pid_map: self.pid_map.clone(),
+            scte35: self.scte35.clone(),
+            audio_loudness: self.audio_loudness.clone(),
         }
     }
 }
@@ -586,6 +582,10 @@ impl StreamData {
             capture_iat_max: capture_iat,
             log_message: "".to_string(),
             probe_id,
+            captions: "".to_string(),
+            pid_map: "".to_string(),
+            scte35: "".to_string(),
+            audio_loudness: "".to_string(),
         }
     }
     // set RTP fields

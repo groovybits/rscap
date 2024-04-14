@@ -138,9 +138,13 @@ fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapA
         stream_data_msg.set_os_version(stream_data.os_version.as_str().into());
         stream_data_msg.set_has_image(stream_data.has_image);
         stream_data_msg.set_image_pts(stream_data.image_pts);
+        stream_data_msg.set_captions(stream_data.captions.as_str().into());
         stream_data_msg.set_capture_iat_max(stream_data.capture_iat_max);
         stream_data_msg.set_log_message(stream_data.log_message.as_str().into());
         stream_data_msg.set_probe_id(stream_data.probe_id.as_str().into());
+        stream_data_msg.set_pid_map(stream_data.pid_map.as_str().into());
+        stream_data_msg.set_scte35(stream_data.scte35.as_str().into());
+        stream_data_msg.set_audio_loudness(stream_data.audio_loudness.as_str().into());
     }
 
     Ok(message)
@@ -373,7 +377,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.35",
+    version = "0.5.38",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {
