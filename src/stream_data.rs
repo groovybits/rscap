@@ -320,6 +320,178 @@ pub fn pull_images(
     });
 }
 
+pub fn initialize_ffmpeg() -> Result<(), ffmpeg::Error> {
+    ffmpeg::init()
+}
+
+pub fn process_video_packets_ffmpeg(
+    video_packet_receiver: mpsc::Receiver<Vec<u8>>,
+    image_sender: mpsc::Sender<(Vec<u8>, u64)>,
+    save_images: bool,
+    sample_interval: u64,
+    image_height: u32,
+    filmstrip_length: usize,
+    jpeg_quality: u8,
+    frame_increment: u8,
+    running: Arc<AtomicBool>,
+) {
+    tokio::spawn(async move {
+        let mut frame_count = 0;
+        let mut last_processed_pts = 0;
+        let mut filmstrip_images = Vec::new();
+
+        let mut decoder = ffmpeg::codec::context::Context::from_name("h264").unwrap();
+        let mut parser = ffmpeg::codec::parser::Parser::new(&decoder).unwrap();
+
+        let mut scaler = ffmpeg::software::scaling::context::Context::get(
+            decoder.format(),
+            decoder.width(),
+            decoder.height(),
+            ffmpeg::format::Pixel::RGB24,
+            decoder.width(),
+            image_height,
+            ffmpeg::software::scaling::flag::Flags::BILINEAR,
+        )
+        .unwrap();
+
+        let mut receive_and_process_decoded_frames =
+            |decoder: &mut ffmpeg::codec::context::Context| -> Result<(), ffmpeg::Error> {
+                let mut decoded = ffmpeg::frame::Video::empty();
+                while decoder.receive_frame(&mut decoded).is_ok() {
+                    let pts = decoded.timestamp();
+                    if last_processed_pts == 0 || pts >= last_processed_pts + sample_interval {
+                        last_processed_pts = pts;
+
+                        let mut rgb_frame = ffmpeg::frame::Video::empty();
+                        scaler.run(&decoded, &mut rgb_frame)?;
+
+                        let data = rgb_frame.data(0);
+                        let scaled_width = rgb_frame.width();
+                        let scaled_height = rgb_frame.height();
+
+                        let expected_length = (scaled_width * scaled_height * 3) as usize;
+
+                        if data.len() == expected_length {
+                            let image = image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(
+                                scaled_width,
+                                scaled_height,
+                                data.to_vec(),
+                            )
+                            .expect("Failed to create ImageBuffer");
+
+                            // Save the image as a JPEG with timecode
+                            if save_images {
+                                let filename = format!("images/frame_{:04}.jpg", frame_count);
+                                let mut jpeg_data = Vec::new();
+                                let mut encoder =
+                                    image::codecs::jpeg::JpegEncoder::new_with_quality(
+                                        &mut jpeg_data,
+                                        jpeg_quality,
+                                    );
+                                encoder
+                                    .encode_image(&image)
+                                    .expect("Failed to encode image to JPEG");
+                                std::fs::write(&filename, &jpeg_data)
+                                    .expect("Failed to save JPEG image");
+                            }
+                            frame_count += 1;
+
+                            println!("*");
+
+                            filmstrip_images.push(image);
+
+                            if filmstrip_length <= 1 || filmstrip_images.len() >= filmstrip_length {
+                                // Create a new image buffer for the filmstrip
+                                let filmstrip_width =
+                                    (scaled_width * filmstrip_length as u32) as u32;
+                                let mut filmstrip =
+                                    image::ImageBuffer::<image::Rgb<u8>, Vec<u8>>::new(
+                                        filmstrip_width,
+                                        scaled_height,
+                                    );
+
+                                // Concatenate the images into the filmstrip
+                                for (i, img) in filmstrip_images.iter().enumerate() {
+                                    let x_offset = i as u32 * scaled_width;
+                                    image::imageops::overlay(
+                                        &mut filmstrip,
+                                        img,
+                                        x_offset.into(),
+                                        0,
+                                    );
+                                }
+
+                                // Encode the filmstrip to a JPEG vector
+                                let mut jpeg_data = Vec::new();
+                                let mut encoder =
+                                    image::codecs::jpeg::JpegEncoder::new_with_quality(
+                                        &mut jpeg_data,
+                                        jpeg_quality,
+                                    );
+                                encoder
+                                    .encode_image(&filmstrip)
+                                    .expect("JPEG encoding failed");
+
+                                // Send the filmstrip over the channel
+                                if let Err(err) = image_sender.send((jpeg_data, pts)).await {
+                                    log::error!(
+                                        "Failed to send image data through channel: {}",
+                                        err
+                                    );
+                                    break;
+                                }
+
+                                // Clear the filmstrip images for the next set
+                                if frame_increment > 1 {
+                                    let increment = if frame_increment as usize > filmstrip_length {
+                                        filmstrip_length
+                                    } else {
+                                        frame_increment.into()
+                                    };
+                                    // remove the number of frames by frame_increment
+                                    if filmstrip_images.len() > increment as usize {
+                                        filmstrip_images.drain(0..increment as usize);
+                                    } else {
+                                        filmstrip_images.clear();
+                                    }
+                                } else {
+                                    filmstrip_images.clear();
+                                }
+                            }
+                        } else {
+                            log::error!(
+                                "Received image data with unexpected length: {}",
+                                data.len()
+                            );
+                        }
+                    } else {
+                        // Sleep for a short time to prevent a busy loop
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                }
+                Ok(())
+            };
+
+        while let Some(packet) = video_packet_receiver.recv().await {
+            if !running.load(Ordering::SeqCst) {
+                break;
+            }
+
+            let mut parsed_packets = parser.parse(&packet).unwrap();
+            for parsed_packet in parsed_packets.iter_mut() {
+                if let Err(err) = decoder.send_packet(parsed_packet) {
+                    log::error!("Failed to send packet to decoder: {}", err);
+                    continue;
+                }
+                receive_and_process_decoded_frames(&mut decoder).unwrap();
+            }
+        }
+
+        decoder.send_eof().unwrap();
+        receive_and_process_decoded_frames(&mut decoder).unwrap();
+    });
+}
+
 // constant for PAT PID
 pub const PAT_PID: u16 = 0;
 pub const TS_PACKET_SIZE: usize = 188;
