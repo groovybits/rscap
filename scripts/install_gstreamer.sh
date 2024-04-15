@@ -96,7 +96,7 @@ echo "------------------------------------------------------------"
 
 # Download and build glib on linux
 if [ "$OS" = "Linux" ]; then
-    wget https://download.gnome.org/sources/glib/$GLIB_MAJOR_VERSION/glib-$GLIB_VERSION.tar.xz
+    wget --no-check-certificate https://download.gnome.org/sources/glib/$GLIB_MAJOR_VERSION/glib-$GLIB_VERSION.tar.xz
     tar xf glib-$GLIB_VERSION.tar.xz
     cd glib-$GLIB_VERSION
     run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
