@@ -5,7 +5,7 @@ set -e
 run_with_scl() {
     OS="$(uname -s)"
     if [ "$OS" = "Linux" ]; then
-        scl enable devtoolset-11 -- "$@"
+        scl enable devtoolset-11 rh-python38 -- "$@"
     else
         "$@"
     fi
@@ -24,12 +24,14 @@ fi
 cd $BUILD_DIR
 
 # Define versions for dependencies and GStreamer
+GLIB_MAJOR_VERSION=2.64
+GLIB_VERSION=${GLIB_MAJOR_VERSION}.6
 ORC_VERSION=0.4.31
-GST_VERSION=1.20.0
+GST_VERSION=1.24.2
+GST_PLUGINS_RS_VERSION=gstreamer-$GST_VERSION
 LIBFFI_VERSION=3.3
-GST_PLUGINS_RS_VERSION=gstreamer-1.24.2
 NASM_VERSION=2.15.05
-FFMPEG_VERSION=5.1.4
+FFMPEG_VERSION=6.1.1
 
 # Define the installation prefix
 PREFIX=/opt/rscap
@@ -55,6 +57,7 @@ if [ "$OS" = "Linux" ]; then
     sudo yum install --enablerepo=epel* -y zvbi-devel
     sudo yum install -y git
     sudo yum install -y cmake3 git
+    sudo yum install -y rh-python38 rh-python38-python-pip
 else
     export CXXFLAGS="-stdlib=libc++"
     export LDFLAGS="-lc++"
@@ -73,8 +76,8 @@ MESON_NATIVE_FILE=$CWD/meson-native-file.ini
 
 # Ensure Meson and Ninja are installed and use the correct Ninja
 if [ "$OS" = "Linux" ]; then
-    sudo pip3 install meson
-    sudo pip3 install ninja
+    run_with_scl sudo pip3.8 install meson
+    run_with_scl sudo pip3.8 install ninja
 else
     brew install meson
     brew install ninja
@@ -87,6 +90,19 @@ fi
 echo "------------------------------------------------------------"
 echo "Installing GStreamer and essential dependencies..."
 echo "------------------------------------------------------------"
+
+# Download and build glib on linux
+if [ "$OS" = "Linux" ]; then
+    wget https://download.gnome.org/sources/glib/$GLIB_MAJOR_VERSION/glib-$GLIB_VERSION.tar.xz
+    tar xf glib-$GLIB_VERSION.tar.xz
+    cd glib-$GLIB_VERSION
+    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+    run_with_scl ninja -C _build
+    run_with_scl ninja -C _build install
+    cd ..
+    rm -rf glib-$GLIB_VERSION.tar.xz
+    rm -rf cd glib-$GLIB_VERSION
+fi
 
 # Install libFFI
 if [ "$OS" = "Linux" ]; then
@@ -104,7 +120,7 @@ if [ "$OS" = "Linux" ]; then
         cd libffi-$LIBFFI_VERSION
         run_with_scl ./configure --prefix=$PREFIX
         run_with_scl make
-        make install
+        run_with_scl make install
         cd ..
     fi
     touch libffi-installed.done
@@ -128,7 +144,7 @@ if [ "$OS" = "Linux" ]; then
         cd orc-$ORC_VERSION
         run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
         run_with_scl ninja -C _build
-        ninja -C _build install
+        run_with_scl ninja -C _build install
         cd ..
     fi
     touch orc-installed.done
@@ -284,7 +300,7 @@ if [ ! -f "gst-plugins-base-installed.done" ] ; then
     cd gst-plugins-base-$GST_VERSION
     run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
     run_with_scl ninja -C _build
-    ninja -C _build install
+    run_with_scl ninja -C _build install
     cd ..
 fi
 touch gst-plugins-base-installed.done
@@ -304,7 +320,7 @@ if [ ! -f "gst-plugins-bad-installed.done" ] ; then
     cd gst-plugins-bad-$GST_VERSION
     run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE -Dopenexr=disabled
     run_with_scl ninja -C _build
-    ninja -C _build install
+    run_with_scl ninja -C _build install
     cd ..
 fi
 touch gst-plugins-bad-installed.done
@@ -331,7 +347,7 @@ if [ ! -f "gst-libav-installed.done" ] ; then
     cd gst-libav-$GST_VERSION
     run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
     run_with_scl ninja -C _build
-    ninja -C _build install
+    run_with_scl ninja -C _build install
     cd ..
 fi
 touch gst-libav-installed.done
@@ -351,7 +367,7 @@ if [ ! -f "gst-plugins-good-installed.done" ] ; then
     cd gst-plugins-good-$GST_VERSION
     run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
     run_with_scl ninja -C _build
-    ninja -C _build install
+    run_with_scl ninja -C _build install
     cd ..
 fi
 touch gst-plugins-good-installed.done

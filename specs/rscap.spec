@@ -6,7 +6,7 @@ Summary:        RsCap and GStreamer with essential dependencies
 License:        MIT
 URL:            https://github.com/groovybits/rscap
 
-BuildRequires:  gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3, libxml2-devel, glib2-devel, pango-devel, cairo-devel, zvbi-devel, ladspa-devel, cairo-gobject-devel, cairo-gobject
+BuildRequires:  gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3, libxml2-devel, glib2-devel, pango-devel, cairo-devel, zvbi-devel, ladspa-devel, cairo-gobject-devel, cairo-gobject, rh-python38, rh-python38-python-pip
 Requires:       glib2, orc
 
 %description
@@ -19,7 +19,7 @@ set -e
 
 # Function to run a command within the SCL environment for CentOS
 run_with_scl() {
-    scl enable devtoolset-11 -- "$@"
+    scl enable rh-python38 devtoolset-11 -- "$@"
 }
 
 BUILD_DIR=%{_builddir}
@@ -27,13 +27,14 @@ mkdir -p $BUILD_DIR
 cd $BUILD_DIR
 
 # Define versions for dependencies of GStreamer
-GLIB_VERSION=2.56.4
+GLIB_MAJOR_VERSION=2.64
+GLIB_VERSION=$GLIB_MAJOR_VERSION.6
 ORC_VERSION=0.4.31
-GST_VERSION=1.20.0
-GST_PLUGINS_RS_VERSION=gstreamer-1.24.2
+GST_VERSION=1.24.2
+GST_PLUGINS_RS_VERSION=gstreamer-$GST_VERSION
 LIBFFI_VERSION=3.3
 NASM_VERSION=2.15.05
-FFMPEG_VERSION=5.1.4
+FFMPEG_VERSION=6.1.1
 RUST_VERSION=1.77.1
 RSCAP_VERSION=%{version}
 
@@ -59,12 +60,23 @@ CWD=$(pwd)
 MESON_NATIVE_FILE=$CWD/meson-native-file.ini
 
 # Install Meson and Ninja
-pip3 install meson
-pip3 install ninja
+run_with_scl pip3.8 install meson
+run_with_scl pip3.8 install ninja
 
 echo "------------------------------------------------------------"
 echo "Buidling and installing GStreamer with essential dependencies..."
 echo "------------------------------------------------------------"
+
+# Download and build glib
+wget https://download.gnome.org/sources/glib/$GLIB_MAJOR_VERSION/glib-$GLIB_VERSION.tar.xz
+tar xf glib-$GLIB_VERSION.tar.xz
+cd glib-$GLIB_VERSION
+run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+run_with_scl ninja -C _build
+run_with_scl ninja -C _build install
+cd ..
+rm -rf glib-$GLIB_VERSION.tar.xz
+rm -rf cd glib-$GLIB_VERSION
 
 # Download and extract Rust locally
 curl --proto '=https' --tlsv1.2 -sSf https://static.rust-lang.org/dist/rust-$RUST_VERSION-x86_64-unknown-linux-gnu.tar.gz | tar -xz
@@ -99,7 +111,7 @@ tar xf orc-$ORC_VERSION.tar.xz
 cd orc-$ORC_VERSION
 run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
 run_with_scl ninja -C _build
-ninja -C _build install
+run_with_scl ninja -C _build install
 cd ..
 rm -rf orc-$ORC_VERSION
 rm -f orc-$ORC_VERSION.tar.xz
@@ -176,7 +188,7 @@ tar xf gstreamer-$GST_VERSION.tar.xz
 cd gstreamer-$GST_VERSION
 run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
 run_with_scl ninja -C _build
-ninja -C _build install
+run_with_scl ninja -C _build install
 cd ..
 rm -rf gstreamer-$GST_VERSION
 rm -f gstreamer-$GST_VERSION.tar.xz
@@ -191,7 +203,7 @@ tar xf gst-plugins-base-$GST_VERSION.tar.xz
 cd gst-plugins-base-$GST_VERSION
 run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
 run_with_scl ninja -C _build
-ninja -C _build install
+run_with_scl ninja -C _build install
 cd ..
 rm -rf gst-plugins-base-$GST_VERSION
 rm -f gst-plugins-base-$GST_VERSION.tar.xz
@@ -205,7 +217,7 @@ tar xf gst-plugins-bad-$GST_VERSION.tar.xz
 cd gst-plugins-bad-$GST_VERSION
 run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
 run_with_scl ninja -C _build
-ninja -C _build install
+run_with_scl ninja -C _build install
 cd ..
 rm -rf gst-plugins-bad-$GST_VERSION
 rm -f gst-plugins-bad-$GST_VERSION.tar.xz
@@ -221,7 +233,7 @@ tar xf gst-libav-$GST_VERSION.tar.xz
 cd gst-libav-$GST_VERSION
 run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
 run_with_scl ninja -C _build
-ninja -C _build install
+run_with_scl ninja -C _build install
 cd ..
 rm -rf gst-libav-$GST_VERSION
 rm -f gst-libav-$GST_VERSION.tar.xz
@@ -235,7 +247,7 @@ tar xf gst-plugins-good-$GST_VERSION.tar.xz
 cd gst-plugins-good-$GST_VERSION
 run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
 run_with_scl ninja -C _build
-ninja -C _build install
+run_with_scl ninja -C _build install
 cd ..
 rm -rf gst-plugins-good-$GST_VERSION
 rm -rf gst-plugins-good-$GST_VERSION.tar.xz
