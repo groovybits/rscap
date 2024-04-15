@@ -253,7 +253,7 @@ rm -rf gst-plugins-good-$GST_VERSION
 rm -rf gst-plugins-good-$GST_VERSION.tar.xz
 
 # Set RUSTFLAGS for RPATH
-export RUSTFLAGS="-C link-args=-Wl,-rpath,/opt/rscap/lib:/opt/rscap/lib64"
+export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
 
 # Set environment variables for Rust
 export CARGO_HOME=$PREFIX/cargo

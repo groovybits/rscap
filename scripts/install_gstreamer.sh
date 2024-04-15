@@ -1,6 +1,8 @@
 #!/bin/sh
 set -e
 
+CLEAN=1
+
 # Function to run a command within the SCL environment for CentOS
 run_with_scl() {
     OS="$(uname -s)"
@@ -19,7 +21,9 @@ BUILD_DIR=$(pwd)/build
 if [ ! -d $BUILD_DIR ]; then
     mkdir -p $BUILD_DIR
 else
-    rm -rf build/*
+    if [ "$CLEAN" == "1" ]; then
+        rm -rf build/*
+    fi
 fi
 cd $BUILD_DIR
 
@@ -375,6 +379,8 @@ if [ ! -f "gst-plugins-good-installed.done" ] ; then
 fi
 touch gst-plugins-good-installed.done
 
+export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
+
 if [ ! -f "gst-plugins-rs-installed.done" ]; then
   echo "---"
   echo "Installing GStreamer Rust plugins..."
@@ -411,16 +417,21 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
 fi
 touch gst-plugins-rs-installed.done
 
+# RsCap installation
+cd ..
+run_with_scl cargo build --features gst --release
+
+# Copy RsCap binaries to the installation directory
+cp rscap/target/release/probe $PREFIX/bin/
+cp rscap/target/release/monitor $PREFIX/bin/
+
+echo "------------------------------------------------------------"
+echo "GStreamer and essential dependencies installed."
+echo "------------------------------------------------------------"
+
 # Verify GStreamer installation
 echo "------------------------------------------------------------"
 echo "Verifying GStreamer installation..."
 echo "------------------------------------------------------------"
 gst-launch-1.0 --version
 
-echo "------------------------------------------------------------"
-echo "GStreamer and essential dependencies installed."
-echo "------------------------------------------------------------"
-
-if [ "$OS" = "Linux" ]; then
-    sudo ldconfig
-fi
