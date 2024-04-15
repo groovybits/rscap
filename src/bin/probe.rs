@@ -547,7 +547,7 @@ struct Args {
     scale_images_after_gstreamer: bool,
 
     /// Jpeg Quality - Quality of the Jpeg images
-    #[clap(long, env = "JPEG_QUALITY", default_value_t = 60)]
+    #[clap(long, env = "JPEG_QUALITY", default_value_t = 75)]
     jpeg_quality: u8,
 
     /// Image Height - Image height in pixels of Thumbnail extracted images
@@ -559,7 +559,7 @@ struct Args {
     filmstrip_length: usize,
 
     /// Gstreamer Queue Buffers
-    #[clap(long, env = "GST_QUEUE_BUFFERS", default_value_t = 120)]
+    #[clap(long, env = "GST_QUEUE_BUFFERS", default_value_t = 3)]
     gst_queue_buffers: u32,
 
     /// image framerate - Framerate of the images extracted in 1/1 format
