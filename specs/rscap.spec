@@ -299,6 +299,7 @@ echo "Building RsCap..."
 echo "------------------------------------------------------------"
 
 # Clone RsCap repository and checkout the specific tag
+rm -rf rscap
 git clone https://github.com/groovybits/rscap.git
 cd rscap
 git checkout $RSCAP_VERSION
