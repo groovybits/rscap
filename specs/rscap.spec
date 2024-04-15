@@ -6,7 +6,7 @@ Summary:        RsCap and GStreamer with essential dependencies
 License:        MIT
 URL:            https://github.com/groovybits/rscap
 
-BuildRequires:  gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3, libxml2-devel, glib2-devel, pango-devel, cairo-devel, zvbi-devel, ladspa-devel, cairo-gobject-devel, cairo-gobject, rh-python38, rh-python38-python-pip
+BuildRequires:  epel-release, centos-release-scl-rh, gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3, libxml2-devel, glib2-devel, pango-devel, cairo-devel, zvbi-devel, ladspa-devel, cairo-gobject-devel, cairo-gobject, rh-python38, rh-python38-python-pip
 Requires:       glib2, orc
 
 %description
@@ -263,6 +263,7 @@ export RUSTC=$PREFIX/bin/rustc
 # GStreamer Rust plugins
 run_with_scl cargo install cargo-c --root=$PREFIX
 
+rm -rf gst-plugin-rs
 git clone https://github.com/sdroege/gst-plugin-rs.git
 cd gst-plugin-rs
 git checkout $GST_PLUGINS_RS_VERSION

@@ -54,6 +54,9 @@ if [ "$OS" = "Linux" ]; then
     # Ensure the system is up to date and has the basic build tools
     sudo yum groupinstall -y "Development Tools"
     sudo yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel libxml2-devel glib2-devel cairo-devel capnproto-devel capnproto ladspa-devel pango-devel cairo-gobject-devel cairo-gobject
+    sudo yum install -y centos-release-scl-rh epel-release
+    sudo yum install -y yum-utils
+    sudo yum-config-manager --disable epel
     sudo yum install --enablerepo=epel* -y zvbi-devel
     sudo yum install -y git
     sudo yum install -y cmake3 git
