@@ -47,9 +47,9 @@ ahash = "0.8.7"
 hex-slice = "0.1.4"
 chrono = "0.4.37"
 rdkafka = "0.36.2"
-gstreamer = { version = "0.20", optional = true }
-gstreamer-app = { version = "0.20", optional = true }
-gstreamer-video = { version = "0.20", optional = true }
+gstreamer = { version = "0.22", optional = true }
+gstreamer-app = { version = "0.22", optional = true }
+gstreamer-video = { version = "0.22", optional = true }
 crossbeam = "0.8.4"
 image = "0.25.1"
 num_cpus = "1.16.0"
