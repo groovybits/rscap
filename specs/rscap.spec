@@ -1,5 +1,5 @@
 Name:           rscap
-Version:        0.5.39
+Version:        0.5.40
 Release:        1%{?dist}
 Summary:        RsCap and GStreamer with essential dependencies
 
@@ -254,8 +254,19 @@ run_with_scl cargo install cargo-c --root=$PREFIX
 git clone https://github.com/sdroege/gst-plugin-rs.git
 cd gst-plugin-rs
 git checkout $GST_PLUGINS_RS_VERSION
+
+# Closed Caption
 run_with_scl cargo cbuild --release --package gst-plugin-closedcaption
 run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64
+
+# Audio
+run_with_scl cargo cbuild --release --package gst-plugin-audiofx
+run_with_scl cargo cinstall --release --package gst-plugin-audiofx --prefix=$PREFIX --libdir=$PREFIX/lib64
+
+# Video
+run_with_scl cargo cbuild --release --package gst-plugin-videofx
+run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=$PREFIX --libdir=$PREFIX/lib64
+
 cd ..
 rm -rf gst-plugin-rs
 
