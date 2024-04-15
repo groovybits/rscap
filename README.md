@@ -42,39 +42,18 @@ Use .env and/or command line args to override the default/env variables.
 
 [specs/rscap.spec](specs/rscap.spec) Builds for CentOS 7 with all the Gstreamer build dependencies handled for you.
 
-## Building and executing (see [scripts/compile.sh](scripts/compile.sh) for extensible setup Linux/MacOS)
-
-Install Rust via Homebrew on MacOS or from Rust main website (preferred from main website). Also the compile.sh script will install the necessary dependencies for CentOS 7.9 and MacOS.
-
-```text
-scripts/compile.sh gst # for Gstreamer support
+```
+rpmbuild -bb specs/rscap.spec
 ```
 
-On Linux update libpcap to the newest version (optional)...
+## Building and executing (see [scripts/install.sh](scripts/install.sh) for extensible setup Linux/MacOS)
 
 ```text
-## Build and install newest pcap, check for newest release
+# Install RsCap w/gstreamer in /opt/rscap/ (MacOS or CentOS 7)
+./scripts/install.sh
 
-# Build tools
-sudo yum -y install flex                                                                                                                                       |
-sudo yum -y install bison byacc yacc
-
-# Pcap source
-wget https://www.tcpdump.org/release/libpcap-1.10.4.tar.gz
-tar xfz libpcap-1.10.4.tar.gz
-
-# Pcap build procedure (Linux)
-cd libpcap-1.10.4
-./configure --prefix=/usr --libdir=/usr/lib64 --includedir=/usr/include --exec_prefix=/usr
-make
-sudo make install
-```
-
-Build and run the pcap stream probe [./scripts/compile.sh](scripts/compile.sh) (script takes care of most issues)
-
-```text
-# Compile the probe and monitor
-./scripts/compile.sh
+# Optionally rebuild rscap if making changes
+./scripts/compile.sh gst
 
 # Run the probe
 ./scripts/probe.sh

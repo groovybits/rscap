@@ -109,6 +109,18 @@ if [ "$OS" = "Linux" ]; then
     cd ..
     rm -rf glib-$GLIB_VERSION.tar.xz
     rm -rf cd glib-$GLIB_VERSION
+
+    # Pcap source
+    wget https://www.tcpdump.org/release/libpcap-1.10.4.tar.gz
+    tar xfz libpcap-1.10.4.tar.gz
+
+    # Pcap build procedure (Linux)
+    cd libpcap-1.10.4
+    run_with_scl ./configure --prefix=$PREFIX --libdir=$PREFIX/lib64 --includedir=$PREFIX/include --exec_prefix=$PREFIX
+    run_with_scl make
+    cd ..
+    rm -rf libpcap-1.10.4.tar.gz
+    rm -rf libpcap-1.10.4
 fi
 
 # Install libFFI
