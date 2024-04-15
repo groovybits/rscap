@@ -52,7 +52,7 @@ lazy_static! {
 
 #[cfg(feature = "gst")]
 fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
-    let pipeline = parse::parse_launch(desc)?
+    let pipeline = parse::launch(desc)?
         .downcast::<gst::Pipeline>()
         .expect("Expected a gst::Pipeline");
     Ok(pipeline)
