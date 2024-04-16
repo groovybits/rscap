@@ -36,6 +36,7 @@ GST_PLUGINS_RS_VERSION=gstreamer-$GST_VERSION
 LIBFFI_VERSION=3.3
 NASM_VERSION=2.15.05
 FFMPEG_VERSION=6.1.1
+LIBZVBI_VERSION=0.2.42
 
 # Define the installation prefix
 PREFIX=/opt/rscap
@@ -145,6 +146,26 @@ if [ "$OS" = "Linux" ]; then
     touch libffi-installed.done
 else
     brew install libffi
+fi
+
+# Install libzvbi
+if [ "$(uname)" = "Darwin" ]; then
+    if [ ! -f "libzvbi-installed.done" ]; then
+        brew install libtool autoconf automake
+        echo "---"
+        echo "Installing libzvbi..."
+        echo "---"
+        git clone https://github.com/zapping-vbi/zvbi.git
+        cd zvbi
+        git checkout v$LIBZVBI_VERSION
+        run_with_scl sh autogen.sh
+        run_with_scl ./configure --prefix=$PREFIX
+        run_with_scl make
+        run_with_scl make install
+        cd ..
+    fi
+    touch libzvbi-installed.done
+    rm -rf zvbi
 fi
 
 # Install ORC
