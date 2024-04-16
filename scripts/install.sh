@@ -431,11 +431,18 @@ touch gst-plugins-rs-installed.done
 
 # RsCap installation
 cd ..
+run_with_scl cargo clean
 run_with_scl cargo build --features gst --release
 
 # Copy RsCap binaries to the installation directory
-cp target/release/probe $PREFIX/bin/
-cp target/release/monitor $PREFIX/bin/
+cp -f target/release/probe $PREFIX/bin/
+cp -f target/release/monitor $PREFIX/bin/
+
+ls -altr $PREFIX/bin/probe
+ls -altr $PREFIX/bin/monitor
+
+probe -V
+monitor -V
 
 echo "------------------------------------------------------------"
 echo "GStreamer and essential dependencies installed."
