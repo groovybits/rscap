@@ -6,7 +6,7 @@ else
     BACKTRACE=$RUST_BACKTRACE
 fi
 if [ -f ".env" ]; then
-    source .env
+    source "./.env"
 fi
 if [ "$BUILD" == "" ]; then
     BUILD=release-with-debug
