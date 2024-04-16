@@ -58,7 +58,6 @@ sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     --source-device $SOURCE_DEVICE \
     --target-ip 0.0.0.0 \
     --send-null-packets \
-    --use-wireless \
     --target-port $TARGET_PORT \
     --extract-images \
     $@
