@@ -327,7 +327,7 @@ rm -f %{_builddir}%{prefix}/bin/rust-lldb
 rm -f %{_builddir}%{prefix}/bin/rustc
 rm -f %{_builddir}%{prefix}/bin/rustdoc
 rm -f %{_builddir}%{prefix}/bin/rust-demangler
-rm -f %{_builddir}%{prefix}/bin/cargo
+rm -f %{_builddir}%{prefix}/bin/cargo*
 rm -f %{_builddir}%{prefix}/bin/cargo-fmt
 rm -f %{_builddir}%{prefix}/bin/rustfmt
 rm -f %{_builddir}%{prefix}/bin/rls
