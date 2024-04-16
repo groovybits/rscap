@@ -45,7 +45,7 @@ USER=$(whoami)
 if [ ! -d "$PREFIX" ]; then
     sudo mkdir -p $PREFIX
 fi
-sudo chown $USER -R $PREFIX
+sudo chown -R $USER $PREFIX
 # Ensure necessary tools are installed
 
 # For pkg-config to find .pc files
