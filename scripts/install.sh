@@ -459,6 +459,9 @@ run_with_scl cargo build --features gst --release
 # Copy RsCap binaries to the installation directory
 cp -f target/release/probe $PREFIX/bin/
 cp -f target/release/monitor $PREFIX/bin/
+cp -f scripts/monitor.sh $PREFIX/bin/
+cp -f scripts/probe.sh $PREFIX/bin/
+cp -f scripts/setup_env.sh $PREFIX/bin/
 
 ls -altr $PREFIX/bin/probe
 ls -altr $PREFIX/bin/monitor
