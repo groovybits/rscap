@@ -1,13 +1,17 @@
 #!/bin/sh
 #
+source scripts/setup_env.sh
+
 if [ "$RUST_BACKTRACE" = "" ]; then
     BACKTRACE=full
 else
     BACKTRACE=$RUST_BACKTRACE
 fi
+
 if [ -f ".env" ]; then
     source "./.env"
 fi
+
 if [ "$BUILD" == "" ]; then
     BUILD=release-with-debug
 fi
@@ -29,15 +33,12 @@ fi
 if [ "$TARGET_HOST" == "" ]; then
     TARGET_HOST=0.0.0.0
 fi
-GST_PLUGIN_PATH=/opt/rscap/lib64/gstreamer-1.0
-LD_LIBRARY_PATH=/opt/rscap/lib64:$LD_LIBRARY_PATH
-PATH=/opt/rscap/bin:$PATH
 if [ -f "target/$BUILD/probe" ]; then
     PROBE_BIN=target/$BUILD/probe
-elif [ -f "/opt/rscap/bin/probe" ]; then
-    PROBE_BIN=/opt/rscap/bin/probe
+elif [ -f "$PREFIX/bin/probe" ]; then
+    PROBE_BIN=$PREFIX/bin/probe
 else
-    echo "No probe binary found in /opt/rscap/bin or target/$BUILD/"
+    echo "No probe binary found in $PREFIX/bin or target/$BUILD/"
     exit 1
 fi
 
