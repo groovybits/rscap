@@ -20,6 +20,8 @@ use gst_app::{AppSink, AppSrc};
 #[cfg(feature = "gst")]
 use gstreamer as gst;
 #[cfg(feature = "gst")]
+use gstreamer::parse;
+#[cfg(feature = "gst")]
 use gstreamer::prelude::*;
 #[cfg(feature = "gst")]
 use gstreamer_app as gst_app;
@@ -50,7 +52,7 @@ lazy_static! {
 
 #[cfg(feature = "gst")]
 fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
-    let pipeline = gst::parse_launch(desc)?
+    let pipeline = parse::launch(desc)?
         .downcast::<gst::Pipeline>()
         .expect("Expected a gst::Pipeline");
     Ok(pipeline)

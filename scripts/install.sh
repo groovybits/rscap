@@ -1,11 +1,13 @@
 #!/bin/sh
 set -e
 
+CLEAN=1
+
 # Function to run a command within the SCL environment for CentOS
 run_with_scl() {
     OS="$(uname -s)"
     if [ "$OS" = "Linux" ]; then
-        scl enable devtoolset-11 -- "$@"
+        scl enable devtoolset-11 rh-python38 -- "$@"
     else
         "$@"
     fi
@@ -19,17 +21,22 @@ BUILD_DIR=$(pwd)/build
 if [ ! -d $BUILD_DIR ]; then
     mkdir -p $BUILD_DIR
 else
-    rm -rf build/*
+    if [ "$CLEAN" == "1" ]; then
+        rm -rf build/*
+    fi
 fi
 cd $BUILD_DIR
 
 # Define versions for dependencies and GStreamer
+GLIB_MAJOR_VERSION=2.64
+GLIB_VERSION=${GLIB_MAJOR_VERSION}.6
 ORC_VERSION=0.4.31
-GST_VERSION=1.20.0
+GST_VERSION=1.24.2
+GST_PLUGINS_RS_VERSION=gstreamer-$GST_VERSION
 LIBFFI_VERSION=3.3
-GST_PLUGINS_RS_VERSION=gstreamer-1.24.2
 NASM_VERSION=2.15.05
-FFMPEG_VERSION=5.1.4
+FFMPEG_VERSION=6.1.1
+LIBZVBI_VERSION=0.2.42
 
 # Define the installation prefix
 PREFIX=/opt/rscap
@@ -39,7 +46,7 @@ USER=$(whoami)
 if [ ! -d "$PREFIX" ]; then
     sudo mkdir -p $PREFIX
 fi
-sudo chown $USER -R $PREFIX
+sudo chown -R $USER $PREFIX
 # Ensure necessary tools are installed
 
 # For pkg-config to find .pc files
@@ -52,9 +59,13 @@ if [ "$OS" = "Linux" ]; then
     # Ensure the system is up to date and has the basic build tools
     sudo yum groupinstall -y "Development Tools"
     sudo yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel libxml2-devel glib2-devel cairo-devel capnproto-devel capnproto ladspa-devel pango-devel cairo-gobject-devel cairo-gobject
+    sudo yum install -y centos-release-scl-rh epel-release
+    sudo yum install -y yum-utils
+    sudo yum-config-manager --disable epel
     sudo yum install --enablerepo=epel* -y zvbi-devel
     sudo yum install -y git
     sudo yum install -y cmake3 git
+    sudo yum install -y rh-python38 rh-python38-python-pip
 else
     export CXXFLAGS="-stdlib=libc++"
     export LDFLAGS="-lc++"
@@ -73,8 +84,8 @@ MESON_NATIVE_FILE=$CWD/meson-native-file.ini
 
 # Ensure Meson and Ninja are installed and use the correct Ninja
 if [ "$OS" = "Linux" ]; then
-    sudo pip3 install meson
-    sudo pip3 install ninja
+    run_with_scl sudo pip3.8 install meson
+    run_with_scl sudo pip3.8 install ninja
 else
     brew install meson
     brew install ninja
@@ -87,6 +98,31 @@ fi
 echo "------------------------------------------------------------"
 echo "Installing GStreamer and essential dependencies..."
 echo "------------------------------------------------------------"
+
+# Download and build glib on linux
+if [ "$OS" = "Linux" ]; then
+    wget --no-check-certificate https://download.gnome.org/sources/glib/$GLIB_MAJOR_VERSION/glib-$GLIB_VERSION.tar.xz
+    tar xf glib-$GLIB_VERSION.tar.xz
+    cd glib-$GLIB_VERSION
+    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+    run_with_scl ninja -C _build
+    run_with_scl ninja -C _build install
+    cd ..
+    rm -rf glib-$GLIB_VERSION.tar.xz
+    rm -rf cd glib-$GLIB_VERSION
+
+    # Pcap source
+    wget https://www.tcpdump.org/release/libpcap-1.10.4.tar.gz
+    tar xfz libpcap-1.10.4.tar.gz
+
+    # Pcap build procedure (Linux)
+    cd libpcap-1.10.4
+    run_with_scl ./configure --prefix=$PREFIX --libdir=$PREFIX/lib64 --includedir=$PREFIX/include --exec_prefix=$PREFIX
+    run_with_scl make
+    cd ..
+    rm -rf libpcap-1.10.4.tar.gz
+    rm -rf libpcap-1.10.4
+fi
 
 # Install libFFI
 if [ "$OS" = "Linux" ]; then
@@ -104,12 +140,32 @@ if [ "$OS" = "Linux" ]; then
         cd libffi-$LIBFFI_VERSION
         run_with_scl ./configure --prefix=$PREFIX
         run_with_scl make
-        make install
+        run_with_scl make install
         cd ..
     fi
     touch libffi-installed.done
 else
     brew install libffi
+fi
+
+# Install libzvbi
+if [ "$(uname)" = "Darwin" ]; then
+    if [ ! -f "libzvbi-installed.done" ]; then
+        brew install libtool autoconf automake
+        echo "---"
+        echo "Installing libzvbi..."
+        echo "---"
+        git clone https://github.com/zapping-vbi/zvbi.git
+        cd zvbi
+        git checkout v$LIBZVBI_VERSION
+        run_with_scl sh autogen.sh
+        run_with_scl ./configure --prefix=$PREFIX
+        run_with_scl make
+        run_with_scl make install
+        cd ..
+    fi
+    touch libzvbi-installed.done
+    rm -rf zvbi
 fi
 
 # Install ORC
@@ -128,7 +184,7 @@ if [ "$OS" = "Linux" ]; then
         cd orc-$ORC_VERSION
         run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
         run_with_scl ninja -C _build
-        ninja -C _build install
+        run_with_scl ninja -C _build install
         cd ..
     fi
     touch orc-installed.done
@@ -239,6 +295,7 @@ fi
             --enable-shared --enable-static \
             --enable-pic --enable-gpl --enable-libx264 \
             --enable-libx265 --enable-libzvbi \
+            --disable-vulkan \
             --extra-cflags="-I$PREFIX/include" --extra-ldflags="-L$PREFIX/lib"
         run_with_scl make
         make install
@@ -284,7 +341,7 @@ if [ ! -f "gst-plugins-base-installed.done" ] ; then
     cd gst-plugins-base-$GST_VERSION
     run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
     run_with_scl ninja -C _build
-    ninja -C _build install
+    run_with_scl ninja -C _build install
     cd ..
 fi
 touch gst-plugins-base-installed.done
@@ -304,7 +361,7 @@ if [ ! -f "gst-plugins-bad-installed.done" ] ; then
     cd gst-plugins-bad-$GST_VERSION
     run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE -Dopenexr=disabled
     run_with_scl ninja -C _build
-    ninja -C _build install
+    run_with_scl ninja -C _build install
     cd ..
 fi
 touch gst-plugins-bad-installed.done
@@ -331,7 +388,7 @@ if [ ! -f "gst-libav-installed.done" ] ; then
     cd gst-libav-$GST_VERSION
     run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
     run_with_scl ninja -C _build
-    ninja -C _build install
+    run_with_scl ninja -C _build install
     cd ..
 fi
 touch gst-libav-installed.done
@@ -351,10 +408,12 @@ if [ ! -f "gst-plugins-good-installed.done" ] ; then
     cd gst-plugins-good-$GST_VERSION
     run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
     run_with_scl ninja -C _build
-    ninja -C _build install
+    run_with_scl ninja -C _build install
     cd ..
 fi
 touch gst-plugins-good-installed.done
+
+export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
 
 if [ ! -f "gst-plugins-rs-installed.done" ]; then
   echo "---"
@@ -392,16 +451,31 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
 fi
 touch gst-plugins-rs-installed.done
 
+# RsCap installation
+cd ..
+run_with_scl cargo clean
+run_with_scl cargo build --features gst --release
+
+# Copy RsCap binaries to the installation directory
+cp -f target/release/probe $PREFIX/bin/
+cp -f target/release/monitor $PREFIX/bin/
+cp -f scripts/monitor.sh $PREFIX/bin/
+cp -f scripts/probe.sh $PREFIX/bin/
+cp -f scripts/setup_env.sh $PREFIX/bin/
+
+ls -altr $PREFIX/bin/probe
+ls -altr $PREFIX/bin/monitor
+
+probe -V
+monitor -V
+
+echo "------------------------------------------------------------"
+echo "GStreamer and essential dependencies installed."
+echo "------------------------------------------------------------"
+
 # Verify GStreamer installation
 echo "------------------------------------------------------------"
 echo "Verifying GStreamer installation..."
 echo "------------------------------------------------------------"
 gst-launch-1.0 --version
 
-echo "------------------------------------------------------------"
-echo "GStreamer and essential dependencies installed."
-echo "------------------------------------------------------------"
-
-if [ "$OS" = "Linux" ]; then
-    sudo ldconfig
-fi
