@@ -25,7 +25,7 @@ if [ "$SOURCE_DEVICE" == "" ]; then
     SOURCE_DEVICE=eth0
 fi
 if [ "$SOURCE_PORT" == "" ]; then
-    SOURCE_PORT=10001
+    SOURCE_PORT=10000
 fi
 if [ "$TARGET_PORT" == "" ]; then
     TARGET_PORT=5556
