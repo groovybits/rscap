@@ -1,6 +1,10 @@
 #!/bin/sh
 #
-source scripts/setup_env.sh
+if [ -f "scripts/setup_env.sh" ]; then
+    source scripts/setup_env.sh
+elif [ -f "/opt/rscap/bin/setup_env.sh" ]; then
+    source /opt/rscap/bin/setup_env.sh
+fi
 
 if [ "$RUST_BACKTRACE" = "" ]; then
     BACKTRACE=full
