@@ -1,4 +1,4 @@
-# MpegTS/SMPTE2110 Stream Capture Monitoring in Rust
+# MpegTS/SMPTE2110 Capture Stream Monitoring in Rust
 
 [![Rust](https://github.com/groovybits/rscap/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/groovybits/rscap/actions/workflows/rust.yml)
 
@@ -14,31 +14,17 @@ Gstreamer support with --features gst `make build_gst` for using Gstreamer for s
 
 Can enable MPEG2TS_Reader and H264_Reader crates from <https://github.com/dholroyd> for NAL parsing. The information from the SPS/PPS and other NAL data isn't currently used but will be added to the monitor process eventually to allow for a more detailed analysis of the stream.
 
-TODO:
-
-- Add AAC Parsing support <https://github.com/dholroyd/adts-reader> for Audio analysis.
-- Add SCTE35 Trigger support <https://github.com/m2amedia/scte35dump> for Ad Cues.
-- Integrate usage of MpegTS-Reader support <https://github.com/dholroyd/mpeg2ts-reader> for more advanced demuxing.
-- Add System metrics <https://github.com/dholroyd/nix/tree/master> for view of OS health and load.
-- Add Network metrics via pcap potentially or Rust crate, have not located one yet.
-- Add HLS input support <https://github.com/dholroyd/hls_m3u8> for streams.
-
 ## This consists of two programs, a probe and a monitor client.
 
-- The [src/bin/probe.rs](src/bin/probe.rs) takes MpegTS or SMPTE2110 via Packet Capture and publishes
-  batches of the MpegTS 188 / SMPTE2110 sized byte packets to a ZeroMQ output.
+- The [src/bin/probe.rs](src/bin/probe.rs) takes MpegTS or SMPTE2110 via Packet Capture and publishes batches of the MpegTS 188 / SMPTE2110 sized byte packets to a ZeroMQ socket it binds with PUSH. The probe has zero copy of the pcap buffers for the life cycle. They are passed through to the monitor module with Cap'n Proto allowing highly efficient capture and processing of MpegTS (and someday SMPTE2110 streams WIP: needs development and testing to completely optimize the behavior).
 
-- The [src/bin/probe.rs](src/bin/probe.rs) has zero copy of the pcap buffers for the life cycle. They are passed through to the monitor module with Cap'n Proto allowing highly efficient capture and processing of both MpegTS and SMPTE2110 streams (WIP: needs work and testing to completely optimize the behavior).
-
-- The [src/bin/monitor.rs](src/bin/monitor.rs) client reads from the ZeroMQ socket and writes out a
-  a file containing the MpegTS stream matching the one
-  captured by the probe.
+- The [src/bin/monitor.rs](src/bin/monitor.rs) client reads from the ZeroMQ socket as a pull model from the probe, can write the assets and push them to kafka in a flattened json schema.
 
 ## Configuration with environment variables using [.env](.env.example)
 
 Use .env and/or command line args to override the default/env variables.
 
-## RPM available for CentOS 7
+## RsCap RPM available for CentOS 7 with Gstreamer support
 
 [specs/rscap.spec](specs/rscap.spec) Builds for CentOS 7 with all the Gstreamer build dependencies handled for you.
 
@@ -46,7 +32,10 @@ Use .env and/or command line args to override the default/env variables.
 rpmbuild -bb specs/rscap.spec
 ```
 
-## Building and executing (see [scripts/install.sh](scripts/install.sh) for extensible setup Linux/MacOS)
+## Building and executing Rscap + Gstreamer dependencies
+
+RsCap + Gstreamer Install script: [scripts/install.sh](scripts/install.sh) for Gstreamer + deps setup Linux CentoOS 7 and MacOS into /opt/rscap contained directory.
+RsCap Compile script: [scripts/compile.sh](scripts/compile.sh) for RsCap build using Gstreamer setup in /opt/rscap.
 
 ```text
 # Install RsCap w/gstreamer in /opt/rscap/ (MacOS or CentOS 7)
@@ -94,24 +83,22 @@ Running VTune [scripts/vtune.sh](scripts/vtune.sh)
 
 ## TODO - roadmap plans
 
-- (WIP) Add more information header to the stream data metadata like system stats, network stats, mediainfo, captions, ancillary data.
+- Multiple monitor client support so one monitor client handles all the probes.
+- Audio analysis, capture, sampling showing amplitude graphs and noise violations of various broadcasting regulations.
+- Caption packets and other NAL and SEI data / metadata extraction and sending.
+- (WIP) Add more information header to the stream data metadata like network stats, mediainfo, captions, ancillary data.
 - (WIP) SMPTE 2110 handling reassembling frames and analogous to the MpegTS support.
 - (WIP) PES parsing and analysis of streams.
 - (WIP) FFmpeg libzmq protocol compatibility to allow branching off into libav easily.
 - (WIP) General network analyzer view of network around the streams we know/care about.
 - Have multiple client modes to distribute processing of the stream on the zmq endpoints.
 - Improve NAL parsing and various aspects of MpegTS and VANC ancillary data from SMPTE2110.
-- Logging to file/sqliteDB with stats for simple basic graphing using gnuplot.
 - Use [OpenCV img_hash fingerprinting](https://docs.opencv.org/3.4/d4/d93/group__img__hash.html#ga5eeee1e27bc45caffe3b529ab42568e3) to perceptually align and compare video streams frames.
 - OpenAI Whisper speech to text for caption verfication and insertion. <https://github.com/openai/whisper>
 - Problem discovery and reporting via LLM/VectorDB analysis detection of anomalies in data.
 - Fine tune LLM model for finding stream issues beyond basic commonly used ones.
 - Segmentation of captured MpegTS, VOD file writer by various specs.
 - Compression for proxy capture. Encode bitrate ladders realtime in parallel?
-- Multiple streams per probe? Seems better to separate each probe to avoid a mess. TBD later, doubtful I like the idea.
-- Audio analysis, capture, sampling showing amplitude graphs and noise violations of various broadcasting regulations.
-- Thumbnail image extraction and compression for sending a thumbnail per second intervals (or less/more) to monitor in the monitor.
-- Caption packets and other NAL and SEI data / metadata extraction and sending.
 - SMPTE2110 data stream and audio stream support (need to have more than one pcap ip/port and distinguish them apart).
 - Meme like overlay of current frame and stream metrics on the thumbnail images with precise timing and frame information like a scope. (phone/pad usage)
 
