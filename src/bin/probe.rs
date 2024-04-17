@@ -925,14 +925,16 @@ async fn rscap(running: Arc<AtomicBool>) {
 
     // Initialize the pipeline
     #[cfg(feature = "gst")]
-    let (pipeline, appsrc, appsink) = match initialize_pipeline(
+    let (pipeline, appsrc, appsink, captionssink, audiosink) = match initialize_pipeline(
         &args.input_codec,
         args.image_height,
         args.gst_queue_buffers,
         !args.scale_images_after_gstreamer,
         &args.image_framerate,
     ) {
-        Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
+        Ok((pipeline, appsrc, appsink, captionssink, audiosink)) => {
+            (pipeline, appsrc, appsink, captionssink, audiosink)
+        }
         Err(err) => {
             eprintln!("Failed to initialize the pipeline: {}", err);
             return;
@@ -959,7 +961,8 @@ async fn rscap(running: Arc<AtomicBool>) {
     #[cfg(feature = "gst")]
     pull_images(
         appsink,
-        /*Arc::new(Mutex::new(image_sender)),*/
+        captionssink,
+        audiosink,
         image_sender,
         args.save_images,
         args.image_sample_rate_ns,

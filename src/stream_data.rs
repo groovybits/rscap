@@ -67,7 +67,16 @@ pub fn initialize_pipeline(
     buffer_count: u32,
     scale: bool,
     framerate: &str,
-) -> Result<(gst::Pipeline, gst_app::AppSrc, gst_app::AppSink), anyhow::Error> {
+) -> Result<
+    (
+        gst::Pipeline,
+        gst_app::AppSrc,
+        gst_app::AppSink,
+        gst_app::AppSink,
+        gst_app::AppSink,
+    ),
+    anyhow::Error,
+> {
     gst::init()?;
 
     let width = (((height as f32 * 16.0 / 9.0) / 16.0).round() * 16.0) as u32;
@@ -95,13 +104,18 @@ pub fn initialize_pipeline(
                appsink name=sink", framerate, scale_string),
         )?,
         0x1B => create_pipeline(
-              &format!("appsrc name=src ! tsdemux name=demux demux. ! \
-                  h264parse ! avdec_h264 ! ccextractor name=cce cce.src \
-                  ! queue \
-                  ! videorate ! video/x-raw,framerate={} ! videoconvert \
-                  ! video/x-raw,format=RGB {} \
-                  ! appsink sync=false async=false name=sink demux. \
-                  ! queue ! appsink async=false sync=false name=caption_sink", framerate, scale_string),
+              &&format!("appsrc name=src ! tsdemux name=demux demux. ! \
+                  h264parse ! avdec_h264 ! \
+                  tee name=videotee \
+                  videotee. ! queue ! ccextractor name=cce cce.src ! \
+                  queue ! appsink async=false sync=false name=caption_sink \
+                  videotee. ! queue ! videorate ! video/x-raw,framerate={} ! videoconvert ! video/x-raw,format=RGB {} ! \
+                  appsink sync=false async=false name=sink demux. ! \
+                  queue ! audioconvert ! audio/x-raw,format=F32LE ! \
+                  tee name=audiotee \
+                  audiotee. ! queue ! ebur128level interval=100000000 post-messages=true ! \
+                  fakesink async=false \
+                  audiotee. ! queue ! appsink async=false sync=false name=audio_sink", framerate, scale_string),
         )?,
         0x24 => create_pipeline(
                 &format!("appsrc name=src ! tsdemux ! capsfilter caps=video/x-h265 ! \
@@ -131,27 +145,19 @@ pub fn initialize_pipeline(
         .ok_or_else(|| anyhow::anyhow!("Failed to get caption_sink"))?
         .downcast::<gst_app::AppSink>()
         .map_err(|_| anyhow::anyhow!("AppSink casting failed"))?;
+    let audio_sink = pipeline
+        .by_name("audio_sink")
+        .ok_or_else(|| anyhow::anyhow!("Failed to get audio_sink"))?
+        .downcast::<gst_app::AppSink>()
+        .map_err(|_| anyhow::anyhow!("AppSink casting failed"))?;
 
     // read from the caption sink
     caption_sink.set_property("emit-signals", true);
 
-    // Check for new captions
-    while let Some(caption_sample) = caption_sink.try_pull_sample(gst::ClockTime::ZERO) {
-        if let Some(caption_buffer) = caption_sample.buffer() {
-            let caption_pts = caption_buffer.pts().map_or(0, |pts| pts.nseconds());
-
-            let map = caption_buffer.map_readable().unwrap();
-            let caption_data = map.as_slice();
-            let caption = String::from_utf8_lossy(caption_data).into_owned();
-
-            log::info!("Caption: [{}] {}", caption_pts, caption);
-        }
-    }
-
     appsink.set_property("max-buffers", buffer_count);
     appsink.set_property("drop", true);
 
-    Ok((pipeline, appsrc, appsink))
+    Ok((pipeline, appsrc, appsink, caption_sink, audio_sink))
 }
 
 #[cfg(feature = "gst")]
@@ -166,15 +172,7 @@ pub fn process_video_packets(
                 break;
             }
             let buffer = gst::Buffer::from_slice(packet);
-            if let Some(meta) = buffer.meta::<VideoCaptionMeta>() {
-                let caption_type = meta.caption_type();
-                let caption_data = meta.data();
-                log::info!(
-                    "Received video packet with caption type {:?} and data {:?}",
-                    caption_type,
-                    caption_data
-                );
-            }
+
             if let Err(err) = appsrc.push_buffer(buffer) {
                 log::error!("Failed to push buffer to appsrc: {}", err);
             }
@@ -185,6 +183,8 @@ pub fn process_video_packets(
 #[cfg(feature = "gst")]
 pub fn pull_images(
     appsink: AppSink,
+    captionssink: AppSink,
+    audio_sink: AppSink,
     image_sender: mpsc::Sender<(Vec<u8>, u64)>,
     save_images: bool,
     sample_interval: u64,
@@ -200,13 +200,32 @@ pub fn pull_images(
         let mut filmstrip_images = Vec::new();
 
         while running.load(Ordering::SeqCst) {
+            // captions sink
+            let captionssample = captionssink.try_pull_sample(gst::ClockTime::ZERO);
+            if let Some(sample) = captionssample {
+                if let Some(buffer) = sample.buffer() {
+                    // Check if the buffer contains caption data
+                    if let Some(meta) = buffer.meta::<VideoCaptionMeta>() {
+                        let caption_type = meta.caption_type();
+                        let caption_data = meta.data();
+                        log::info!(
+                            "Received video packet with caption type {:?} and data {:?}",
+                            caption_type,
+                            caption_data
+                        );
+                    }
+                }
+            }
+
             let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
             if let Some(sample) = sample {
                 if let Some(buffer) = sample.buffer() {
+                    // Get the pts of the buffer
                     let pts = buffer
                         .pts()
                         .map_or(last_processed_pts, |pts| pts.nseconds());
 
+                    // Check if the buffer should be processed for image extraction
                     if last_processed_pts == 0 || pts >= last_processed_pts + sample_interval {
                         last_processed_pts = pts;
 
