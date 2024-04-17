@@ -482,11 +482,11 @@ struct Args {
     pcap_stats: bool,
 
     ///  MPSC Channel Size for ZeroMQ
-    #[clap(long, env = "PCAP_CHANNEL_SIZE", default_value_t = 10_000)]
+    #[clap(long, env = "PCAP_CHANNEL_SIZE", default_value_t = 100)]
     pcap_channel_size: usize,
 
     /// MPSC Channel Size for PCAP
-    #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 100_000)]
+    #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 100)]
     zmq_channel_size: usize,
 
     /// DPDK enable
@@ -510,7 +510,7 @@ struct Args {
     no_zmq_thread: bool,
 
     /// ZMQ Batch size
-    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 1000)]
+    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 100)]
     zmq_batch_size: usize,
 
     /// Debug SMPTE2110
@@ -559,7 +559,7 @@ struct Args {
     filmstrip_length: usize,
 
     /// Gstreamer Queue Buffers
-    #[clap(long, env = "GST_QUEUE_BUFFERS", default_value_t = 3)]
+    #[clap(long, env = "GST_QUEUE_BUFFERS", default_value_t = 2)]
     gst_queue_buffers: u32,
 
     /// image framerate - Framerate of the images extracted in 1/1 format
@@ -569,6 +569,14 @@ struct Args {
     /// image_frame_increment - Increment the frame number by this amount for jpeg image strip, 0 matches filmstrip-length
     #[clap(long, env = "IMAGE_FRAME_INCREMENT", default_value_t = 1)]
     image_frame_increment: u8,
+
+    /// Image buffer size - Size of the buffer for the images from gstreamer
+    #[clap(long, env = "IMAGE_BUFFER_SIZE", default_value_t = 100)]
+    image_buffer_size: usize,
+
+    /// Video buffer size - Size of the buffer for the video to gstreamer
+    #[clap(long, env = "VIDEO_BUFFER_SIZE", default_value_t = 100)]
+    video_buffer_size: usize,
 }
 
 // MAIN Function
@@ -919,9 +927,9 @@ async fn rscap(running: Arc<AtomicBool>) {
 
     // Create channels for sending video packets and receiving images
     #[cfg(feature = "gst")]
-    let (video_packet_sender, video_packet_receiver) = mpsc::channel(10000);
+    let (video_packet_sender, video_packet_receiver) = mpsc::channel(args.video_buffer_size);
     #[cfg(feature = "gst")]
-    let (image_sender, mut image_receiver) = mpsc::channel(10000);
+    let (image_sender, mut image_receiver) = mpsc::channel(args.image_buffer_size);
 
     // Initialize the pipeline
     #[cfg(feature = "gst")]
