@@ -575,7 +575,7 @@ struct Args {
     image_buffer_size: usize,
 
     /// Video buffer size - Size of the buffer for the video to gstreamer
-    #[clap(long, env = "VIDEO_BUFFER_SIZE", default_value_t = 200)]
+    #[clap(long, env = "VIDEO_BUFFER_SIZE", default_value_t = 1000)]
     video_buffer_size: usize,
 }
 
