@@ -785,8 +785,16 @@ async fn main() {
 
                         // Check if it's time to send data to Kafka based on the interval
                         if send_to_kafka {
+                            let mut force_send_message = false;
+
                             // Acquire write access to PROBE_DATA
                             let mut probe_data_map = PROBE_DATA.write().unwrap();
+
+                            // Create a new map to store the averaged probe data
+                            let mut averaged_probe_data: serde_json::Map<
+                                String,
+                                serde_json::Value,
+                            > = serde_json::Map::new();
 
                             // Process each probe's data
                             for (probe_id, probe_data) in probe_data_map.iter_mut() {
@@ -907,10 +915,6 @@ async fn main() {
                                     "source_port".to_string(),
                                     serde_json::json!(source_port),
                                 );
-                                flattened_data
-                                    .insert("captions".to_string(), serde_json::json!(captions));
-
-                                let mut force_send_message = false;
 
                                 if captions != "" {
                                     force_send_message = true;
@@ -947,11 +951,8 @@ async fn main() {
                                         .insert("log_message".to_string(), serde_json::json!(""));
                                 }
 
-                                // probe id
                                 flattened_data
                                     .insert("id".to_string(), serde_json::json!(probe_id));
-
-                                // insert the pid_map, scte35, and audio_loudness fields into the flattened_data map
                                 flattened_data
                                     .insert("pid_map".to_string(), serde_json::json!(pid_map));
                                 flattened_data
@@ -964,29 +965,52 @@ async fn main() {
                                 // Merge the probe-specific flattened data with the global data
                                 flattened_data.extend(probe_data.global_data.clone());
 
-                                // Convert the Map directly to a Value for serialization
-                                let combined_stats = serde_json::Value::Object(flattened_data);
+                                // Store the flattened data in the averaged_probe_data map
+                                averaged_probe_data.insert(
+                                    probe_id.clone(),
+                                    serde_json::Value::Object(flattened_data),
+                                );
 
-                                // Serialization
-                                let ser_data = serde_json::to_vec(&combined_stats)
-                                    .expect("Failed to serialize for Kafka");
+                                // Clear the global data after processing
+                                probe_data.global_data.clear();
+                            }
 
-                                // Debug output if enabled
-                                if debug_on {
+                            // Check if it's time to send data to Kafka based on the interval or if force_send_message is true
+                            if force_send_message
+                                || last_kafka_send_time.elapsed().as_millis()
+                                    >= args.kafka_interval as u128
+                            {
+                                for (probe_id, probe_data) in averaged_probe_data.iter() {
+                                    let json_data = serde_json::to_value(probe_data)
+                                        .expect("Failed to serialize probe data for Kafka");
+
+                                    let ser_data = serde_json::to_vec(&json_data)
+                                        .expect("Failed to serialize data for Kafka");
+
+                                    if debug_on {
+                                        let ser_data_str = String::from_utf8_lossy(&ser_data);
+                                        debug!(
+                                            "MONITOR::PACKET:SERIALIZED_DATA for {}: {}",
+                                            probe_id, ser_data_str
+                                        );
+                                    }
+
+                                    // pretty print out the json ser_data_str and delimit it so we can tell each message.
                                     let ser_data_str = String::from_utf8_lossy(&ser_data);
-                                    debug!("MONITOR::PACKET:SERIALIZED_DATA: {}", ser_data_str);
-                                }
+                                    let ser_data_str = ser_data_str.replace("{", "{\n");
+                                    let ser_data_str = ser_data_str.replace("}", "\n}");
+                                    let ser_data_str = ser_data_str.replace(",", ",\n");
+                                    let ser_data_str = ser_data_str.replace(":", ": ");
+                                    debug!(
+                                        "MONITOR::PACKET:SERIALIZED_DATA for {}: {}\n---\n",
+                                        probe_id, ser_data_str
+                                    );
 
-                                // Check if it's time to send data to Kafka based on the interval
-                                if force_send_message
-                                    || last_kafka_send_time.elapsed().as_millis()
-                                        >= args.kafka_interval as u128
-                                {
-                                    // Kafka message production
+                                    // Produce the message to Kafka
                                     let future = produce_message(
                                         ser_data,
                                         kafka_broker.clone(),
-                                        format!("{}.{}", kafka_topic, probe_id),
+                                        kafka_topic.clone(), // You can also just use kafka_topic if you don't want separate topics
                                         kafka_timeout,
                                         kafka_key.clone(),
                                         current_unix_timestamp_ms().unwrap_or(0) as i64,
@@ -994,13 +1018,11 @@ async fn main() {
                                         &admin_client,
                                     );
 
-                                    // Await the future for sending the message
                                     future.await;
-                                    last_kafka_send_time = Instant::now();
                                 }
 
-                                // Clear the global data after sending
-                                probe_data.global_data.clear();
+                                // Update last send time
+                                last_kafka_send_time = Instant::now();
                             }
                         }
 
