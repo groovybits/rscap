@@ -1001,7 +1001,7 @@ async fn main() {
                                     let ser_data_str = ser_data_str.replace("}", "\n}");
                                     let ser_data_str = ser_data_str.replace(",", ",\n");
                                     let ser_data_str = ser_data_str.replace(":", ": ");
-                                    println!(
+                                    debug!(
                                         "MONITOR::PACKET:SERIALIZED_DATA for {}: {}\n---\n",
                                         probe_id, ser_data_str
                                     );
