@@ -26,6 +26,8 @@ use gstreamer::prelude::*;
 #[cfg(feature = "gst")]
 use gstreamer_app as gst_app;
 #[cfg(feature = "gst")]
+use gstreamer_video::video_meta::VideoCaptionMeta;
+#[cfg(feature = "gst")]
 use gstreamer_video::VideoInfo;
 #[cfg(feature = "gst")]
 use image::{ImageBuffer, Rgb};
@@ -93,9 +95,13 @@ pub fn initialize_pipeline(
                appsink name=sink", framerate, scale_string),
         )?,
         0x1B => create_pipeline(
-           &format!("appsrc name=src ! tsdemux ! capsfilter caps=video/x-h264 ! \
-               h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate={} ! \
-               videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
+              &format!("appsrc name=src ! tsdemux name=demux demux. ! \
+                  h264parse ! avdec_h264 ! ccextractor name=cce cce.src \
+                  ! queue \
+                  ! videorate ! video/x-raw,framerate={} ! videoconvert \
+                  ! video/x-raw,format=RGB {} \
+                  ! appsink sync=false async=false name=sink demux. \
+                  ! queue ! appsink async=false sync=false name=caption_sink", framerate, scale_string),
         )?,
         0x24 => create_pipeline(
                 &format!("appsrc name=src ! tsdemux ! capsfilter caps=video/x-h265 ! \
@@ -120,6 +126,27 @@ pub fn initialize_pipeline(
         .ok_or_else(|| anyhow::anyhow!("Failed to get appsink"))?
         .downcast::<gst_app::AppSink>()
         .map_err(|_| anyhow::anyhow!("AppSink casting failed"))?;
+    let caption_sink = pipeline
+        .by_name("caption_sink")
+        .ok_or_else(|| anyhow::anyhow!("Failed to get caption_sink"))?
+        .downcast::<gst_app::AppSink>()
+        .map_err(|_| anyhow::anyhow!("AppSink casting failed"))?;
+
+    // read from the caption sink
+    caption_sink.set_property("emit-signals", true);
+
+    // Check for new captions
+    while let Some(caption_sample) = caption_sink.try_pull_sample(gst::ClockTime::ZERO) {
+        if let Some(caption_buffer) = caption_sample.buffer() {
+            let caption_pts = caption_buffer.pts().map_or(0, |pts| pts.nseconds());
+
+            let map = caption_buffer.map_readable().unwrap();
+            let caption_data = map.as_slice();
+            let caption = String::from_utf8_lossy(caption_data).into_owned();
+
+            log::info!("Caption: [{}] {}", caption_pts, caption);
+        }
+    }
 
     appsink.set_property("max-buffers", buffer_count);
     appsink.set_property("drop", true);
@@ -139,11 +166,11 @@ pub fn process_video_packets(
                 break;
             }
             let buffer = gst::Buffer::from_slice(packet);
-            if let Some(meta) = buffer.meta::<gstreamer_video::VideoCaptionsMeta>() {
-                let caption_type = meta.caption.type();
+            if let Some(meta) = buffer.meta::<VideoCaptionMeta>() {
+                let caption_type = meta.caption_type();
                 let caption_data = meta.data();
                 log::info!(
-                    "Received video packet with caption type {} and data {:?}",
+                    "Received video packet with caption type {:?} and data {:?}",
                     caption_type,
                     caption_data
                 );
