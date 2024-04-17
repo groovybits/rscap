@@ -857,7 +857,7 @@ async fn rscap(running: Arc<AtomicBool>) {
         };
         info!("ZeroMQ publisher startup {}", endpoint);
 
-        publisher.bind(&endpoint).unwrap();
+        publisher.connect(&endpoint).unwrap();
 
         // Initialize an Option<File> to None
         let mut file = if !args.output_file.is_empty() {
