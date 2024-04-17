@@ -445,7 +445,7 @@ struct Args {
     source_port: i32,
 
     /// Sets the target IP
-    #[clap(long, env = "SOURCE_IP", default_value = "127.0.0.1")]
+    #[clap(long, env = "SOURCE_IP", default_value = "0.0.0.0")]
     source_ip: String,
 
     /// Sets the packet size
