@@ -1030,19 +1030,19 @@ async fn main() {
                     }
                     Err(e) => {
                         error!("Error deserializing message: {:?}", e);
-                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        tokio::time::sleep(Duration::from_millis(1)).await;
                     }
                 }
             }
             Ok(_) => {
                 // No messages were received
                 // sleep for a short time to avoid busy waiting
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_millis(1)).await;
                 continue;
             }
             Err(e) => {
                 error!("Failed to receive message: {:?}", e);
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_millis(1)).await;
                 continue; // or handle error as needed
             }
         };
