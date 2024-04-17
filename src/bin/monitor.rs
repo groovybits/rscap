@@ -728,7 +728,8 @@ async fn main() {
                                 };
 
                                 info!(
-                                    "Monitor: Jpeg image received: {} size {} pts saved to {}",
+                                    "Monitor: [{}] Jpeg image received: {} size {} pts saved to {}",
+                                    stream_data.probe_id,
                                     data_msg.len(),
                                     stream_data.image_pts,
                                     output_file_incremental
@@ -921,7 +922,7 @@ async fn main() {
                                 flattened_data
                                     .insert("image_pts".to_string(), serde_json::json!(image_pts));
                                 let base64_image_tag = if !base64_image.is_empty() {
-                                    info!("Got Image: {} bytes", base64_image.len());
+                                    debug!("Got Image: {} bytes", base64_image.len());
                                     force_send_message = true;
                                     format!("data:image/jpeg;base64,{}", base64_image)
                                 } else {
