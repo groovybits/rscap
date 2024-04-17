@@ -217,6 +217,28 @@ pub fn pull_images(
                 }
             }
 
+            // Audio sink
+            let audio_sample = audio_sink.try_pull_sample(gst::ClockTime::ZERO);
+            if let Some(sample) = audio_sample {
+                let buffer = sample.buffer().unwrap();
+                let map = buffer.map_readable().unwrap();
+                let samples = map.as_slice();
+
+                // Calculate audio loudness (you can replace this with your own calculation)
+                let loudness = samples
+                    .iter()
+                    .map(|&s| f32::from(s))
+                    .fold(0.0, |acc, s| acc + s.abs())
+                    / samples.len() as f32;
+
+                // Check if loudness exceeds a threshold and trigger alerts
+                if loudness > -10.0 {
+                    log::warn!("Loudness alert: {:.2} LUFS exceeds threshold", loudness);
+                } else {
+                    log::info!("Audio Loudness: {:.2} LUFS", loudness);
+                }
+            }
+
             let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
             if let Some(sample) = sample {
                 if let Some(buffer) = sample.buffer() {
