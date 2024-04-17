@@ -486,7 +486,7 @@ struct Args {
     pcap_channel_size: usize,
 
     /// MPSC Channel Size for PCAP
-    #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 100_000)]
+    #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 100)]
     zmq_channel_size: usize,
 
     /// DPDK enable
@@ -510,7 +510,7 @@ struct Args {
     no_zmq_thread: bool,
 
     /// ZMQ Batch size
-    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 10)]
+    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 100)]
     zmq_batch_size: usize,
 
     /// Debug SMPTE2110
