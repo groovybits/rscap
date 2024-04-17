@@ -44,7 +44,7 @@ install_rust() {
 
 # Function to run a command within the SCL environment for CentOS
 run_with_scl() {
-    export PKG_CONFIG_PATH=/usr/local/lib64/pkgconfig:/usr/lib64/pkgconfig:$PKG_CONFIG_PATH
+    export PKG_CONFIG_PATH=/opt/rscap/lib64/pkgconfig:/opt/rscap/lib/pkgconfig:$PKG_CONFIG_PATH
     scl enable devtoolset-11 -- "$@"
 }
 
