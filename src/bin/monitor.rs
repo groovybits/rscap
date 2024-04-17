@@ -980,33 +980,48 @@ async fn main() {
                                 || last_kafka_send_time.elapsed().as_millis()
                                     >= args.kafka_interval as u128
                             {
-                                // Convert the averaged_probe_data map to a JSON value
-                                let averaged_stats = serde_json::Value::Object(averaged_probe_data);
+                                for (probe_id, probe_data) in averaged_probe_data.iter() {
+                                    let json_data = serde_json::to_value(probe_data)
+                                        .expect("Failed to serialize probe data for Kafka");
 
-                                // Serialization
-                                let ser_data = serde_json::to_vec(&averaged_stats)
-                                    .expect("Failed to serialize for Kafka");
+                                    let ser_data = serde_json::to_vec(&json_data)
+                                        .expect("Failed to serialize data for Kafka");
 
-                                // Debug output if enabled
-                                if debug_on {
+                                    if debug_on {
+                                        let ser_data_str = String::from_utf8_lossy(&ser_data);
+                                        debug!(
+                                            "MONITOR::PACKET:SERIALIZED_DATA for {}: {}",
+                                            probe_id, ser_data_str
+                                        );
+                                    }
+
+                                    // pretty print out the json ser_data_str and delimit it so we can tell each message.
                                     let ser_data_str = String::from_utf8_lossy(&ser_data);
-                                    debug!("MONITOR::PACKET:SERIALIZED_DATA: {}", ser_data_str);
+                                    let ser_data_str = ser_data_str.replace("{", "{\n");
+                                    let ser_data_str = ser_data_str.replace("}", "\n}");
+                                    let ser_data_str = ser_data_str.replace(",", ",\n");
+                                    let ser_data_str = ser_data_str.replace(":", ": ");
+                                    println!(
+                                        "MONITOR::PACKET:SERIALIZED_DATA for {}: {}\n---\n",
+                                        probe_id, ser_data_str
+                                    );
+
+                                    // Produce the message to Kafka
+                                    let future = produce_message(
+                                        ser_data,
+                                        kafka_broker.clone(),
+                                        kafka_topic.clone(), // You can also just use kafka_topic if you don't want separate topics
+                                        kafka_timeout,
+                                        kafka_key.clone(),
+                                        current_unix_timestamp_ms().unwrap_or(0) as i64,
+                                        producer.clone(),
+                                        &admin_client,
+                                    );
+
+                                    future.await;
                                 }
 
-                                // Kafka message production
-                                let future = produce_message(
-                                    ser_data,
-                                    kafka_broker.clone(),
-                                    kafka_topic.clone(),
-                                    kafka_timeout,
-                                    kafka_key.clone(),
-                                    current_unix_timestamp_ms().unwrap_or(0) as i64,
-                                    producer.clone(),
-                                    &admin_client,
-                                );
-
-                                // Await the future for sending the message
-                                future.await;
+                                // Update last send time
                                 last_kafka_send_time = Instant::now();
                             }
                         }
