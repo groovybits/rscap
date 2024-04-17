@@ -571,11 +571,11 @@ struct Args {
     image_frame_increment: u8,
 
     /// Image buffer size - Size of the buffer for the images from gstreamer
-    #[clap(long, env = "IMAGE_BUFFER_SIZE", default_value_t = 100)]
+    #[clap(long, env = "IMAGE_BUFFER_SIZE", default_value_t = 10)]
     image_buffer_size: usize,
 
     /// Video buffer size - Size of the buffer for the video to gstreamer
-    #[clap(long, env = "VIDEO_BUFFER_SIZE", default_value_t = 100)]
+    #[clap(long, env = "VIDEO_BUFFER_SIZE", default_value_t = 200)]
     video_buffer_size: usize,
 }
 
