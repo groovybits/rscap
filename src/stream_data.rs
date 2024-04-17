@@ -139,6 +139,15 @@ pub fn process_video_packets(
                 break;
             }
             let buffer = gst::Buffer::from_slice(packet);
+            if let Some(meta) = buffer.meta::<gstreamer_video::VideoCaptionsMeta>() {
+                let caption_type = meta.caption.type();
+                let caption_data = meta.data();
+                log::info!(
+                    "Received video packet with caption type {} and data {:?}",
+                    caption_type,
+                    caption_data
+                );
+            }
             if let Err(err) = appsrc.push_buffer(buffer) {
                 log::error!("Failed to push buffer to appsrc: {}", err);
             }
