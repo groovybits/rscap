@@ -14,9 +14,6 @@ pub fn watch_daemon(file_path: &str, sender: Sender<String>, running: Arc<Atomic
         Err(_) => 0,
     };
 
-    // make sure we are at the end of the file and do not get the last line, wait for the next one
-    last_offset += 1;
-
     while running.load(Ordering::SeqCst) {
         if let Ok(file) = File::open(file_path) {
             let mut reader = BufReader::new(file);
