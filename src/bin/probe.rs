@@ -377,7 +377,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.48",
+    version = "0.5.49",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {
@@ -482,11 +482,11 @@ struct Args {
     pcap_stats: bool,
 
     ///  MPSC Channel Size for ZeroMQ
-    #[clap(long, env = "PCAP_CHANNEL_SIZE", default_value_t = 100)]
+    #[clap(long, env = "PCAP_CHANNEL_SIZE", default_value_t = 100000)]
     pcap_channel_size: usize,
 
     /// MPSC Channel Size for PCAP
-    #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 100)]
+    #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 100000)]
     zmq_channel_size: usize,
 
     /// DPDK enable
@@ -575,7 +575,7 @@ struct Args {
     image_buffer_size: usize,
 
     /// Video buffer size - Size of the buffer for the video to gstreamer
-    #[clap(long, env = "VIDEO_BUFFER_SIZE", default_value_t = 1000)]
+    #[clap(long, env = "VIDEO_BUFFER_SIZE", default_value_t = 100000)]
     video_buffer_size: usize,
 }
 
@@ -793,7 +793,15 @@ async fn rscap(running: Arc<AtomicBool>) {
                             };
                             last_iat = timestamp_ms;
 
-                            ptx.send((packet_data, timestamp_ms, iat)).await.unwrap();
+                            match ptx.send((packet_data, timestamp_ms, iat)).await {
+                                Ok(_) => {
+                                    // Successfully sent, continue or perform other operations
+                                }
+                                Err(e) => {
+                                    eprintln!("Error sending packet: {}", e);
+                                    break; // Exit the loop if sending fails
+                                }
+                            }
 
                             if !running_capture.load(Ordering::SeqCst) {
                                 break;
