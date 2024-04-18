@@ -1046,30 +1046,44 @@ async fn main() {
         error!("Failed to bind ZeroMQ socket: {:?}", e);
         return;
     }
+    // Set a timeout duration for polling
+    let timeout = Duration::from_millis(10).as_millis() as i64;
     info!("ZeroMQ subscriber started on {}", endpoint);
     tokio::spawn(async move {
         loop {
-            match zmq_sub.recv_multipart(zmq::DONTWAIT) {
-                Ok(packet_msg) if !packet_msg.is_empty() => {
-                    // Send the received message to the channel
-                    if let Err(e) = tx.send(packet_msg) {
-                        error!("Failed to send message to channel: {:?}", e);
+            match zmq_sub.poll(zmq::POLLIN, timeout) {
+                Ok(num_events) if num_events > 0 => {
+                    match zmq_sub.recv_multipart(zmq::DONTWAIT) {
+                        Ok(packet_msg) if !packet_msg.is_empty() => {
+                            let data_vec = packet_msg
+                                .into_iter()
+                                .map(|d| d.to_vec())
+                                .collect::<Vec<_>>();
+
+                            // Write the data to the channel
+                            if let Err(err) = tx.send(data_vec) {
+                                error!("Error sending data to channel: {}", err);
+                            }
+                        }
+                        Ok(_) => {
+                            // No data available, continue the loop
+                            continue;
+                        }
+                        Err(e) => {
+                            error!("Error receiving data: {:?}", e);
+                            break; // or handle the error appropriately
+                        }
                     }
                 }
                 Ok(_) => {
-                    // No messages were received
-                    // Yield control to the Tokio runtime
-                    tokio::task::yield_now().await;
+                    // No events within the timeout, continue the loop
+                    continue;
                 }
                 Err(e) => {
-                    if e == zmq::Error::EAGAIN {
-                        // No messages available, yield control to the Tokio runtime
-                        tokio::task::yield_now().await;
-                    } else {
-                        error!("Failed to receive message: {:?}", e);
-                    }
+                    error!("Error polling socket: {:?}", e);
+                    break; // or handle the error appropriately
                 }
-            };
+            }
         }
     });
 

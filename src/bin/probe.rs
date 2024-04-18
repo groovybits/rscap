@@ -793,7 +793,15 @@ async fn rscap(running: Arc<AtomicBool>) {
                             };
                             last_iat = timestamp_ms;
 
-                            ptx.send((packet_data, timestamp_ms, iat)).await.unwrap();
+                            match ptx.send((packet_data, timestamp_ms, iat)).await {
+                                Ok(_) => {
+                                    // Successfully sent, continue or perform other operations
+                                }
+                                Err(e) => {
+                                    eprintln!("Error sending packet: {}", e);
+                                    break; // Exit the loop if sending fails
+                                }
+                            }
 
                             if !running_capture.load(Ordering::SeqCst) {
                                 break;
