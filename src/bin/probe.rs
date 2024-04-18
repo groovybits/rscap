@@ -482,11 +482,11 @@ struct Args {
     pcap_stats: bool,
 
     ///  MPSC Channel Size for ZeroMQ
-    #[clap(long, env = "PCAP_CHANNEL_SIZE", default_value_t = 100)]
+    #[clap(long, env = "PCAP_CHANNEL_SIZE", default_value_t = 100000)]
     pcap_channel_size: usize,
 
     /// MPSC Channel Size for PCAP
-    #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 100)]
+    #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 100000)]
     zmq_channel_size: usize,
 
     /// DPDK enable
@@ -575,7 +575,7 @@ struct Args {
     image_buffer_size: usize,
 
     /// Video buffer size - Size of the buffer for the video to gstreamer
-    #[clap(long, env = "VIDEO_BUFFER_SIZE", default_value_t = 1000)]
+    #[clap(long, env = "VIDEO_BUFFER_SIZE", default_value_t = 100000)]
     video_buffer_size: usize,
 }
 
