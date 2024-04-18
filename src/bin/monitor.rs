@@ -624,8 +624,21 @@ async fn main() {
             let mut last_kafka_send_time = Instant::now();
             let mut output_file_counter = 0;
             let mut log_messages = Vec::new();
+            let mut dot_last_sent_ts = Instant::now();
 
             while let Ok(packet_msg) = rx.recv() {
+                // check for packet count
+                if packet_count > 0 && counter >= packet_count {
+                    break;
+                }
+
+                if !no_progress && dot_last_sent_ts.elapsed().as_secs() > 1 {
+                    dot_last_sent_ts = Instant::now();
+                    print!(".");
+                    // flush stdout
+                    std::io::stdout().flush().unwrap();
+                }
+
                 // get first message
                 let header_msg = packet_msg[0].clone();
 
@@ -1035,21 +1048,8 @@ async fn main() {
     }
     info!("ZeroMQ subscriber started on {}", endpoint);
     tokio::spawn(async move {
-        let mut dot_last_sent_ts = Instant::now();
-
         loop {
-            // check for packet count
-            if packet_count > 0 && counter >= packet_count {
-                break;
-            }
-
-            if !no_progress && dot_last_sent_ts.elapsed().as_secs() > 1 {
-                dot_last_sent_ts = Instant::now();
-                print!(".");
-                // flush stdout
-                std::io::stdout().flush().unwrap();
-            }
-            match zmq_sub.recv_multipart(0) {
+            match zmq_sub.recv_multipart(zmq::DONTWAIT) {
                 Ok(packet_msg) if !packet_msg.is_empty() => {
                     // Send the received message to the channel
                     if let Err(e) = tx.send(packet_msg) {
@@ -1058,14 +1058,16 @@ async fn main() {
                 }
                 Ok(_) => {
                     // No messages were received
-                    // sleep for a short time to avoid busy waiting
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                    continue;
+                    // Yield control to the Tokio runtime
+                    tokio::task::yield_now().await;
                 }
                 Err(e) => {
-                    error!("Failed to receive message: {:?}", e);
-                    std::thread::sleep(std::time::Duration::from_millis(1));
-                    continue; // or handle error as needed
+                    if e == zmq::Error::EAGAIN {
+                        // No messages available, yield control to the Tokio runtime
+                        tokio::task::yield_now().await;
+                    } else {
+                        error!("Failed to receive message: {:?}", e);
+                    }
                 }
             };
         }
