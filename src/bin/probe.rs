@@ -30,12 +30,9 @@ use rscap::stream_data::{
 };
 #[cfg(feature = "gst")]
 use rscap::stream_data::{initialize_pipeline, process_video_packets, pull_images};
-use rscap::system_stats::get_system_stats;
 use rscap::watch_file::watch_daemon;
 use rscap::{current_unix_timestamp_ms, hexdump};
 use std::sync::mpsc::channel;
-//#[cfg(feature = "gst")]
-//use std::sync::Mutex;
 use std::thread;
 use std::{
     error::Error as StdError,
@@ -48,6 +45,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{self};
 use zmq::PUSH;
 // Include the generated paths for the Cap'n Proto schema
@@ -377,7 +375,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.49",
+    version = "0.5.50",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {
@@ -690,6 +688,8 @@ async fn rscap(running: Arc<AtomicBool>) {
 
     let (ptx, mut prx) = mpsc::channel::<(Arc<Vec<u8>>, u64, u64)>(pcap_channel_size);
 
+    let source_ip_clone = source_ip.clone();
+
     // Spawn a new thread for packet capture
     let capture_task = if cfg!(feature = "dpdk_enabled") && args.dpdk {
         // DPDK is enabled
@@ -758,7 +758,7 @@ async fn rscap(running: Arc<AtomicBool>) {
                 buffer_size as i64,
                 &source_protocol,
                 source_port,
-                &source_ip,
+                &source_ip_clone,
             )
             .expect("Failed to initialize pcap");
 
@@ -1014,7 +1014,6 @@ async fn rscap(running: Arc<AtomicBool>) {
     let mut packets_captured = 0;
 
     // Start packet capture
-    let mut batch = Vec::new();
     let mut video_pid: Option<u16> = Some(0xFFFF);
     let mut video_codec: Option<Codec> = Some(Codec::NONE);
     let mut current_video_frame = Vec::<StreamData>::new();
@@ -1023,275 +1022,309 @@ async fn rscap(running: Arc<AtomicBool>) {
         packet: Vec::new(),
     };
 
-    // OS and Network stats
-    let system_stats = get_system_stats();
-
     let mut video_stream_type = 0;
 
-    info!("RsCap: Starting up with Probe ID: {}", args.probe_id);
+    let (chunk_sender, mut chunk_receiver) = tokio::sync::mpsc::channel::<Vec<StreamData>>(1000);
+    let probe_id_clone = args.probe_id.clone();
+    let source_ip_clone_batch = source_ip.clone();
 
-    info!("Startup System OS Stats:\n{:?}", system_stats);
+    let tx_clone = tx.clone();
+    let tx_clone2 = tx.clone();
 
-    let mut dot_last_sent_ts = Instant::now();
-    while let Some((packet, timestamp, iat)) = prx.recv().await {
-        if packet_count > 0 && packets_captured > packet_count {
-            println!(
-                "\nPacket count limit reached {}, signaling termination...",
-                packet_count
-            );
-            running.store(false, Ordering::SeqCst);
-            break;
-        }
-        packets_captured += 1;
+    // Create a separate thread for processing chunks
+    tokio::spawn(async move {
+        let mut batch = Vec::new();
+        let batch_size = zmq_batch_size.clone(); // Adjust the batch size as needed
+        let batch_timeout = tokio::time::Duration::from_millis(1); // Adjust the batch timeout as needed
+        let mut last_batch_time = tokio::time::Instant::now();
 
-        if !no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
-            dot_last_sent_ts = Instant::now();
-            print!(".");
-            // Flush stdout to ensure the progress dots are printed
-            io::stdout().flush().unwrap();
-        }
+        while let Some(stream_data_chunk) = chunk_receiver.recv().await {
+            for mut stream_data in stream_data_chunk {
+                // Process the chunk
+                if debug_on {
+                    hexdump(
+                        &stream_data.packet,
+                        stream_data.packet_start,
+                        stream_data.packet_len,
+                    );
+                }
 
-        // Check if chunk is MPEG-TS or SMPTE 2110
-        let chunk_type = is_mpegts_or_smpte2110(&packet[payload_offset..]);
-        if chunk_type != 1 {
-            if chunk_type == 0 {
-                hexdump(&packet, 0, packet.len());
-                error!("Not MPEG-TS or SMPTE 2110");
-            }
-            is_mpegts = false;
-        }
+                // Extract the necessary slice for PID extraction and parsing
+                let packet_chunk = &stream_data.packet
+                    [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
 
-        let chunks = if is_mpegts {
-            process_mpegts_packet(
-                payload_offset,
-                packet,
-                packet_size,
-                start_time,
-                timestamp,
-                iat,
-                args.source_ip.clone(),
-                args.source_port,
-                args.probe_id.clone(),
-            )
-        } else {
-            process_smpte2110_packet(
-                payload_offset,
-                packet,
-                packet_size,
-                start_time,
-                args.debug_smpte2110,
-                timestamp,
-                iat,
-                args.source_ip.clone(),
-                args.source_port,
-                args.probe_id.clone(),
-            )
-        };
+                let mut pid: u16 = 0xFFFF;
 
-        // Process each chunk
-        for mut stream_data in chunks {
-            if debug_on {
-                hexdump(
-                    &stream_data.packet,
-                    stream_data.packet_start,
-                    stream_data.packet_len,
-                );
-            }
-
-            // Extract the necessary slice for PID extraction and parsing
-            let packet_chunk = &stream_data.packet
-                [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
-
-            let mut pid: u16 = 0xFFFF;
-
-            if is_mpegts {
-                pid = stream_data.pid;
-                // Handle PAT and PMT packets
-                match pid {
-                    PAT_PID => {
-                        debug!("ProcessPacket: PAT packet detected with PID {}", pid);
-                        pmt_info = parse_and_store_pat(&packet_chunk);
-                        // Print TR 101 290 errors
-                        if show_tr101290 {
-                            info!("STATUS::TR101290:ERRORS: {}", tr101290_errors);
+                if is_mpegts {
+                    pid = stream_data.pid;
+                    // Handle PAT and PMT packets
+                    match pid {
+                        PAT_PID => {
+                            debug!("ProcessPacket: PAT packet detected with PID {}", pid);
+                            pmt_info = parse_and_store_pat(&packet_chunk);
+                            // Print TR 101 290 errors
+                            if show_tr101290 {
+                                info!("STATUS::TR101290:ERRORS: {}", tr101290_errors);
+                            }
                         }
-                    }
-                    _ => {
-                        // Check if this is a PMT packet
-                        if pid == pmt_info.pid {
-                            debug!("ProcessPacket: PMT packet detected with PID {}", pid);
-                            // Update PID_MAP with new stream types
-                            update_pid_map(
-                                &packet_chunk,
-                                &pmt_info.packet,
-                                timestamp,
-                                iat,
-                                args.source_ip.clone(),
-                                args.source_port,
-                                args.probe_id.clone(),
-                            );
-                            // Identify the video PID (if not already identified)
-                            if let Some((new_pid, new_codec)) = identify_video_pid(&packet_chunk) {
-                                if video_pid.map_or(true, |vp| vp != new_pid) {
-                                    video_pid = Some(new_pid);
-                                    let old_stream_type = video_stream_type;
-                                    video_stream_type = stream_data.stream_type_number;
-                                    info!(
-                                        "STATUS::VIDEO_PID:CHANGE: to {}/{}/{} from {}/{}/{}",
-                                        new_pid,
-                                        new_codec.clone(),
-                                        video_stream_type,
-                                        video_pid.unwrap(),
-                                        video_codec.unwrap(),
-                                        old_stream_type
-                                    );
-                                    video_codec = Some(new_codec.clone());
-                                    // Reset video frame as the video stream has changed
-                                    current_video_frame.clear();
-                                } else if video_codec != Some(new_codec.clone()) {
-                                    info!(
-                                        "STATUS::VIDEO_CODEC:CHANGE: to {} from {}",
-                                        new_codec,
-                                        video_codec.unwrap()
-                                    );
-                                    video_codec = Some(new_codec);
-                                    // Reset video frame as the codec has changed
-                                    current_video_frame.clear();
+                        _ => {
+                            // Check if this is a PMT packet
+                            if pid == pmt_info.pid {
+                                debug!("ProcessPacket: PMT packet detected with PID {}", pid);
+                                // Update PID_MAP with new stream types
+                                update_pid_map(
+                                    &packet_chunk,
+                                    &pmt_info.packet,
+                                    stream_data.capture_time,
+                                    stream_data.capture_iat,
+                                    source_ip_clone_batch.clone(),
+                                    args.source_port,
+                                    probe_id_clone.clone(),
+                                );
+                                // Identify the video PID (if not already identified)
+                                if let Some((new_pid, new_codec)) =
+                                    identify_video_pid(&packet_chunk)
+                                {
+                                    if video_pid.map_or(true, |vp| vp != new_pid) {
+                                        video_pid = Some(new_pid);
+                                        let old_stream_type = video_stream_type;
+                                        video_stream_type = stream_data.stream_type_number;
+                                        info!(
+                                            "STATUS::VIDEO_PID:CHANGE: to {}/{}/{} from {}/{}/{}",
+                                            new_pid,
+                                            new_codec.clone(),
+                                            video_stream_type,
+                                            video_pid.unwrap(),
+                                            video_codec.unwrap(),
+                                            old_stream_type
+                                        );
+                                        video_codec = Some(new_codec.clone());
+                                        // Reset video frame as the video stream has changed
+                                        current_video_frame.clear();
+                                    } else if video_codec != Some(new_codec.clone()) {
+                                        info!(
+                                            "STATUS::VIDEO_CODEC:CHANGE: to {} from {}",
+                                            new_codec,
+                                            video_codec.unwrap()
+                                        );
+                                        video_codec = Some(new_codec);
+                                        // Reset video frame as the codec has changed
+                                        current_video_frame.clear();
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            if video_pid < Some(0x1FFF)
-                && video_pid > Some(0)
-                && stream_data.pid == video_pid.unwrap()
-                && video_stream_type != stream_data.stream_type_number
-            {
-                let old_stream_type = video_stream_type;
-                video_stream_type = stream_data.stream_type_number;
-                info!(
-                    "STATUS::VIDEO_STREAM:FOUND: to {}/{} from {}/{}",
-                    video_pid.unwrap(),
-                    video_stream_type,
-                    video_pid.unwrap(),
-                    old_stream_type
+                if video_pid < Some(0x1FFF)
+                    && video_pid > Some(0)
+                    && stream_data.pid == video_pid.unwrap()
+                    && video_stream_type != stream_data.stream_type_number
+                {
+                    let old_stream_type = video_stream_type;
+                    video_stream_type = stream_data.stream_type_number;
+                    info!(
+                        "STATUS::VIDEO_STREAM:FOUND: to {}/{} from {}/{}",
+                        video_pid.unwrap(),
+                        video_stream_type,
+                        video_pid.unwrap(),
+                        old_stream_type
+                    );
+                }
+
+                // Check for TR 101 290 errors
+                process_packet(
+                    &mut stream_data,
+                    &mut tr101290_errors,
+                    is_mpegts,
+                    pmt_info.pid,
+                    probe_id_clone.clone(),
                 );
-            }
 
-            // Check for TR 101 290 errors
-            process_packet(
-                &mut stream_data,
-                &mut tr101290_errors,
-                is_mpegts,
-                pmt_info.pid,
-                args.probe_id.clone(),
-            );
-
-            // If MpegTS, Check if this is a video PID and if so parse NALS and decode video
-            if is_mpegts {
-                // Process video packets
-                #[cfg(feature = "gst")]
-                if args.extract_images {
+                // If MpegTS, Check if this is a video PID and if so parse NALS and decode video
+                if is_mpegts {
+                    // Process video packets
                     #[cfg(feature = "gst")]
-                    if video_stream_type > 0 {
-                        let video_packet = Arc::new(
-                            stream_data.packet[stream_data.packet_start
-                                ..stream_data.packet_start + stream_data.packet_len]
-                                .to_vec(),
-                        );
+                    if args.extract_images {
+                        #[cfg(feature = "gst")]
+                        if video_stream_type > 0 {
+                            let video_packet = Arc::new(
+                                stream_data.packet[stream_data.packet_start
+                                    ..stream_data.packet_start + stream_data.packet_len]
+                                    .to_vec(),
+                            );
 
-                        // Send the video packet to the processing task
-                        if let Err(_) = video_packet_sender
-                            .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
-                        {
-                            // If the channel is full, drop the packet
-                            log::warn!("Video packet channel is full. Dropping packet.");
+                            // Send the video packet to the processing task
+                            if let Err(_) = video_packet_sender
+                                .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
+                            {
+                                // If the channel is full, drop the packet
+                                log::warn!("Video packet channel is full. Dropping packet.");
+                            }
+                        }
+
+                        // Receive and process images
+                        #[cfg(feature = "gst")]
+                        if let Ok((image_data, pts)) = image_receiver.try_recv() {
+                            // attach image to the stream_data.packet arc, clearing the current arc value
+                            stream_data.packet = Arc::new(image_data.clone());
+                            stream_data.has_image = image_data.len() as u8;
+                            stream_data.packet_start = 0;
+                            stream_data.packet_len = image_data.len();
+                            stream_data.image_pts = pts;
+
+                            // Process the received image data
+                            debug!(
+                                "Probe: Received a jpeg image with size: {} bytes",
+                                image_data.len()
+                            );
+                        } else {
+                            // zero out the packet data
+                            stream_data.packet_start = 0;
+                            stream_data.packet_len = 0;
+                            stream_data.packet = Arc::new(Vec::new());
                         }
                     }
-
-                    // Receive and process images
-                    #[cfg(feature = "gst")]
-                    if let Ok((image_data, pts)) = image_receiver.try_recv() {
-                        // attach image to the stream_data.packet arc, clearing the current arc value
-                        stream_data.packet = Arc::new(image_data.clone());
-                        stream_data.has_image = image_data.len() as u8;
-                        stream_data.packet_start = 0;
-                        stream_data.packet_len = image_data.len();
-                        stream_data.image_pts = pts;
-
-                        // Process the received image data
-                        debug!(
-                            "Probe: Received a jpeg image with size: {} bytes",
-                            image_data.len()
-                        );
-                    } else {
-                        // zero out the packet data
-                        stream_data.packet_start = 0;
-                        stream_data.packet_len = 0;
-                        stream_data.packet = Arc::new(Vec::new());
-                    }
-                }
-            } else {
-                // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
-            }
-
-            // Watch file
-            if args.watch_file != "" {
-                if let Ok(line) = watch_file_receiver.try_recv() {
-                    info!("WatchFile Received line: {}", line);
-                    // attach to stream_data.log_message
-                    stream_data.log_message = line.clone();
-                }
-            }
-
-            if !args.extract_images && !args.send_raw_stream && stream_data.packet_len > 0 {
-                // release the packet Arc so it can be reused
-                stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
-                stream_data.packet_len = 0;
-                stream_data.packet_start = 0;
-                if !args.send_null_packets {
-                    if pid == 0x1FFF && is_mpegts {
-                        continue;
-                    }
-                }
-            } else if !args.extract_images && args.send_raw_stream {
-                // Skip null packets
-                if !args.send_null_packets {
-                    if pid == 0x1FFF && is_mpegts {
-                        // clear the Arc so it can be reused
-                        stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
-                        continue;
-                    }
-                }
-            }
-            batch.push(stream_data);
-
-            //info!("STATUS::PACKETS:CAPTURED: {}", packets_captured);
-            // Check if batch is full
-            if !args.no_zmq_thread {
-                if batch.len() >= zmq_batch_size {
-                    //info!("STATUS::BATCH:SEND: {}", batch.len());
-                    // Send the batch to the channel
-                    if tx.try_send(batch).is_err() {
-                        // If the channel is full, drop the batch
-                        info!("ZeroMQ channel is full. Dropping batch.");
-                    }
-                    // release the packet Arc so it can be reused
-                    batch = Vec::new(); // Create a new Vec for the next batch
                 } else {
-                    //info!("STATUS::BATCH:WAIT: {}", batch.len());
+                    // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
                 }
-            } else {
-                // go through each stream_data and release the packet Arc so it can be reused
-                for stream_data in batch.iter_mut() {
+
+                // Watch file
+                if args.watch_file != "" {
+                    if let Ok(line) = watch_file_receiver.try_recv() {
+                        info!("WatchFile Received line: {}", line);
+                        // attach to stream_data.log_message
+                        stream_data.log_message = line.clone();
+                    }
+                }
+
+                if !args.extract_images && !args.send_raw_stream && stream_data.packet_len > 0 {
+                    // release the packet Arc so it can be reused
                     stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
+                    stream_data.packet_len = 0;
+                    stream_data.packet_start = 0;
+                    if !args.send_null_packets {
+                        if pid == 0x1FFF && is_mpegts {
+                            continue;
+                        }
+                    }
+                } else if !args.extract_images && args.send_raw_stream {
+                    // Skip null packets
+                    if !args.send_null_packets {
+                        if pid == 0x1FFF && is_mpegts {
+                            // clear the Arc so it can be reused
+                            stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
+                            continue;
+                        }
+                    }
                 }
-                // disgard the batch, we don't send it anywhere
-                batch.clear();
-                batch = Vec::new(); // Create a new Vec for the next batch
-                                    //info!("STATUS::BATCH:DISCARD: {}", batch.len());
+
+                // Add the processed stream_data to the batch
+                batch.push(stream_data);
+
+                // Check if the batch size is reached or the batch timeout has elapsed
+                if batch.len() >= batch_size || last_batch_time.elapsed() >= batch_timeout {
+                    // Send the batch to the ZMQ thread
+                    if tx_clone.try_send(batch).is_err() {
+                        // If the channel is full, drop the batch
+                        info!("Batch channel is full. Dropping batch.");
+                    }
+                    batch = Vec::new(); // Reset the batch
+                    last_batch_time = tokio::time::Instant::now(); // Reset the batch timeout
+                }
+            }
+        }
+
+        // Send any remaining items in the batch
+        if !batch.is_empty() {
+            if tx.try_send(batch).is_err() {
+                info!("Batch channel is full. Dropping batch.");
+            }
+        }
+    });
+
+    info!(
+        "RsCap: Starting up with Probe ID: {}",
+        args.probe_id.clone()
+    );
+
+    let mut dot_last_sent_ts = Instant::now();
+    loop {
+        match prx.try_recv() {
+            Ok((packet, timestamp, iat)) => {
+                if packet_count > 0 && packets_captured > packet_count {
+                    println!(
+                        "\nPacket count limit reached {}, signaling termination...",
+                        packet_count
+                    );
+                    running.store(false, Ordering::SeqCst);
+                    break;
+                }
+                packets_captured += 1;
+
+                if !no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
+                    dot_last_sent_ts = Instant::now();
+                    print!(".");
+                    // Flush stdout to ensure the progress dots are printed
+                    io::stdout().flush().unwrap();
+                }
+
+                // Check if chunk is MPEG-TS or SMPTE 2110
+                let chunk_type = is_mpegts_or_smpte2110(&packet[payload_offset..]);
+                if chunk_type != 1 {
+                    if chunk_type == 0 {
+                        hexdump(&packet, 0, packet.len());
+                        error!("Not MPEG-TS or SMPTE 2110");
+                    }
+                    is_mpegts = false;
+                }
+
+                let chunks = if is_mpegts {
+                    process_mpegts_packet(
+                        payload_offset,
+                        packet,
+                        packet_size,
+                        start_time,
+                        timestamp,
+                        iat,
+                        source_ip.clone(),
+                        args.source_port,
+                        args.probe_id.clone(),
+                    )
+                } else {
+                    process_smpte2110_packet(
+                        payload_offset,
+                        packet,
+                        packet_size,
+                        start_time,
+                        args.debug_smpte2110,
+                        timestamp,
+                        iat,
+                        source_ip.clone(),
+                        args.source_port,
+                        args.probe_id.clone(),
+                    )
+                };
+
+                // Send each chunk to the processing thread
+                if chunk_sender.try_send(chunks).is_err() {
+                    // If the channel is full, drop the chunk
+                    info!("Chunk channel is full. Dropping chunk.");
+                }
+            }
+            Err(TryRecvError::Empty) => {
+                // No packets received, print 'X' to indicate
+                print!("X");
+                // Flush stdout to ensure the 'X' is printed
+                io::stdout().flush().unwrap();
+                // Sleep for a short duration to avoid high CPU usage
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            Err(TryRecvError::Disconnected) => {
+                // The channel has been disconnected, break the loop
+                println!("\nChannel disconnected, terminating...");
+                break;
             }
         }
     }
@@ -1310,8 +1343,8 @@ async fn rscap(running: Arc<AtomicBool>) {
     println!("\nWaiting for threads to finish...");
 
     // Send ZMQ stop signal
-    let _ = tx.try_send(Vec::new());
-    drop(tx);
+    let _ = tx_clone2.try_send(Vec::new());
+    drop(tx_clone2);
 
     // Wait for the zmq_thread to finish
     capture_task.await.unwrap();

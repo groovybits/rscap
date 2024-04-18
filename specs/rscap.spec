@@ -1,5 +1,5 @@
 Name:           rscap
-Version:        0.5.49.1
+Version:        0.5.50
 Release:        1%{?dist}
 Summary:        RsCap and GStreamer with essential dependencies
 License:        MIT
