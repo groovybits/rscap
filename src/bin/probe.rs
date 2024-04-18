@@ -1310,7 +1310,7 @@ async fn rscap(running: Arc<AtomicBool>) {
     println!("\nWaiting for threads to finish...");
 
     // Send ZMQ stop signal
-    tx.send(Vec::new()).await.unwrap();
+    let _ = tx.try_send(Vec::new());
     drop(tx);
 
     // Wait for the zmq_thread to finish
