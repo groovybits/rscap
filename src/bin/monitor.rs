@@ -16,7 +16,7 @@ use async_zmq;
 use base64::{engine::general_purpose, Engine as _};
 use clap::Parser;
 use env_logger::{Builder, Env};
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use rdkafka::admin::{AdminClient, AdminOptions, NewTopic};
 use rdkafka::client::DefaultClientContext;
 use rdkafka::config::ClientConfig;
@@ -25,11 +25,9 @@ use std::fs::File;
 use std::io::Write;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration as TimeDuration;
 use std::time::Instant;
 use tokio;
 use tokio::time::Duration;
-use zmq::PULL;
 // Include the generated paths for the Cap'n Proto schema
 use capnp;
 use rscap::hexdump;
@@ -439,7 +437,7 @@ async fn produce_message(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.48",
+    version = "0.5.49",
     about = "RsCap Monitor for ZeroMQ input of MPEG-TS and SMPTE 2110 streams from remote probe."
 )]
 struct Args {
@@ -515,6 +513,10 @@ struct Args {
     /// Loglevel
     #[clap(long, env = "LOGLEVEL", default_value = "info")]
     loglevel: String,
+
+    /// Buffer Count
+    #[clap(long, env = "BUFFER_COUNT", default_value_t = 1000)]
+    buffer_count: usize,
 }
 
 #[tokio::main]
@@ -605,7 +607,7 @@ async fn main() {
     }
 
     let (tx, rx): (mpsc::SyncSender<Vec<Vec<u8>>>, mpsc::Receiver<Vec<Vec<u8>>>) =
-        mpsc::sync_channel(1000);
+        mpsc::sync_channel(args.buffer_count);
 
     let kafka_broker_clone = kafka_broker.clone();
     let kafka_topic_clone = kafka_topic.clone();
@@ -1025,14 +1027,14 @@ async fn main() {
     });
 
     // Spawn a separate thread to handle receiving messages from ZeroMQ
-    let context = zmq::Context::new();
+    let context = async_zmq::Context::new();
     let zmq_sub = context.socket(zmq::PULL).unwrap();
     if let Err(e) = zmq_sub.bind(&endpoint) {
         error!("Failed to bind ZeroMQ socket: {:?}", e);
         return;
     }
     info!("ZeroMQ subscriber started on {}", endpoint);
-    let handle_receiving = thread::spawn(move || {
+    tokio::spawn(async move {
         let mut dot_last_sent_ts = Instant::now();
 
         loop {
@@ -1068,9 +1070,6 @@ async fn main() {
             };
         }
     });
-
-    // Wait for the receiving thread to finish
-    handle_receiving.join().unwrap();
 
     // Wait for the deserialization and Kafka sending thread to finish
     handle_deserialization.join().unwrap();
