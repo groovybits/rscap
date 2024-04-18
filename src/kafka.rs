@@ -395,7 +395,14 @@ pub async fn send(
         base64_image = general_purpose::STANDARD.encode(&stream_data.packet.as_ref());
     }
 
-    let probe_id = stream_data.probe_id.clone();
+    let mut probe_id = stream_data.probe_id.clone();
+    if probe_id.is_empty() {
+        // construct stream.source_ip and stream.source_port with stream.host
+        probe_id = format!(
+            "{}:{}:{}",
+            stream_data.host_name, stream_data.source_ip, stream_data.source_port
+        );
+    }
     let pid = stream_data.pid;
     {
         let mut probe_data_map = PROBE_DATA.write().unwrap();
@@ -438,7 +445,7 @@ pub async fn send(
             let mut probe_data_map = PROBE_DATA.write().unwrap();
 
             // Process each probe's data
-            for (probe_id, probe_data) in probe_data_map.iter_mut() {
+            for (_probe_id, probe_data) in probe_data_map.iter_mut() {
                 let stream_groupings = &probe_data.stream_groupings;
                 let mut flattened_data = flatten_streams(&stream_groupings);
 
@@ -603,7 +610,7 @@ pub async fn send(
         if force_send_message
             || last_kafka_send_time.elapsed().as_millis() >= kafka_interval as u128
         {
-            for (probe_id, probe_data) in averaged_probe_data.iter() {
+            for (_probe_id, probe_data) in averaged_probe_data.iter() {
                 let json_data = serde_json::to_value(probe_data)
                     .expect("Failed to serialize probe data for Kafka");
 

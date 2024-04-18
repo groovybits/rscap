@@ -6,26 +6,20 @@ elif [ -f "/opt/rscap/bin/setup_env.sh" ]; then
     source /opt/rscap/bin/setup_env.sh
 fi
 
-if [ "$OUTPUT_FILE" = "" ]; then
-    OUTPUT_FILE=images/test.jpg
-else
-    OUTPUT_FILE=$OUTPUT_FILE
-fi
-
-if [ "$KAFKA_BROKER" = "" ]; then
-    KAFKA_BROKER=localhost:9092
-else
-    KAFKA_BROKER=$KAKFA_BROKER
-fi
-
-if [ "$RUST_BACKTRACE" = "" ]; then
-    BACKTRACE=full
-else
-    BACKTRACE=$RUST_BACKTRACE
-fi
-
 if [ -f ".env" ]; then
     source "./.env"
+fi
+
+if [ "$OUTPUT_FILE" == "" ]; then
+    OUTPUT_FILE=images/test.jpg
+fi
+
+if [ "$KAFKA_BROKER" == "" ]; then
+    KAFKA_BROKER=localhost:9092
+fi
+
+if [ "$RUST_BACKTRACE" == "" ]; then
+    BACKTRACE=full
 fi
 
 if [ "$BUILD" == "" ]; then
@@ -68,7 +62,6 @@ sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     --source-port $SOURCE_PORT \
     --source-device $SOURCE_DEVICE \
     --send-null-packets \
-    --target-port $TARGET_PORT \
     --kafka-broker $KAFKA_BROKER \
     --send-to-kafka \
     --output-file $OUTPUT_FILE \
