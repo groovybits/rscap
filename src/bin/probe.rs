@@ -375,7 +375,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.50",
+    version = "0.5.51",
     about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
 )]
 struct Args {
@@ -575,6 +575,10 @@ struct Args {
     /// Video buffer size - Size of the buffer for the video to gstreamer
     #[clap(long, env = "VIDEO_BUFFER_SIZE", default_value_t = 100000)]
     video_buffer_size: usize,
+
+    /// Chunk Buffer size = Size of the buffer for the chunked packet bundles to the main processing thread
+    #[clap(long, env = "CHUNK_BUFFER_SIZE", default_value_t = 100000)]
+    chunk_buffer_size: usize,
 }
 
 // MAIN Function
@@ -1024,7 +1028,8 @@ async fn rscap(running: Arc<AtomicBool>) {
 
     let mut video_stream_type = 0;
 
-    let (chunk_sender, mut chunk_receiver) = tokio::sync::mpsc::channel::<Vec<StreamData>>(1000);
+    let (chunk_sender, mut chunk_receiver) =
+        tokio::sync::mpsc::channel::<Vec<StreamData>>(args.chunk_buffer_size);
     let probe_id_clone = args.probe_id.clone();
     let source_ip_clone_batch = source_ip.clone();
 
@@ -1250,6 +1255,7 @@ async fn rscap(running: Arc<AtomicBool>) {
     );
 
     let mut dot_last_sent_ts = Instant::now();
+    let mut x_last_sent_ts = Instant::now();
     loop {
         match prx.try_recv() {
             Ok((packet, timestamp, iat)) => {
@@ -1310,20 +1316,27 @@ async fn rscap(running: Arc<AtomicBool>) {
                 // Send each chunk to the processing thread
                 if chunk_sender.try_send(chunks).is_err() {
                     // If the channel is full, drop the chunk
-                    info!("Chunk channel is full. Dropping chunk.");
+                    log::warn!("Chunk channel is full. Dropping chunk.");
                 }
             }
             Err(TryRecvError::Empty) => {
                 // No packets received, print 'X' to indicate
-                print!("X");
+                if !no_progress && x_last_sent_ts.elapsed().as_secs() >= 1 {
+                    x_last_sent_ts = Instant::now();
+                    print!("X");
+                    // Flush stdout to ensure the progress dots are printed
+                    io::stdout().flush().unwrap();
+                }
+
                 // Flush stdout to ensure the 'X' is printed
                 io::stdout().flush().unwrap();
                 // Sleep for a short duration to avoid high CPU usage
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
             Err(TryRecvError::Disconnected) => {
                 // The channel has been disconnected, break the loop
                 println!("\nChannel disconnected, terminating...");
+                running.store(false, Ordering::SeqCst);
                 break;
             }
         }
