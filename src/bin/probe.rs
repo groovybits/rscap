@@ -885,7 +885,7 @@ async fn rscap(running: Arc<AtomicBool>) {
         let mut dot_last_sent_ts = Instant::now();
 
         while running_zmq.load(Ordering::SeqCst) {
-            while let Some(mut batch) = rx.recv().await {
+            while let Ok(mut batch) = rx.try_recv() {
                 // Process and send messages
                 for stream_data in batch.iter() {
                     // Serialize StreamData to Cap'n Proto message
@@ -930,6 +930,8 @@ async fn rscap(running: Arc<AtomicBool>) {
                 }
                 batch.clear();
             }
+            // Sleep for a short time to avoid busy waiting
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
     });
 
@@ -1272,7 +1274,10 @@ async fn rscap(running: Arc<AtomicBool>) {
                 if batch.len() >= zmq_batch_size {
                     //info!("STATUS::BATCH:SEND: {}", batch.len());
                     // Send the batch to the channel
-                    tx.send(batch).await.unwrap();
+                    if tx.try_send(batch).is_err() {
+                        // If the channel is full, drop the batch
+                        info!("ZeroMQ channel is full. Dropping batch.");
+                    }
                     // release the packet Arc so it can be reused
                     batch = Vec::new(); // Create a new Vec for the next batch
                 } else {
