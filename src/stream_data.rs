@@ -455,7 +455,7 @@ impl Clone for StreamData {
             total_bits: self.total_bits,
             total_bits_sample: self.total_bits_sample,
             count: self.count,
-            packet: Arc::new(Vec::new()), // Initialize as empty with Arc
+            packet: Arc::clone(&self.packet),
             packet_start: 0,
             packet_len: 0,
             rtp_timestamp: self.rtp_timestamp,

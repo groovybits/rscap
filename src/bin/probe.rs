@@ -7,9 +7,6 @@
  *
  */
 
-use async_zmq;
-use capnp;
-use capnp::message::{Builder, HeapAllocator};
 #[cfg(feature = "dpdk_enabled")]
 use capsule::config::{load_config, DPDKConfig};
 #[cfg(feature = "dpdk_enabled")]
@@ -47,11 +44,9 @@ use std::{
 };
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{self};
-use zmq::PUSH;
-// Include the generated paths for the Cap'n Proto schema
-include!("../stream_data_capnp.rs");
 //use rscap::videodecoder::VideoProcessor;
 use env_logger::{Builder as LogBuilder, Env};
+use rscap::kafka::send;
 use rscap::stream_data::{process_mpegts_packet, process_smpte2110_packet};
 
 // Define your custom PacketCodec
@@ -69,83 +64,6 @@ impl PacketCodec for BoxCodec {
             );
         (packet.data.into(), timestamp)
     }
-}
-
-// convert stream data sructure to capnp message
-fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapAllocator>> {
-    let mut message = Builder::new_default();
-    {
-        let mut stream_data_msg = message.init_root::<stream_data_capnp::Builder>();
-
-        stream_data_msg.set_pid(stream_data.pid);
-        stream_data_msg.set_pmt_pid(stream_data.pmt_pid);
-        stream_data_msg.set_program_number(stream_data.program_number);
-
-        // Correct way to convert a String to ::capnp::text::Reader<'_>
-        stream_data_msg.set_stream_type(stream_data.stream_type.as_str().into());
-        stream_data_msg.set_stream_type_number(stream_data.stream_type_number);
-
-        stream_data_msg.set_continuity_counter(stream_data.continuity_counter);
-        stream_data_msg.set_timestamp(stream_data.timestamp);
-        stream_data_msg.set_bitrate(stream_data.bitrate);
-        stream_data_msg.set_bitrate_max(stream_data.bitrate_max);
-        stream_data_msg.set_bitrate_min(stream_data.bitrate_min);
-        stream_data_msg.set_bitrate_avg(stream_data.bitrate_avg);
-        stream_data_msg.set_iat(stream_data.iat);
-        stream_data_msg.set_iat_max(stream_data.iat_max);
-        stream_data_msg.set_iat_min(stream_data.iat_min);
-        stream_data_msg.set_iat_avg(stream_data.iat_avg);
-        stream_data_msg.set_error_count(stream_data.error_count);
-        stream_data_msg.set_current_error_count(stream_data.current_error_count);
-        stream_data_msg.set_last_arrival_time(stream_data.last_arrival_time);
-        stream_data_msg.set_capture_time(stream_data.capture_time);
-        stream_data_msg.set_capture_iat(stream_data.capture_iat);
-        stream_data_msg.set_last_sample_time(stream_data.last_sample_time);
-        stream_data_msg.set_start_time(stream_data.start_time);
-        stream_data_msg.set_total_bits(stream_data.total_bits);
-        stream_data_msg.set_count(stream_data.count);
-        stream_data_msg.set_rtp_timestamp(stream_data.rtp_timestamp);
-        stream_data_msg.set_rtp_payload_type(stream_data.rtp_payload_type);
-
-        stream_data_msg
-            .set_rtp_payload_type_name(stream_data.rtp_payload_type_name.as_str().into());
-
-        stream_data_msg.set_rtp_line_number(stream_data.rtp_line_number);
-        stream_data_msg.set_rtp_line_offset(stream_data.rtp_line_offset);
-        stream_data_msg.set_rtp_line_length(stream_data.rtp_line_length);
-        stream_data_msg.set_rtp_field_id(stream_data.rtp_field_id);
-        stream_data_msg.set_rtp_line_continuation(stream_data.rtp_line_continuation);
-        stream_data_msg.set_rtp_extended_sequence_number(stream_data.rtp_extended_sequence_number);
-        stream_data_msg.set_source_ip(stream_data.source_ip.as_str().into());
-        stream_data_msg.set_source_port(stream_data.source_port as u32);
-
-        // System stats fields
-        stream_data_msg.set_total_memory(stream_data.total_memory);
-        stream_data_msg.set_used_memory(stream_data.used_memory);
-        stream_data_msg.set_total_swap(stream_data.total_swap);
-        stream_data_msg.set_used_swap(stream_data.used_swap);
-        stream_data_msg.set_cpu_usage(stream_data.cpu_usage);
-        stream_data_msg.set_cpu_count(stream_data.cpu_count as u32);
-        stream_data_msg.set_core_count(stream_data.core_count as u32);
-        stream_data_msg.set_boot_time(stream_data.boot_time);
-        stream_data_msg.set_load_avg_one(stream_data.load_avg_one);
-        stream_data_msg.set_load_avg_five(stream_data.load_avg_five);
-        stream_data_msg.set_load_avg_fifteen(stream_data.load_avg_fifteen);
-        stream_data_msg.set_host_name(stream_data.host_name.as_str().into());
-        stream_data_msg.set_kernel_version(stream_data.kernel_version.as_str().into());
-        stream_data_msg.set_os_version(stream_data.os_version.as_str().into());
-        stream_data_msg.set_has_image(stream_data.has_image);
-        stream_data_msg.set_image_pts(stream_data.image_pts);
-        stream_data_msg.set_captions(stream_data.captions.as_str().into());
-        stream_data_msg.set_capture_iat_max(stream_data.capture_iat_max);
-        stream_data_msg.set_log_message(stream_data.log_message.as_str().into());
-        stream_data_msg.set_probe_id(stream_data.probe_id.as_str().into());
-        stream_data_msg.set_pid_map(stream_data.pid_map.as_str().into());
-        stream_data_msg.set_scte35(stream_data.scte35.as_str().into());
-        stream_data_msg.set_audio_loudness(stream_data.audio_loudness.as_str().into());
-    }
-
-    Ok(message)
 }
 
 // Define a custom error for when the target device is not found
@@ -451,10 +369,6 @@ struct Args {
     #[clap(long, env = "NO_PROGRESS", default_value_t = false)]
     no_progress: bool,
 
-    /// Turn off ZeroMQ send
-    #[clap(long, env = "NO_ZMQ", default_value_t = false)]
-    no_zmq: bool,
-
     /// Force smpte2110 mode
     #[clap(long, env = "SMPT2110", default_value_t = false)]
     smpte2110: bool,
@@ -484,8 +398,8 @@ struct Args {
     pcap_channel_size: usize,
 
     /// MPSC Channel Size for PCAP
-    #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 100000)]
-    zmq_channel_size: usize,
+    #[clap(long, env = "KAFKA_CHANNEL_SIZE", default_value_t = 100000)]
+    kafka_channel_size: usize,
 
     /// DPDK enable
     #[clap(long, env = "DPDK", default_value_t = false)]
@@ -499,17 +413,13 @@ struct Args {
     #[clap(long, env = "IPC_PATH")]
     ipc_path: Option<String>,
 
-    /// Output file for ZeroMQ
+    /// Output file for Kafka
     #[clap(long, env = "OUTPUT_FILE", default_value = "")]
     output_file: String,
 
-    /// Turn off the ZMQ thread
-    #[clap(long, env = "NO_ZMQ_THREAD", default_value_t = false)]
-    no_zmq_thread: bool,
-
     /// ZMQ Batch size
-    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 100)]
-    zmq_batch_size: usize,
+    #[clap(long, env = "KAFKA_BATCH_SIZE", default_value_t = 100)]
+    kafka_batch_size: usize,
 
     /// Debug SMPTE2110
     #[clap(long, env = "DEBUG_SMPTE2110", default_value_t = false)]
@@ -579,6 +489,34 @@ struct Args {
     /// Chunk Buffer size = Size of the buffer for the chunked packet bundles to the main processing thread
     #[clap(long, env = "CHUNK_BUFFER_SIZE", default_value_t = 100000)]
     chunk_buffer_size: usize,
+
+    /// Kafka Broker
+    #[clap(long, env = "KAFKA_BROKER", default_value = "localhost:9092")]
+    kafka_broker: String,
+
+    /// Kafka Topic
+    #[clap(long, env = "KAFKA_TOPIC", default_value = "rscap")]
+    kafka_topic: String,
+
+    /// Send to Kafka if true
+    #[clap(long, env = "SEND_TO_KAFKA", default_value_t = false)]
+    send_to_kafka: bool,
+
+    /// Kafka timeout to drop packets
+    #[clap(long, env = "KAFKA_TIMEOUT", default_value_t = 100)]
+    kafka_timeout: u64,
+
+    /// Kafka Key
+    #[clap(long, env = "KAFKA_KEY", default_value = "")]
+    kafka_key: String,
+
+    /// Kafka sending interval in milliseconds
+    #[clap(long, env = "KAFKA_INTERVAL", default_value_t = 1000)]
+    kafka_interval: u64,
+
+    /// Kafka Buffer Count
+    #[clap(long, env = "KAFKA_BUFFER_COUNT", default_value_t = 1000)]
+    kafka_buffer_count: usize,
 }
 
 // MAIN Function
@@ -601,7 +539,7 @@ async fn main() {
 // RsCap Function
 async fn rscap(running: Arc<AtomicBool>) {
     let running_capture = running.clone();
-    let running_zmq = running.clone();
+    let running_kafka = running.clone();
     #[cfg(feature = "gst")]
     let running_gstreamer_process = running.clone();
     #[cfg(feature = "gst")]
@@ -628,17 +566,16 @@ async fn rscap(running: Arc<AtomicBool>) {
     let use_wireless = args.use_wireless;
     let packet_count = args.packet_count;
     let no_progress = args.no_progress;
-    let no_zmq = args.no_zmq;
     let promiscuous = args.promiscuous;
     let show_tr101290 = args.show_tr101290;
     let mut buffer_size = args.buffer_size as i64;
     let mut immediate_mode = args.immediate_mode;
     let pcap_stats = args.pcap_stats;
     let mut pcap_channel_size = args.pcap_channel_size;
-    let mut zmq_channel_size = args.zmq_channel_size;
+    let mut kafka_channel_size = args.kafka_channel_size;
     #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
     let use_dpdk = args.dpdk;
-    let mut zmq_batch_size = args.zmq_batch_size;
+    let mut kafka_batch_size = args.kafka_batch_size;
 
     println!("Starting RsCap Probe...");
 
@@ -647,10 +584,10 @@ async fn rscap(running: Arc<AtomicBool>) {
         immediate_mode = true; // set immediate mode to true for smpte2110
         buffer_size = 10_000_000_000; // set pcap buffer size to 10GB for smpte2110
         pcap_channel_size = 1_000_000; // set pcap channel size for smpte2110
-        zmq_channel_size = 1_000_000; // set zmq channel size for smpte2110
+        kafka_channel_size = 1_000_000; // set kafka channel size for smpte2110
         packet_size = 1_220; // set packet size to 1220 (body) + 12 (header) for RTP
         batch_size = 3; // N x 1220 size packets for pcap read size
-        zmq_batch_size = 1080; // N x packets for how many packets to send to ZMQ per batch
+        kafka_batch_size = 1080; // N x packets for how many packets to send to Kafka per batch
     }
 
     if silent {
@@ -862,75 +799,39 @@ async fn rscap(running: Arc<AtomicBool>) {
         })
     };
 
-    // Setup channel for passing stream_data for ZMQ thread sending the stream data to monitor process
-    let (tx, mut rx) = mpsc::channel::<Vec<StreamData>>(zmq_channel_size);
+    // Setup channel for passing stream_data for Kafka thread sending the stream data to monitor process
+    let (ktx, mut krx) = mpsc::channel::<Vec<StreamData>>(kafka_channel_size);
 
-    // Spawn a new thread for ZeroMQ communication
-    let zmq_thread = tokio::spawn(async move {
-        let context = async_zmq::Context::new();
-        let publisher = context.socket(PUSH).unwrap();
-        // Determine the connection endpoint (IPC if provided, otherwise TCP)
-        let endpoint = if let Some(ipc_path_copy) = args.ipc_path {
-            format!("ipc://{}", ipc_path_copy)
-        } else {
-            format!("tcp://{}:{}", target_ip, target_port)
-        };
-        info!("ZeroMQ publisher startup {}", endpoint);
+    let ktx_clone0 = ktx.clone();
+    let ktx_clone1 = ktx.clone();
+    let ktx_clone2 = ktx.clone();
 
-        publisher.connect(&endpoint).unwrap();
-
-        // Initialize an Option<File> to None
-        let mut file = if !args.output_file.is_empty() {
-            Some(File::create(&args.output_file).unwrap())
-        } else {
-            None
-        };
-
+    let kafka_thread = tokio::spawn(async move {
+        info!("Kafka publisher startup {}", args.kafka_broker);
         let mut dot_last_sent_ts = Instant::now();
+        let mut output_file_counter: u32 = 0;
 
-        while running_zmq.load(Ordering::SeqCst) {
-            while let Ok(mut batch) = rx.try_recv() {
+        while running_kafka.load(Ordering::SeqCst) {
+            while let Ok(mut batch) = krx.try_recv() {
                 // Process and send messages
                 for stream_data in batch.iter() {
-                    // Serialize StreamData to Cap'n Proto message
-                    let capnp_message = stream_data_to_capnp(stream_data)
-                        .expect("Failed to convert to Cap'n Proto message");
-                    let mut serialized_data = Vec::new();
-                    capnp::serialize::write_message(&mut serialized_data, &capnp_message)
-                        .expect("Failed to serialize Cap'n Proto message");
-
-                    // Create ZeroMQ message from serialized Cap'n Proto data
-                    let capnp_msg = zmq::Message::from(serialized_data);
-
-                    // Send the Cap'n Proto message
-                    if !no_zmq {
-                        publisher.send(capnp_msg, zmq::SNDMORE).unwrap();
-                    }
-
                     let packet_slice = &stream_data.packet[stream_data.packet_start
                         ..stream_data.packet_start + stream_data.packet_len];
-                    let packet_msg = if stream_data.packet_len > 0
-                        && (args.send_raw_stream || args.extract_images)
-                    {
-                        // Write to file if output_file is provided
-                        if let Some(file) = file.as_mut() {
-                            if !no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
-                                dot_last_sent_ts = Instant::now();
-                                print!("*");
-                                // Flush stdout to ensure the progress dots are printed
-                                io::stdout().flush().unwrap();
-                            }
-                            file.write_all(&packet_slice).unwrap();
-                        }
-                        zmq::Message::from(packet_slice)
-                    } else {
-                        zmq::Message::from(Vec::new())
-                    };
 
-                    // Send the raw packet
-                    if !no_zmq {
-                        publisher.send(packet_msg, 0).unwrap();
-                    }
+                    // Call the `send` function with the necessary arguments
+                    send(
+                        stream_data.clone(),
+                        args.output_file.clone(),
+                        args.kafka_broker.clone(),
+                        args.kafka_topic.clone(),
+                        args.send_to_kafka,
+                        args.kafka_timeout,
+                        args.kafka_key.clone(),
+                        args.kafka_interval,
+                        args.no_progress,
+                        &mut output_file_counter,
+                    )
+                    .await;
                 }
                 batch.clear();
             }
@@ -1033,13 +934,10 @@ async fn rscap(running: Arc<AtomicBool>) {
     let probe_id_clone = args.probe_id.clone();
     let source_ip_clone_batch = source_ip.clone();
 
-    let tx_clone = tx.clone();
-    let tx_clone2 = tx.clone();
-
     // Create a separate thread for processing chunks
     tokio::spawn(async move {
         let mut batch = Vec::new();
-        let batch_size = zmq_batch_size.clone(); // Adjust the batch size as needed
+        let batch_size = kafka_batch_size.clone(); // Adjust the batch size as needed
         let batch_timeout = tokio::time::Duration::from_millis(1); // Adjust the batch timeout as needed
         let mut last_batch_time = tokio::time::Instant::now();
 
@@ -1230,8 +1128,8 @@ async fn rscap(running: Arc<AtomicBool>) {
 
                 // Check if the batch size is reached or the batch timeout has elapsed
                 if batch.len() >= batch_size || last_batch_time.elapsed() >= batch_timeout {
-                    // Send the batch to the ZMQ thread
-                    if tx_clone.try_send(batch).is_err() {
+                    // Send the batch to the Kafka thread
+                    if ktx_clone1.try_send(batch).is_err() {
                         // If the channel is full, drop the batch
                         info!("Batch channel is full. Dropping batch.");
                     }
@@ -1243,7 +1141,7 @@ async fn rscap(running: Arc<AtomicBool>) {
 
         // Send any remaining items in the batch
         if !batch.is_empty() {
-            if tx.try_send(batch).is_err() {
+            if ktx.try_send(batch).is_err() {
                 info!("Batch channel is full. Dropping batch.");
             }
         }
@@ -1355,13 +1253,13 @@ async fn rscap(running: Arc<AtomicBool>) {
 
     println!("\nWaiting for threads to finish...");
 
-    // Send ZMQ stop signal
-    let _ = tx_clone2.try_send(Vec::new());
-    drop(tx_clone2);
+    // Send Kafka stop signal
+    let _ = ktx_clone2.try_send(Vec::new());
+    drop(ktx_clone2);
 
-    // Wait for the zmq_thread to finish
+    // Wait for the kafka thread to finish
     capture_task.await.unwrap();
-    zmq_thread.await.unwrap();
+    kafka_thread.await.unwrap();
 
     println!("\nThreads finished, exiting rscap probe");
 }
