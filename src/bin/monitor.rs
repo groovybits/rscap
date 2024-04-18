@@ -23,6 +23,9 @@ use rdkafka::config::ClientConfig;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use std::fs::File;
 use std::io::Write;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration as TimeDuration;
 use std::time::Instant;
 use tokio;
 use tokio::time::Duration;
@@ -578,22 +581,8 @@ async fn main() {
     let env = Env::default().filter_or("RUST_LOG", loglevel.as_str()); // Default to `info` if `RUST_LOG` is not set
     Builder::from_env(env).init();
 
-    // Setup ZeroMQ subscriber
-    let context = async_zmq::Context::new();
-    let zmq_sub = context.socket(PULL).unwrap();
-    if let Err(e) = zmq_sub.bind(&endpoint) {
-        error!("Failed to connect ZeroMQ subscriber: {:?}", e);
-        return;
-    }
-    info!("ZeroMQ subscriber startup {}", endpoint);
-
     let mut total_bytes = 0;
     let mut counter = 0;
-
-    let mut dot_last_file_write = Instant::now();
-    let mut dot_last_sent_stats = Instant::now();
-    let mut dot_last_sent_ts = Instant::now();
-    let mut last_kafka_send_time = Instant::now();
 
     let mut kafka_conf = ClientConfig::new();
     kafka_conf.set("bootstrap.servers", &kafka_broker);
@@ -605,8 +594,7 @@ async fn main() {
         .create()
         .expect("Failed to create Kafka producer");
 
-    // OS and Network stats
-    let mut system_stats_json = if show_os_stats {
+    let system_stats_json = if show_os_stats {
         get_stats_as_json(StatsType::System).await
     } else {
         json!({})
@@ -616,25 +604,26 @@ async fn main() {
         info!("Startup System OS Stats:\n{:?}", system_stats_json);
     }
 
-    let mut output_file_counter = 0;
-    let mut log_messages = Vec::new();
+    let (tx, rx): (mpsc::SyncSender<Vec<Vec<u8>>>, mpsc::Receiver<Vec<Vec<u8>>>) =
+        mpsc::sync_channel(1000);
 
-    loop {
-        // check for packet count
-        if packet_count > 0 && counter >= packet_count {
-            break;
-        }
+    let kafka_broker_clone = kafka_broker.clone();
+    let kafka_topic_clone = kafka_topic.clone();
+    let kafka_timeout_clone = kafka_timeout;
+    let kafka_key_clone = kafka_key.clone();
+    let producer_clone = producer.clone();
 
-        if !no_progress && dot_last_sent_ts.elapsed().as_secs() > 1 {
-            dot_last_sent_ts = Instant::now();
-            print!(".");
-            // flush stdout
-            std::io::stdout().flush().unwrap();
-        }
+    // Spawn a separate thread to handle deserialization and Kafka sending
+    let handle_deserialization = thread::spawn(move || {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let mut dot_last_file_write = Instant::now();
+            let mut dot_last_sent_stats = Instant::now();
+            let mut last_kafka_send_time = Instant::now();
+            let mut output_file_counter = 0;
+            let mut log_messages = Vec::new();
 
-        // Attempt to receive a message, but do not block if unavailable
-        match zmq_sub.recv_multipart(0) {
-            Ok(packet_msg) if !packet_msg.is_empty() => {
+            while let Ok(packet_msg) = rx.recv() {
                 // get first message
                 let header_msg = packet_msg[0].clone();
 
@@ -642,7 +631,7 @@ async fn main() {
                     dot_last_sent_stats = Instant::now();
 
                     // OS and Network stats
-                    system_stats_json = get_stats_as_json(StatsType::System).await;
+                    let system_stats_json = get_stats_as_json(StatsType::System).await;
 
                     if show_os_stats && system_stats_json != json!({}) {
                         info!("System stats as JSON:\n{:?}", system_stats_json);
@@ -652,6 +641,7 @@ async fn main() {
                 // Deserialize the received message into StreamData
                 match capnp_to_stream_data(&header_msg) {
                     Ok(stream_data) => {
+                        // ... (processing code remains the same)
                         // print the structure of the packet
                         debug!("MONITOR::PACKET:RECEIVE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {}",
                                     counter + 1,
@@ -688,7 +678,6 @@ async fn main() {
                         }
 
                         let mut base64_image = String::new();
-
                         // Check if Decoding or if Demuxing
                         if args.recv_raw_stream {
                             // Initialize an Option<File> to None
@@ -726,7 +715,6 @@ async fn main() {
                                 } else {
                                     None
                                 };
-
                                 info!(
                                     "Monitor: [{}] Jpeg image received: {} size {} pts saved to {}",
                                     stream_data.probe_id,
@@ -1009,12 +997,12 @@ async fn main() {
                                     // Produce the message to Kafka
                                     let future = produce_message(
                                         ser_data,
-                                        kafka_broker.clone(),
-                                        kafka_topic.clone(), // You can also just use kafka_topic if you don't want separate topics
-                                        kafka_timeout,
-                                        kafka_key.clone(),
+                                        kafka_broker_clone.clone(),
+                                        kafka_topic_clone.clone(),
+                                        kafka_timeout_clone,
+                                        kafka_key_clone.clone(),
                                         current_unix_timestamp_ms().unwrap_or(0) as i64,
-                                        producer.clone(),
+                                        producer_clone.clone(),
                                         &admin_client,
                                     );
 
@@ -1025,7 +1013,6 @@ async fn main() {
                                 last_kafka_send_time = Instant::now();
                             }
                         }
-
                         counter += 1;
                     }
                     Err(e) => {
@@ -1034,19 +1021,59 @@ async fn main() {
                     }
                 }
             }
-            Ok(_) => {
-                // No messages were received
-                // sleep for a short time to avoid busy waiting
-                tokio::time::sleep(Duration::from_millis(1)).await;
-                continue;
-            }
-            Err(e) => {
-                error!("Failed to receive message: {:?}", e);
-                tokio::time::sleep(Duration::from_millis(1)).await;
-                continue; // or handle error as needed
-            }
-        };
+        });
+    });
+
+    // Spawn a separate thread to handle receiving messages from ZeroMQ
+    let context = zmq::Context::new();
+    let zmq_sub = context.socket(zmq::PULL).unwrap();
+    if let Err(e) = zmq_sub.bind(&endpoint) {
+        error!("Failed to bind ZeroMQ socket: {:?}", e);
+        return;
     }
+    info!("ZeroMQ subscriber started on {}", endpoint);
+    let handle_receiving = thread::spawn(move || {
+        let mut dot_last_sent_ts = Instant::now();
+
+        loop {
+            // check for packet count
+            if packet_count > 0 && counter >= packet_count {
+                break;
+            }
+
+            if !no_progress && dot_last_sent_ts.elapsed().as_secs() > 1 {
+                dot_last_sent_ts = Instant::now();
+                print!(".");
+                // flush stdout
+                std::io::stdout().flush().unwrap();
+            }
+            match zmq_sub.recv_multipart(0) {
+                Ok(packet_msg) if !packet_msg.is_empty() => {
+                    // Send the received message to the channel
+                    if let Err(e) = tx.send(packet_msg) {
+                        error!("Failed to send message to channel: {:?}", e);
+                    }
+                }
+                Ok(_) => {
+                    // No messages were received
+                    // sleep for a short time to avoid busy waiting
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    continue;
+                }
+                Err(e) => {
+                    error!("Failed to receive message: {:?}", e);
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    continue; // or handle error as needed
+                }
+            };
+        }
+    });
+
+    // Wait for the receiving thread to finish
+    handle_receiving.join().unwrap();
+
+    // Wait for the deserialization and Kafka sending thread to finish
+    handle_deserialization.join().unwrap();
 
     info!("Finished RsCap monitor");
 }
