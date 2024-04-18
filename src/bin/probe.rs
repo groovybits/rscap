@@ -343,14 +343,6 @@ struct Args {
     #[clap(long, env = "USE_WIRELESS", default_value_t = false)]
     use_wireless: bool,
 
-    /// Sets if Raw Stream should be sent
-    #[clap(long, env = "SEND_RAW_STREAM", default_value_t = false)]
-    send_raw_stream: bool,
-
-    /// Send Null Packets
-    #[clap(long, env = "SEND_NULL_PACKETS", default_value_t = false)]
-    send_null_packets: bool,
-
     /// number of packets to capture
     #[clap(long, env = "PACKET_COUNT", default_value_t = 0)]
     packet_count: u64,
@@ -946,10 +938,8 @@ async fn rscap(running: Arc<AtomicBool>) {
                 let packet_chunk = &stream_data.packet
                     [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
 
-                let mut pid: u16 = 0xFFFF;
-
                 if is_mpegts {
-                    pid = stream_data.pid;
+                    let pid = stream_data.pid;
                     // Handle PAT and PMT packets
                     match pid {
                         PAT_PID => {
@@ -1092,25 +1082,11 @@ async fn rscap(running: Arc<AtomicBool>) {
                     }
                 }
 
-                if !args.extract_images && !args.send_raw_stream && stream_data.packet_len > 0 {
+                if !args.extract_images && stream_data.packet_len > 0 {
                     // release the packet Arc so it can be reused
                     stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
                     stream_data.packet_len = 0;
                     stream_data.packet_start = 0;
-                    if !args.send_null_packets {
-                        if pid == 0x1FFF && is_mpegts {
-                            continue;
-                        }
-                    }
-                } else if !args.extract_images && args.send_raw_stream {
-                    // Skip null packets
-                    if !args.send_null_packets {
-                        if pid == 0x1FFF && is_mpegts {
-                            // clear the Arc so it can be reused
-                            stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
-                            continue;
-                        }
-                    }
                 }
 
                 // Add the processed stream_data to the batch

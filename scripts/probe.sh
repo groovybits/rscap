@@ -58,10 +58,9 @@ sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     RUST_BACKTRACE=$BACKTRACE \
     $VALGRIND $PROBE_BIN \
     --pcap-stats \
+    --source-device $SOURCE_DEVICE \
     --source-ip $SOURCE_IP \
     --source-port $SOURCE_PORT \
-    --source-device $SOURCE_DEVICE \
-    --send-null-packets \
     --kafka-broker $KAFKA_BROKER \
     --send-to-kafka \
     --output-file $OUTPUT_FILE \

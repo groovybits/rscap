@@ -456,8 +456,8 @@ impl Clone for StreamData {
             total_bits_sample: self.total_bits_sample,
             count: self.count,
             packet: Arc::clone(&self.packet),
-            packet_start: 0,
-            packet_len: 0,
+            packet_start: self.packet_start,
+            packet_len: self.packet_len,
             rtp_timestamp: self.rtp_timestamp,
             rtp_payload_type: self.rtp_payload_type,
             rtp_payload_type_name: self.rtp_payload_type_name.clone(),
@@ -546,9 +546,9 @@ impl StreamData {
             total_bits: 0,        // Initialize total bits
             total_bits_sample: 0, // Initialize total bits
             count: 0,             // Initialize count
-            packet: packet,
-            packet_start: packet_start,
-            packet_len: packet_len,
+            packet,
+            packet_start,
+            packet_len,
             // SMPTE 2110 fields
             rtp_timestamp: 0,
             rtp_payload_type: 0,
