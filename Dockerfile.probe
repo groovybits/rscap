@@ -1,21 +1,27 @@
 FROM rust:1.75.0 as builder
-RUN apt-get update && apt-get install -y cmake capnproto libpcap-dev
+RUN apt-get update && apt-get install -y cmake libpcap-dev
 
 WORKDIR /app
 COPY . .
-RUN cargo install --path .
+RUN scripts/install.sh
 
 FROM cgr.dev/chainguard/wolfi-base AS binary
-COPY --from=builder /usr/local/cargo/bin/monitor /usr/local/bin/monitor
+COPY --from=builder /opt/rscap /opt/rscap
 RUN apk update && apk add --no-cache --update-cache zlib libgcc libpcap libstdc++
 
 ARG SOURCE_DEVICE=eth0
-ARG TARGET_IP=127.0.0.1
-ARG TARGET_PORT=5556
+ARG SOURCE_IP=224.0.0.200
+ARG SOURCE_PORT=10001
+ARG KAFKA_KEY=
+ARG KAFKA_TOPIC=rscap
+ARG KAFKA_BROKER=localhost:9092
 
 ENV SOURCE_DEVICE=${SOURCE_DEVICE}
-ENV TARGET_IP=${TARGET_IP}
-ENV TARGET_PORT=${TARGET_PORT}
+ENV SOURCE_IP=${SOURCE_IP}
+ENV SOURCE_PORT=${SOURCE_PORT}
 ENV RUST_LOG="info"
+ENV KAFKA_KEY=${KAFKA_KEY}
+ENV KAFKA_TOPIC=${KAFKA_TOPIC}
+ENV KAFKA_BROKER=${KAFKA_BROKER}
 
-ENTRYPOINT ["probe", "--pcap-stats"]
+ENTRYPOINT ["/opt/rscap/bin/probe", "--pcap-stats", "--send-to-kafka"]

@@ -33,9 +33,7 @@ use std::sync::mpsc::channel;
 use std::thread;
 use std::{
     error::Error as StdError,
-    fmt,
-    fs::File,
-    io,
+    fmt, io,
     io::Write,
     net::{IpAddr, Ipv4Addr, UdpSocket},
     sync::atomic::{AtomicBool, Ordering},
@@ -317,14 +315,6 @@ struct Args {
     #[clap(long, env = "READ_TIME_OUT", default_value_t = 300_000)]
     read_time_out: i32,
 
-    /// Sets the target port
-    #[clap(long, env = "TARGET_PORT", default_value_t = 5_556)]
-    target_port: i32,
-
-    /// Sets the target IP
-    #[clap(long, env = "TARGET_IP", default_value = "127.0.0.1")]
-    target_ip: String,
-
     /// Sets the source device
     #[clap(long, env = "SOURCE_DEVICE", default_value = "")]
     source_device: String,
@@ -555,8 +545,6 @@ async fn rscap(running: Arc<AtomicBool>) {
     let payload_offset = args.payload_offset;
     let mut packet_size = args.packet_size;
     let read_time_out = args.read_time_out;
-    let target_port = args.target_port;
-    let target_ip = args.target_ip;
     let source_device = args.source_device;
     let source_ip = args.source_ip.clone();
     let source_protocol = args.source_protocol;
@@ -802,21 +790,21 @@ async fn rscap(running: Arc<AtomicBool>) {
     // Setup channel for passing stream_data for Kafka thread sending the stream data to monitor process
     let (ktx, mut krx) = mpsc::channel::<Vec<StreamData>>(kafka_channel_size);
 
-    let ktx_clone0 = ktx.clone();
     let ktx_clone1 = ktx.clone();
     let ktx_clone2 = ktx.clone();
 
     let kafka_thread = tokio::spawn(async move {
         info!("Kafka publisher startup {}", args.kafka_broker);
-        let mut dot_last_sent_ts = Instant::now();
         let mut output_file_counter: u32 = 0;
+        let mut last_kafka_send_time = Instant::now();
+        let mut dot_file_last_write = Instant::now();
 
         while running_kafka.load(Ordering::SeqCst) {
             while let Ok(mut batch) = krx.try_recv() {
                 // Process and send messages
                 for stream_data in batch.iter() {
-                    let packet_slice = &stream_data.packet[stream_data.packet_start
-                        ..stream_data.packet_start + stream_data.packet_len];
+                    //let packet_slice = &stream_data.packet[stream_data.packet_start
+                    //    ..stream_data.packet_start + stream_data.packet_len];
 
                     // Call the `send` function with the necessary arguments
                     send(
@@ -830,6 +818,8 @@ async fn rscap(running: Arc<AtomicBool>) {
                         args.kafka_interval,
                         args.no_progress,
                         &mut output_file_counter,
+                        &mut last_kafka_send_time,
+                        &mut dot_file_last_write,
                     )
                     .await;
                 }

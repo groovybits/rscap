@@ -53,7 +53,7 @@ async fn delivery_report(
     }
 }
 
-pub fn flatten_streams(
+fn flatten_streams(
     stream_groupings: &AHashMap<u16, StreamGrouping>,
 ) -> serde_json::Map<String, Value> {
     let mut flat_structure: serde_json::Map<String, Value> = serde_json::Map::new();
@@ -334,6 +334,8 @@ pub async fn send(
     kafka_interval: u64,
     no_progress: bool,
     output_file_counter: &mut u32,
+    last_kafka_send_time: &mut Instant,
+    dot_last_file_write: &mut Instant,
 ) {
     let mut kafka_conf = ClientConfig::new();
     kafka_conf.set("bootstrap.servers", &kafka_broker);
@@ -351,9 +353,6 @@ pub async fn send(
     let kafka_key_clone = kafka_key.clone();
     let producer_clone = producer.clone();
 
-    let mut dot_last_file_write = Instant::now();
-
-    let mut last_kafka_send_time = Instant::now();
     let mut log_messages = Vec::new();
 
     let mut base64_image = String::new();
@@ -384,7 +383,7 @@ pub async fn send(
         // Write to file if output_file is provided
         if let Some(file) = output_file_mut.as_mut() {
             if !no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
-                dot_last_file_write = Instant::now();
+                *dot_last_file_write = Instant::now();
                 print!("*");
                 // flush stdout
                 std::io::stdout().flush().unwrap();
@@ -627,7 +626,7 @@ pub async fn send(
             }
 
             // Update last send time
-            last_kafka_send_time = Instant::now();
+            *last_kafka_send_time = Instant::now();
         }
     }
 }

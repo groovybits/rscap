@@ -9,7 +9,7 @@ Requires:       orc, libffi
 Prefix:        /opt/rscap
 
 %description
-Capture probe with ZMQ connected monitor for analyzing MpegTS UDP Streams and sending status to Kafka with thumbnails and metadata information.
+Capture probe analyzing MpegTS UDP Streams and sending status to Kafka with thumbnails and metadata information.
 
 # prepare the source code
 %prep
@@ -285,8 +285,6 @@ run_with_scl cargo build --features gst --release
 
 # Copy RsCap binaries to the installation directory
 cp target/release/probe %{_builddir}%{prefix}/bin/
-cp target/release/monitor %{_builddir}%{prefix}/bin/
-cp scripts/monitor.sh %{_builddir}%{prefix}/bin
 cp scripts/probe.sh %{_builddir}%{prefix}/bin
 cp scripts/setup_env.sh %{_builddir}%{prefix}/bin
 

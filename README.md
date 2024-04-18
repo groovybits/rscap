@@ -1,24 +1,17 @@
-# MpegTS/SMPTE2110 Capture Stream Monitoring in Rust
+# Rust MpegTS Monitoring Capture Probe Kafka Producer
 
 [![Rust](https://github.com/groovybits/rscap/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/groovybits/rscap/actions/workflows/rust.yml)
 
 An experiment researching Rust and efficiency at handling high rates of streaming MpegTS and SMPTE2110 for Broadcast Monitoring usage.
-Distribute an PCap sourced MpegTS/SMPTE2110 multcast network stream and distribute to ZeroMQ Monitor module for sending to Kafka.
+Distribute an PCap sourced MpegTS/SMPTE2110 multcast network stream and send metrics with image assets and stream metadata to Kafka.
 Capture the TS/SMPTE2110 using pcap with filter rules for specifying which stream ip and port. Validate the stream for conformance
-keeping the ZeroMQ output clean without any non-legal TS/SMPTE2110 packets. Send metadata from probe to monitor via ZMQP serialized as Cap'n Proto buffers.
-Send metrics to Kafka from the monitor process if requested for long-term storage.
+Send metrics to Kafka if requested for long-term storage.
 
-Optionally the monitor process can output final json metrics to kafka for distributed probes sending to some kafka based centralized processing system for the data collected.
+Gstreamer support with --features gst `make build_gst` for using Gstreamer for stream demuxing/decoding. Currently `--extract-images` will extract images from the stream and save them to disk or send them off to a kafka feed as base64 with json metadata. See [scripts/probe.sh](src/bin/probe.rs) for examples of how to use RsCap in a common use case.
 
-Gstreamer support with --features gst `make build_gst` for using Gstreamer for stream demuxing/decoding. Currently `--extract-images` will extract images from the stream and save them to disk or send them off to a kafka feed as base64 with json metadata. See the scripts/monitor.sh and scripts/probe.sh for examples of how to use RsCap in a common use case.
+# The probe client
 
-Can enable MPEG2TS_Reader and H264_Reader crates from <https://github.com/dholroyd> for NAL parsing. The information from the SPS/PPS and other NAL data isn't currently used but will be added to the monitor process eventually to allow for a more detailed analysis of the stream.
-
-## This consists of two programs, a probe and a monitor client.
-
-- The [src/bin/probe.rs](src/bin/probe.rs) takes MpegTS or SMPTE2110 via Packet Capture and publishes batches of the MpegTS 188 / SMPTE2110 sized byte packets to a ZeroMQ socket it binds with PUSH. The probe has zero copy of the pcap buffers for the life cycle. They are passed through to the monitor module with Cap'n Proto allowing highly efficient capture and processing of MpegTS (and someday SMPTE2110 streams WIP: needs development and testing to completely optimize the behavior).
-
-- The [src/bin/monitor.rs](src/bin/monitor.rs) client reads from the ZeroMQ socket as a pull model from the probe, can write the assets and push them to kafka in a flattened json schema.
+- The [src/bin/probe.rs](src/bin/probe.rs) takes MpegTS or SMPTE2110 via Packet Capture and publishes batches of the MpegTS 188 / SMPTE2110 sized byte packets to a ZeroMQ socket it binds with PUSH. The probe has zero copy of the pcap buffers for the life cycle. Analyze the MpegTS (and someday SMPTE2110 streams WIP: needs development and testing to completely optimize the behavior).
 
 ## Configuration with environment variables using [.env](.env.example)
 
@@ -50,20 +43,11 @@ RsCap Compile script: [scripts/compile.sh](scripts/compile.sh) for RsCap build u
 
 Output by default is the original data packet, you can add the json header with --send-json-header.
 
-Build and run the zmq capture monitor client...
-
-```text
-# Run the monitor
-./scripts/monitor.sh
-```
-
-## Kafka output of json metrics from the monitor process after processing and extraction
+## Kafka output of json metrics after processing and extraction
 
 - [Kafka Schema](test_data/kafka.json) That is sent into Kafka
 
 ```text
-scripts/monitor:
-
         --kafka-broker sun:9092 \
         --kafka-topic test \
         --send-to-kafka
@@ -83,7 +67,6 @@ Running VTune [scripts/vtune.sh](scripts/vtune.sh)
 
 ## TODO - roadmap plans
 
-- Multiple monitor client support so one monitor client handles all the probes.
 - Audio analysis, capture, sampling showing amplitude graphs and noise violations of various broadcasting regulations.
 - Caption packets and other NAL and SEI data / metadata extraction and sending.
 - (WIP) Add more information header to the stream data metadata like network stats, mediainfo, captions, ancillary data.
@@ -91,7 +74,6 @@ Running VTune [scripts/vtune.sh](scripts/vtune.sh)
 - (WIP) PES parsing and analysis of streams.
 - (WIP) FFmpeg libzmq protocol compatibility to allow branching off into libav easily.
 - (WIP) General network analyzer view of network around the streams we know/care about.
-- Have multiple client modes to distribute processing of the stream on the zmq endpoints.
 - Improve NAL parsing and various aspects of MpegTS and VANC ancillary data from SMPTE2110.
 - Use [OpenCV img_hash fingerprinting](https://docs.opencv.org/3.4/d4/d93/group__img__hash.html#ga5eeee1e27bc45caffe3b529ab42568e3) to perceptually align and compare video streams frames.
 - OpenAI Whisper speech to text for caption verfication and insertion. <https://github.com/openai/whisper>

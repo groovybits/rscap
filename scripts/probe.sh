@@ -6,6 +6,18 @@ elif [ -f "/opt/rscap/bin/setup_env.sh" ]; then
     source /opt/rscap/bin/setup_env.sh
 fi
 
+if [ "$OUTPUT_FILE" = "" ]; then
+    OUTPUT_FILE=images/test.jpg
+else
+    OUTPUT_FILE=$OUTPUT_FILE
+fi
+
+if [ "$KAFKA_BROKER" = "" ]; then
+    KAFKA_BROKER=localhost:9092
+else
+    KAFKA_BROKER=$KAKFA_BROKER
+fi
+
 if [ "$RUST_BACKTRACE" = "" ]; then
     BACKTRACE=full
 else
@@ -31,12 +43,6 @@ fi
 if [ "$SOURCE_PORT" == "" ]; then
     SOURCE_PORT=10000
 fi
-if [ "$TARGET_PORT" == "" ]; then
-    TARGET_PORT=5556
-fi
-if [ "$TARGET_HOST" == "" ]; then
-    TARGET_HOST=0.0.0.0
-fi
 if [ -f "target/$BUILD/probe" ]; then
     PROBE_BIN=target/$BUILD/probe
 elif [ -f "$PREFIX/bin/probe" ]; then
@@ -61,8 +67,10 @@ sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     --source-ip $SOURCE_IP \
     --source-port $SOURCE_PORT \
     --source-device $SOURCE_DEVICE \
-    --target-ip 0.0.0.0 \
     --send-null-packets \
     --target-port $TARGET_PORT \
+    --kafka-broker $KAFKA_BROKER \
+    --send-to-kafka \
+    --output-file $OUTPUT_FILE \
     --extract-images \
     $@
