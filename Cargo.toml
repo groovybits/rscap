@@ -8,7 +8,7 @@ license-file = "LICENSE"
 homepage = "https://github.com/groovybits/wiki"
 repository = "https://github.com/groovybits/rscap"
 authors = ["Chris Kennedy"]
-version = "0.5.51"
+version = "0.5.99"
 edition = "2021"
 
 [lib]
@@ -57,4 +57,3 @@ rusttype = "0.9.3"
 imageproc = "0.24.0"
 ab_glyph = "0.2.24"
 datetime = "0.5.2"
-
