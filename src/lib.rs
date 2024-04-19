@@ -1,4 +1,3 @@
-pub mod kafka;
 pub mod stream_data;
 pub mod watch_file;
 

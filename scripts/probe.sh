@@ -50,7 +50,7 @@ echo "Using $PROBE_BIN"
 
 $PROBE_BIN -V
 
-#VALGRIND="valgrind --show-leak-kinds=definite,possible --leak-check=full"
+#VALGRIND="valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --log-file=valgrind.log "
 
 sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     LD_LIBRARY_PATH=$LD_LIBRARY_PATH \
