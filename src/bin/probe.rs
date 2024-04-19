@@ -1,5 +1,5 @@
 /*
- * rscap: probe.rs - Rust Stream Capture with pcap, output serialized stats to ZeroMQ
+ * rsprobe: probe.rs - Rust Stream Capture with pcap, output serialized stats to ZeroMQ
  *
  * Written in 2024 by Chris Kennedy (C)
  *
@@ -29,16 +29,16 @@ use rdkafka::admin::{AdminClient, AdminOptions, NewTopic};
 use rdkafka::client::DefaultClientContext;
 use rdkafka::config::ClientConfig;
 use rdkafka::producer::{FutureProducer, FutureRecord};
-use rscap::stream_data::{
+use rsprobe::stream_data::{
     identify_video_pid, is_mpegts_or_smpte2110, parse_and_store_pat, process_packet,
     update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
 };
 #[cfg(feature = "gst")]
-use rscap::stream_data::{initialize_pipeline, process_video_packets, pull_images};
-use rscap::stream_data::{process_mpegts_packet, process_smpte2110_packet};
-use rscap::watch_file::watch_daemon;
-use rscap::{current_unix_timestamp_ms, hexdump};
-use rscap::{get_system_stats, SystemStats};
+use rsprobe::stream_data::{initialize_pipeline, process_video_packets, pull_images};
+use rsprobe::stream_data::{process_mpegts_packet, process_smpte2110_packet};
+use rsprobe::watch_file::watch_daemon;
+use rsprobe::{current_unix_timestamp_ms, hexdump};
+use rsprobe::{get_system_stats, SystemStats};
 use serde_json::{json, Value};
 use std::fs::File;
 use std::sync::mpsc::channel;
@@ -675,12 +675,12 @@ fn init_pcap(
     Ok((cap, socket))
 }
 
-/// RScap Probe Configuration
+/// RsProbe Configuration
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
     version = "0.5.101",
-    about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
+    about = "MpegTS Stream Analysis Probe with Kafka and GStreamer"
 )]
 struct Args {
     /// probe ID - ID for the probe to send with the messages
@@ -892,14 +892,14 @@ async fn main() {
             println!("\nCtrl-C received, shutting down");
             running.store(false, Ordering::SeqCst);
         }
-        _ = rscap(running.clone()) => {
-            println!("\nRsCap exited");
+        _ = rsprobe(running.clone()) => {
+            println!("\nRsProbe exited");
         }
     }
 }
 
-// RsCap Function
-async fn rscap(running: Arc<AtomicBool>) {
+// RsProbeFunction
+async fn rsprobe(running: Arc<AtomicBool>) {
     let running_capture = running.clone();
     let running_kafka = running.clone();
     #[cfg(feature = "gst")]
@@ -936,7 +936,7 @@ async fn rscap(running: Arc<AtomicBool>) {
     #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
     let use_dpdk = args.dpdk;
 
-    println!("Starting RsCap Probe...");
+    println!("Starting RsProbe...");
 
     // SMPTE2110 specific settings
     if args.smpte2110 {
@@ -1177,7 +1177,7 @@ async fn rscap(running: Arc<AtomicBool>) {
         info!("Kafka publisher startup {}", args.kafka_broker);
         let mut kafka_conf = ClientConfig::new();
         kafka_conf.set("bootstrap.servers", &args.kafka_broker);
-        kafka_conf.set("client.id", "rscap");
+        kafka_conf.set("client.id", "rsprobe");
 
         let admin_client: AdminClient<DefaultClientContext> =
             kafka_conf.create().expect("Failed to create admin client");
@@ -1795,7 +1795,7 @@ async fn rscap(running: Arc<AtomicBool>) {
     });
 
     info!(
-        "RsCap: Starting up with Probe ID: {}",
+        "RsProbe: Starting up with Probe ID: {}",
         args.probe_id.clone()
     );
 
@@ -1908,5 +1908,5 @@ async fn rscap(running: Arc<AtomicBool>) {
     capture_task.await.unwrap();
     kafka_thread.await.unwrap();
 
-    println!("\nThreads finished, exiting rscap probe");
+    println!("\nThreads finished, exiting rsprobe");
 }
