@@ -1565,7 +1565,9 @@ async fn rscap(running: Arc<AtomicBool>) {
                                 if let Some((new_pid, new_codec)) =
                                     identify_video_pid(&packet_chunk)
                                 {
-                                    if video_pid.map_or(true, |vp| vp != new_pid) {
+                                    if stream_data.stream_type_number > 0
+                                        && video_pid.map_or(true, |vp| vp != new_pid)
+                                    {
                                         video_pid = Some(new_pid);
                                         let old_stream_type = video_stream_type;
                                         video_stream_type = stream_data.stream_type_number;
@@ -1628,20 +1630,18 @@ async fn rscap(running: Arc<AtomicBool>) {
                     #[cfg(feature = "gst")]
                     if args.extract_images {
                         #[cfg(feature = "gst")]
-                        if video_stream_type > 0 {
-                            let video_packet = Arc::new(
-                                stream_data.packet[stream_data.packet_start
-                                    ..stream_data.packet_start + stream_data.packet_len]
-                                    .to_vec(),
-                            );
+                        let video_packet = Arc::new(
+                            stream_data.packet[stream_data.packet_start
+                                ..stream_data.packet_start + stream_data.packet_len]
+                                .to_vec(),
+                        );
 
-                            // Send the video packet to the processing task
-                            if let Err(_) = video_packet_sender
-                                .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
-                            {
-                                // If the channel is full, drop the packet
-                                log::warn!("Video packet channel is full. Dropping packet.");
-                            }
+                        // Send the video packet to the processing task
+                        if let Err(_) = video_packet_sender
+                            .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
+                        {
+                            // If the channel is full, drop the packet
+                            log::warn!("Video packet channel is full. Dropping packet.");
                         }
 
                         // Receive and process images
