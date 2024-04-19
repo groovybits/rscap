@@ -9,13 +9,6 @@ use crate::system_stats::get_system_stats;
 use crate::system_stats::SystemStats;
 use ahash::AHashMap;
 #[cfg(feature = "gst")]
-use std::io;
-#[cfg(feature = "gst")]
-use std::io::Write;
-#[cfg(feature = "gst")]
-use std::sync::atomic::{AtomicBool, Ordering};
-
-#[cfg(feature = "gst")]
 use gst_app::{AppSink, AppSrc};
 #[cfg(feature = "gst")]
 use gstreamer as gst;
@@ -35,6 +28,13 @@ use rtp::RtpReader;
 use rtp_rs as rtp;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+#[cfg(feature = "gst")]
+use std::io;
+#[cfg(feature = "gst")]
+use std::io::Write;
+#[cfg(feature = "gst")]
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::RwLock;
 use std::{fmt, sync::Arc, sync::Mutex};
 #[cfg(feature = "gst")]
 use tokio::sync::mpsc;
@@ -44,7 +44,7 @@ use tokio::time::Duration;
 const IAT_CAPTURE_WINDOW_SIZE: usize = 1000;
 
 lazy_static! {
-    static ref PID_MAP: Mutex<AHashMap<u16, Arc<StreamData>>> = Mutex::new(AHashMap::new());
+    static ref PID_MAP: RwLock<AHashMap<u16, Arc<StreamData>>> = RwLock::new(AHashMap::new());
     static ref IAT_CAPTURE_WINDOW: Mutex<VecDeque<u64>> =
         Mutex::new(VecDeque::with_capacity(IAT_CAPTURE_WINDOW_SIZE));
     static ref IAT_CAPTURE_PEAK: Mutex<u64> = Mutex::new(0);
@@ -1021,7 +1021,7 @@ pub fn process_packet(
 
     let pid = stream_data_packet.pid;
 
-    let mut pid_map = PID_MAP.lock().unwrap();
+    let mut pid_map = PID_MAP.write().unwrap();
 
     // TODO: high debug level output, may need a flag specific to this dump
     debug!("PID Map Contents: {:#?}", pid_map);
@@ -1130,7 +1130,7 @@ pub fn update_pid_map(
     source_port: i32,
     probe_id: String,
 ) {
-    let mut pid_map = PID_MAP.lock().unwrap();
+    let mut pid_map = PID_MAP.write().unwrap();
 
     // Process the stored PAT packet to find program numbers and corresponding PMT PIDs
     let program_pids = last_pat_packet
@@ -1253,7 +1253,7 @@ pub fn update_pid_map(
 }
 
 pub fn determine_stream_type(pid: u16) -> String {
-    let pid_map = PID_MAP.lock().unwrap();
+    let pid_map = PID_MAP.read().unwrap();
 
     // check if pid already is mapped, if so return the stream type already stored
     if let Some(stream_data) = pid_map.get(&pid) {
@@ -1267,7 +1267,7 @@ pub fn determine_stream_type(pid: u16) -> String {
 }
 
 pub fn determine_stream_type_number(pid: u16) -> u8 {
-    let pid_map = PID_MAP.lock().unwrap();
+    let pid_map = PID_MAP.read().unwrap();
 
     // check if pid already is mapped, if so return the stream type already stored
     if let Some(stream_data) = pid_map.get(&pid) {
@@ -1281,7 +1281,7 @@ pub fn determine_stream_type_number(pid: u16) -> u8 {
 }
 
 pub fn determine_stream_program_number(pid: u16) -> u16 {
-    let pid_map = PID_MAP.lock().unwrap();
+    let pid_map = PID_MAP.read().unwrap();
 
     // check if pid already is mapped, if so return the stream type already stored
     if let Some(stream_data) = pid_map.get(&pid) {

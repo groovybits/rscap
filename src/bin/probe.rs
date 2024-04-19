@@ -16,6 +16,7 @@ use capsule::dpdk;
 #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
 use capsule::prelude::*;
 use clap::Parser;
+use env_logger::{Builder as LogBuilder, Env};
 use futures::stream::StreamExt;
 #[cfg(feature = "gst")]
 use gstreamer as gst;
@@ -34,6 +35,7 @@ use rscap::stream_data::{
 };
 #[cfg(feature = "gst")]
 use rscap::stream_data::{initialize_pipeline, process_video_packets, pull_images};
+use rscap::stream_data::{process_mpegts_packet, process_smpte2110_packet};
 use rscap::watch_file::watch_daemon;
 use rscap::{current_unix_timestamp_ms, hexdump};
 use serde_json::{json, Value};
@@ -53,9 +55,6 @@ use std::{
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{self};
 use tokio::time::Duration;
-//use rscap::videodecoder::VideoProcessor;
-use env_logger::{Builder as LogBuilder, Env};
-use rscap::stream_data::{process_mpegts_packet, process_smpte2110_packet};
 
 lazy_static! {
     static ref PROBE_DATA: RwLock<AHashMap<String, ProbeData>> = RwLock::new(AHashMap::new());
