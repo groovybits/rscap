@@ -38,6 +38,7 @@ use rscap::stream_data::{initialize_pipeline, process_video_packets, pull_images
 use rscap::stream_data::{process_mpegts_packet, process_smpte2110_packet};
 use rscap::watch_file::watch_daemon;
 use rscap::{current_unix_timestamp_ms, hexdump};
+use rscap::{get_system_stats, SystemStats};
 use serde_json::{json, Value};
 use std::fs::File;
 use std::sync::mpsc::channel;
@@ -85,6 +86,7 @@ async fn delivery_report(
 
 fn flatten_streams(
     stream_groupings: &AHashMap<u16, StreamGrouping>,
+    system_stats: SystemStats,
 ) -> serde_json::Map<String, Value> {
     let mut flat_structure: serde_json::Map<String, Value> = serde_json::Map::new();
 
@@ -239,63 +241,6 @@ fn flatten_streams(
             json!(stream_data.capture_iat_max),
         );
 
-        // Add system stats fields to the flattened structure
-        flat_structure.insert(
-            format!("{}.total_memory", prefix),
-            json!(stream_data.total_memory),
-        );
-        flat_structure.insert(
-            format!("{}.used_memory", prefix),
-            json!(stream_data.used_memory),
-        );
-        flat_structure.insert(
-            format!("{}.total_swap", prefix),
-            json!(stream_data.total_swap),
-        );
-        flat_structure.insert(
-            format!("{}.used_swap", prefix),
-            json!(stream_data.used_swap),
-        );
-        flat_structure.insert(
-            format!("{}.cpu_usage", prefix),
-            json!(stream_data.cpu_usage),
-        );
-        flat_structure.insert(
-            format!("{}.cpu_count", prefix),
-            json!(stream_data.cpu_count),
-        );
-        flat_structure.insert(
-            format!("{}.core_count", prefix),
-            json!(stream_data.core_count),
-        );
-        flat_structure.insert(
-            format!("{}.boot_time", prefix),
-            json!(stream_data.boot_time),
-        );
-        flat_structure.insert(
-            format!("{}.load_avg_one", prefix),
-            json!(stream_data.load_avg_one),
-        );
-        flat_structure.insert(
-            format!("{}.load_avg_five", prefix),
-            json!(stream_data.load_avg_five),
-        );
-        flat_structure.insert(
-            format!("{}.load_avg_fifteen", prefix),
-            json!(stream_data.load_avg_fifteen),
-        );
-        flat_structure.insert(
-            format!("{}.host_name", prefix),
-            json!(stream_data.host_name),
-        );
-        flat_structure.insert(
-            format!("{}.kernel_version", prefix),
-            json!(stream_data.kernel_version),
-        );
-        flat_structure.insert(
-            format!("{}.os_version", prefix),
-            json!(stream_data.os_version),
-        );
         flat_structure.insert(
             format!("{}.has_image", prefix),
             json!(stream_data.has_image),
@@ -308,6 +253,65 @@ fn flatten_streams(
             format!("{}.log_message", prefix),
             json!(stream_data.log_message),
         );
+
+        // Add system stats fields to the flattened structure
+        flat_structure.insert(
+            format!("{}.total_memory", prefix),
+            json!(system_stats.total_memory),
+        );
+        flat_structure.insert(
+            format!("{}.used_memory", prefix),
+            json!(system_stats.used_memory),
+        );
+        flat_structure.insert(
+            format!("{}.total_swap", prefix),
+            json!(system_stats.total_swap),
+        );
+        flat_structure.insert(
+            format!("{}.used_swap", prefix),
+            json!(system_stats.used_swap),
+        );
+        flat_structure.insert(
+            format!("{}.cpu_usage", prefix),
+            json!(system_stats.cpu_usage),
+        );
+        flat_structure.insert(
+            format!("{}.cpu_count", prefix),
+            json!(system_stats.cpu_count),
+        );
+        flat_structure.insert(
+            format!("{}.core_count", prefix),
+            json!(system_stats.core_count),
+        );
+        flat_structure.insert(
+            format!("{}.boot_time", prefix),
+            json!(system_stats.boot_time),
+        );
+        flat_structure.insert(
+            format!("{}.load_avg_one", prefix),
+            json!(system_stats.load_avg.one),
+        );
+        flat_structure.insert(
+            format!("{}.load_avg_five", prefix),
+            json!(system_stats.load_avg.five),
+        );
+        flat_structure.insert(
+            format!("{}.load_avg_fifteen", prefix),
+            json!(system_stats.load_avg.fifteen),
+        );
+        flat_structure.insert(
+            format!("{}.host_name", prefix),
+            json!(system_stats.host_name),
+        );
+        flat_structure.insert(
+            format!("{}.kernel_version", prefix),
+            json!(system_stats.kernel_version),
+        );
+        flat_structure.insert(
+            format!("{}.os_version", prefix),
+            json!(system_stats.os_version),
+        );
+
         flat_structure.insert(format!("{}.id", prefix), json!(stream_data.probe_id));
         flat_structure.insert(format!("{}.captions", prefix), json!(stream_data.captions));
     }
@@ -1086,6 +1090,7 @@ async fn rscap(running: Arc<AtomicBool>) {
 
         let mut output_file_counter: u32 = 0;
         let mut last_kafka_send_time = Instant::now();
+        let mut last_system_stats = Instant::now();
         let mut dot_last_file_write = Instant::now();
         let mut log_messages = Vec::<String>::new();
         let mut base64_image = String::new();
@@ -1102,6 +1107,7 @@ async fn rscap(running: Arc<AtomicBool>) {
             .create()
             .expect("Failed to create Kafka producer");
 
+        let mut system_stats = get_system_stats();
         while running_kafka.load(Ordering::SeqCst) {
             while let Some(mut batch) = krx.recv().await {
                 // Process and send messages
@@ -1146,9 +1152,10 @@ async fn rscap(running: Arc<AtomicBool>) {
                     let mut probe_id = stream_data.probe_id.clone();
                     if probe_id.is_empty() {
                         // construct stream.source_ip and stream.source_port with stream.host
+                        let system_stats = get_system_stats();
                         probe_id = format!(
                             "{}:{}:{}",
-                            stream_data.host_name, stream_data.source_ip, stream_data.source_port
+                            system_stats.host_name, args.source_ip, args.source_port
                         );
                     }
                     let pid = stream_data.pid;
@@ -1193,11 +1200,16 @@ async fn rscap(running: Arc<AtomicBool>) {
                         // Acquire write access to PROBE_DATA
                         {
                             let mut probe_data_map = PROBE_DATA.write().unwrap();
+                            if last_system_stats.elapsed().as_millis() >= 1000 as u128 {
+                                last_system_stats = Instant::now();
+                                system_stats = get_system_stats();
+                            }
 
                             // Process each probe's data
                             for (_probe_id, probe_data) in probe_data_map.iter_mut() {
                                 let stream_groupings = &probe_data.stream_groupings;
-                                let mut flattened_data = flatten_streams(&stream_groupings);
+                                let mut flattened_data =
+                                    flatten_streams(&stream_groupings, system_stats.clone());
 
                                 // Initialize variables to accumulate global averages
                                 let mut total_bitrate_avg: u64 = 0;

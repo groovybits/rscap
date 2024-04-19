@@ -5,8 +5,6 @@
 */
 
 use crate::current_unix_timestamp_ms;
-use crate::system_stats::get_system_stats;
-use crate::system_stats::SystemStats;
 use ahash::AHashMap;
 #[cfg(feature = "gst")]
 use gst_app::{AppSink, AppSrc};
@@ -404,21 +402,6 @@ pub struct StreamData {
     pub capture_iat: u64,
     pub source_ip: String,
     pub source_port: i32,
-    // System stats
-    pub total_memory: u64,
-    pub used_memory: u64,
-    pub total_swap: u64,
-    pub used_swap: u64,
-    pub cpu_usage: f32,
-    pub cpu_count: usize,
-    pub core_count: usize,
-    pub boot_time: u64,
-    pub load_avg_one: f64,
-    pub load_avg_five: f64,
-    pub load_avg_fifteen: f64,
-    pub host_name: String,
-    pub kernel_version: String,
-    pub os_version: String,
     pub has_image: u8,
     pub image_pts: u64,
     pub capture_iat_max: u64,
@@ -472,20 +455,6 @@ impl Clone for StreamData {
             capture_iat: self.capture_iat,
             source_ip: self.source_ip.to_owned(),
             source_port: self.source_port,
-            total_memory: self.total_memory,
-            used_memory: self.used_memory,
-            total_swap: self.total_swap,
-            used_swap: self.used_swap,
-            cpu_usage: self.cpu_usage,
-            cpu_count: self.cpu_count,
-            core_count: self.core_count,
-            boot_time: self.boot_time,
-            load_avg_one: self.load_avg_one,
-            load_avg_five: self.load_avg_five,
-            load_avg_fifteen: self.load_avg_fifteen,
-            host_name: self.host_name.to_owned(),
-            kernel_version: self.kernel_version.to_owned(),
-            os_version: self.os_version.to_owned(),
             has_image: self.has_image,
             image_pts: self.image_pts,
             capture_iat_max: self.capture_iat_max,
@@ -516,7 +485,6 @@ impl StreamData {
         capture_iat: u64,
         source_ip: String,
         source_port: i32,
-        system_stats: SystemStats,
         probe_id: String,
     ) -> Self {
         // convert capture_timestamp to unix timestamp in milliseconds since epoch
@@ -564,20 +532,6 @@ impl StreamData {
             source_ip,
             source_port,
             // Initialize system stats fields from the SystemStats instance
-            total_memory: system_stats.total_memory,
-            used_memory: system_stats.used_memory,
-            total_swap: system_stats.total_swap,
-            used_swap: system_stats.used_swap,
-            cpu_usage: system_stats.cpu_usage,
-            cpu_count: system_stats.cpu_count,
-            core_count: system_stats.core_count,
-            boot_time: system_stats.boot_time,
-            load_avg_one: system_stats.load_avg.one,
-            load_avg_five: system_stats.load_avg.five,
-            load_avg_fifteen: system_stats.load_avg.fifteen,
-            host_name: system_stats.host_name,
-            kernel_version: system_stats.kernel_version,
-            os_version: system_stats.os_version,
             has_image: 0,
             image_pts: 0,
             capture_iat_max: capture_iat,
@@ -1089,7 +1043,6 @@ pub fn process_packet(
             } else {
                 // PMT packet not found yet, add the stream_data_packet to the pid_map
                 // OS and Network stats
-                let system_stats = get_system_stats();
                 let mut stream_data = Arc::new(StreamData::new(
                     Arc::new(Vec::new()), // Ensure packet_data is Arc<Vec<u8>>
                     0,
@@ -1105,7 +1058,6 @@ pub fn process_packet(
                     stream_data_packet.capture_iat,
                     stream_data_packet.source_ip.clone(),
                     stream_data_packet.source_port,
-                    system_stats,
                     probe_id.clone(),
                 ));
                 Arc::make_mut(&mut stream_data).update_stats(packet.len());
@@ -1202,7 +1154,6 @@ pub fn update_pid_map(
                 let timestamp = current_unix_timestamp_ms().unwrap_or(0);
 
                 if !pid_map.contains_key(&stream_pid) {
-                    let system_stats = get_system_stats();
                     let mut stream_data = Arc::new(StreamData::new(
                         Arc::new(Vec::new()), // Ensure packet_data is Arc<Vec<u8>>
                         0,
@@ -1218,7 +1169,6 @@ pub fn update_pid_map(
                         capture_iat,
                         source_ip.clone(),
                         source_port,
-                        system_stats,
                         probe_id.clone(),
                     ));
                     // update stream_data stats
@@ -1405,7 +1355,6 @@ pub fn process_smpte2110_packet(
                 let stream_type = payload_type.to_string();
 
                 // Create new StreamData instance
-                let system_stats = get_system_stats();
                 let mut stream_data = StreamData::new(
                     packet_arc,
                     rtp_payload_offset,
@@ -1421,7 +1370,6 @@ pub fn process_smpte2110_packet(
                     capture_iat,
                     source_ip.clone(),
                     source_port,
-                    system_stats,
                     probe_id.clone(),
                 );
 
@@ -1494,7 +1442,6 @@ pub fn process_mpegts_packet(
             let timestamp = extract_timestamp(chunk);
             let continuity_counter = chunk[3] & 0x0F;
 
-            let system_stats = get_system_stats();
             let mut stream_data = StreamData::new(
                 Arc::clone(&packet),
                 start,
@@ -1510,7 +1457,6 @@ pub fn process_mpegts_packet(
                 capture_iat,
                 source_ip.clone(),
                 source_port,
-                system_stats,
                 probe_id.clone(),
             );
             stream_data.update_stats(packet_size);
