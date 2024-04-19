@@ -1097,7 +1097,7 @@ async fn rscap(running: Arc<AtomicBool>) {
                 }
 
                 // Add the processed stream_data to the batch
-                batch.push(stream_data.clone());
+                batch.push(stream_data);
 
                 // Check if the batch size is reached or the batch timeout has elapsed
                 if batch.len() >= batch_size || last_batch_time.elapsed() >= batch_timeout {
