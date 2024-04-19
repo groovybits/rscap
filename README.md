@@ -6,6 +6,8 @@
 
 This project is an experiment researching Rust and its efficiency at handling high rates of streaming MpegTS and SMPTE2110 for broadcast monitoring usage. The goal is to distribute a PCap-sourced MpegTS/SMPTE2110 multicast network stream and send metrics with image assets and stream metadata to Kafka. The project captures the TS/SMPTE2110 using pcap with filter rules for specifying the stream IP and port, and validates the stream for conformance. If requested, metrics are sent to Kafka for long-term storage.
 
+![RsCap](https://storage.cloud.google.com/groovybits/images/rscap/rscap.webp)
+
 Gstreamer support is available with the `--features gst` flag (`make build_gst`) for using Gstreamer for stream demuxing/decoding. Currently, `--extract-images` will extract images from the stream and save them to disk or send them off to a Kafka feed as base64 with JSON metadata. See [scripts/probe.sh](src/bin/probe.sh) for examples of how to use RsCap in a common use case.
 
 ## The Probe Client
