@@ -782,9 +782,6 @@ async fn rscap(running: Arc<AtomicBool>) {
     // Setup channel for passing stream_data for Kafka thread sending the stream data to monitor process
     let (ktx, mut krx) = mpsc::channel::<Vec<StreamData>>(kafka_channel_size);
 
-    let ktx_clone1 = ktx.clone();
-    let ktx_clone2 = ktx.clone();
-
     let kafka_thread = tokio::spawn(async move {
         info!("Kafka publisher startup {}", args.kafka_broker);
         let mut output_file_counter: u32 = 0;
@@ -798,9 +795,15 @@ async fn rscap(running: Arc<AtomicBool>) {
                     //let packet_slice = &stream_data.packet[stream_data.packet_start
                     //    ..stream_data.packet_start + stream_data.packet_len];
 
+                    // print out the stream_type member, a string, and the bitrate_avg member of each stream_data
+                    println!(
+                        "Kafka: stream_type: {}, bitrate_avg: {}",
+                        stream_data.stream_type, stream_data.bitrate_avg
+                    );
+
                     // Call the `send` function with the necessary arguments
                     send(
-                        stream_data.clone(),
+                        &stream_data,
                         args.output_file.clone(),
                         args.kafka_broker.clone(),
                         args.kafka_topic.clone(),
@@ -916,6 +919,9 @@ async fn rscap(running: Arc<AtomicBool>) {
     let probe_id_clone = args.probe_id.clone();
     let source_ip_clone_batch = source_ip.clone();
 
+    let ktx_clone1 = ktx.clone();
+    let ktx_clone2 = ktx.clone();
+
     // Create a separate thread for processing chunks
     tokio::spawn(async move {
         let mut batch = Vec::new();
@@ -1002,6 +1008,7 @@ async fn rscap(running: Arc<AtomicBool>) {
 
                 if video_pid < Some(0x1FFF)
                     && video_pid > Some(0)
+                    && video_stream_type > 0
                     && stream_data.pid == video_pid.unwrap()
                     && video_stream_type != stream_data.stream_type_number
                 {
@@ -1090,10 +1097,19 @@ async fn rscap(running: Arc<AtomicBool>) {
                 }
 
                 // Add the processed stream_data to the batch
-                batch.push(stream_data);
+                batch.push(stream_data.clone());
 
                 // Check if the batch size is reached or the batch timeout has elapsed
                 if batch.len() >= batch_size || last_batch_time.elapsed() >= batch_timeout {
+                    // go through each stream_data in batch and print out the stream_type and bitrate
+                    /*for stream_data in &batch {
+                    let bitrate = stream_data.bitrate_avg;
+                    info!(
+                        "STATUS::STREAM_TYPE: {} Bitrate: {}",
+                        stream_data.stream_type.clone(),
+                        bitrate
+                    );
+                    }*/
                     // Send the batch to the Kafka thread
                     if ktx_clone1.try_send(batch).is_err() {
                         // If the channel is full, drop the batch

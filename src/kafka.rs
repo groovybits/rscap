@@ -324,7 +324,7 @@ pub async fn produce_message(
 }
 
 pub async fn send(
-    stream_data: StreamData,
+    stream_data: &StreamData,
     output_file: String,
     kafka_broker: String,
     kafka_topic: String,
