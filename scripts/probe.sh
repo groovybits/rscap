@@ -55,11 +55,15 @@ $PROBE_BIN -V
 #    --output-file $OUTPUT_FILE \#
 #    --pcap-stats \
 
+CPU_BIND=0
+MEM_BIND=0
+# NUMACTL="numactl --cpubind=$CPU_BIND --membind=$MEM_BIND"
+
 sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     LD_LIBRARY_PATH=$LD_LIBRARY_PATH \
     GST_DEBUG=$GST_DEBUG_LEVEL \
     RUST_BACKTRACE=$BACKTRACE \
-    $VALGRIND $PROBE_BIN \
+    $VALGRIND $NUMACTL $PROBE_BIN \
     --source-device $SOURCE_DEVICE \
     --source-ip $SOURCE_IP \
     --source-port $SOURCE_PORT \
