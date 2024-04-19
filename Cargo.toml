@@ -1,11 +1,11 @@
 [package]
-name = "rscap"
-description = "Rust based pcap for MpegTS and SMPTE2110 UDP/TCP Broadcast Feeds"
-keywords = ["broadcast", "mpegts", "capture", "pcap"]
+name = "rsprobe"
+description = "MpegTS Stream Analysis Probe with Kafka and GStreamer"
+keywords = ["broadcast", "mpegts", "pcap", "kafka", "gstreamer"]
 categories = ["command-line-utilities"]
 readme = "README.md"
 license-file = "LICENSE"
-homepage = "https://github.com/groovybits/wiki"
+homepage = "https://github.com/groovybits/rscap"
 repository = "https://github.com/groovybits/rscap"
 authors = ["Chris Kennedy"]
 version = "0.5.101"
