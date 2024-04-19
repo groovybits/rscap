@@ -8,7 +8,7 @@ This project is an experiment researching Rust and its efficiency at handling hi
 
 ![RsCap](https://storage.googleapis.com/groovybits/images/rscap/rscap.webp)
 
-Gstreamer support is available with the `--features gst` flag (`make build_gst`) for using Gstreamer for stream demuxing/decoding. Currently, `--extract-images` will extract images from the stream and save them to disk or send them off to a Kafka feed as base64 with JSON metadata. See [scripts/probe.sh](src/bin/probe.sh) for examples of how to use RsCap in a common use case.
+Gstreamer support is available with the `--features gst` flag (`make build_gst`) for using Gstreamer for stream demuxing/decoding. Currently, `--extract-images` will extract images from the stream and save them to disk or send them off to a Kafka feed as base64 with JSON metadata. See [scripts/probe.sh](scripts/probe.sh) for examples of how to use RsCap in a common use case.
 
 ## The Probe Client
 
