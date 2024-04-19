@@ -607,8 +607,8 @@ struct Args {
     probe_id: String,
 
     /// Sets the batch size
-    #[clap(long, env = "BATCH_SIZE", default_value_t = 7)]
-    batch_size: usize,
+    #[clap(long, env = "PCAP_BATCH_SIZE", default_value_t = 7)]
+    pcap_batch_size: usize,
 
     /// Sets the payload offset
     #[clap(long, env = "PAYLOAD_OFFSET", default_value_t = 42)]
@@ -686,6 +686,10 @@ struct Args {
     #[clap(long, env = "PCAP_CHANNEL_SIZE", default_value_t = 100000)]
     pcap_channel_size: usize,
 
+    /// Sets the batch size
+    #[clap(long, env = "KAFKA_BATCH_SIZE", default_value_t = 100)]
+    kafka_batch_size: usize,
+
     /// MPSC Channel Size for PCAP
     #[clap(long, env = "KAFKA_CHANNEL_SIZE", default_value_t = 100000)]
     kafka_channel_size: usize,
@@ -705,10 +709,6 @@ struct Args {
     /// Output file for Kafka
     #[clap(long, env = "OUTPUT_FILE", default_value = "")]
     output_file: String,
-
-    /// ZMQ Batch size
-    #[clap(long, env = "KAFKA_BATCH_SIZE", default_value_t = 100)]
-    kafka_batch_size: usize,
 
     /// Debug SMPTE2110
     #[clap(long, env = "DEBUG_SMPTE2110", default_value_t = false)]
@@ -784,12 +784,8 @@ struct Args {
     kafka_broker: String,
 
     /// Kafka Topic
-    #[clap(long, env = "KAFKA_TOPIC", default_value = "rscap")]
+    #[clap(long, env = "KAFKA_TOPIC", default_value = "")]
     kafka_topic: String,
-
-    /// Send to Kafka if true
-    #[clap(long, env = "SEND_TO_KAFKA", default_value_t = false)]
-    send_to_kafka: bool,
 
     /// Kafka timeout to drop packets
     #[clap(long, env = "KAFKA_TIMEOUT", default_value_t = 100)]
@@ -802,10 +798,6 @@ struct Args {
     /// Kafka sending interval in milliseconds
     #[clap(long, env = "KAFKA_INTERVAL", default_value_t = 1000)]
     kafka_interval: u64,
-
-    /// Kafka Buffer Count
-    #[clap(long, env = "KAFKA_BUFFER_COUNT", default_value_t = 1000)]
-    kafka_buffer_count: usize,
 }
 
 // MAIN Function
@@ -840,7 +832,7 @@ async fn rscap(running: Arc<AtomicBool>) {
     let args = Args::parse();
 
     // Use the parsed arguments directly
-    let mut batch_size = args.batch_size;
+    let mut pcap_batch_size = args.pcap_batch_size;
     let payload_offset = args.payload_offset;
     let mut packet_size = args.packet_size;
     let read_time_out = args.read_time_out;
@@ -862,7 +854,6 @@ async fn rscap(running: Arc<AtomicBool>) {
     let mut kafka_channel_size = args.kafka_channel_size;
     #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
     let use_dpdk = args.dpdk;
-    let mut kafka_batch_size = args.kafka_batch_size;
 
     println!("Starting RsCap Probe...");
 
@@ -873,8 +864,7 @@ async fn rscap(running: Arc<AtomicBool>) {
         pcap_channel_size = 1_000_000; // set pcap channel size for smpte2110
         kafka_channel_size = 1_000_000; // set kafka channel size for smpte2110
         packet_size = 1_220; // set packet size to 1220 (body) + 12 (header) for RTP
-        batch_size = 3; // N x 1220 size packets for pcap read size
-        kafka_batch_size = 1080; // N x packets for how many packets to send to Kafka per batch
+        pcap_batch_size = 3; // N x 1220 size packets for pcap read size
     }
 
     if silent {
@@ -883,7 +873,7 @@ async fn rscap(running: Arc<AtomicBool>) {
     }
 
     // calculate read size based on batch size and packet size
-    let read_size: i32 = (packet_size as i32 * batch_size as i32) + payload_offset as i32; // pcap read size
+    let read_size: i32 = (packet_size as i32 * pcap_batch_size as i32) + payload_offset as i32; // pcap read size
 
     let mut is_mpegts = true; // Default to true, update based on actual packet type
 
@@ -1090,7 +1080,11 @@ async fn rscap(running: Arc<AtomicBool>) {
     let (ktx, mut krx) = mpsc::channel::<Vec<StreamData>>(kafka_channel_size);
 
     let kafka_thread = tokio::spawn(async move {
-        info!("Kafka publisher startup {}", args.kafka_broker);
+        // exit thread if kafka_broker is not set
+        if args.kafka_broker.is_empty() || args.kafka_topic.is_empty() {
+            return;
+        }
+
         let mut output_file_counter: u32 = 0;
         let mut last_kafka_send_time = Instant::now();
         let mut dot_last_file_write = Instant::now();
@@ -1098,6 +1092,7 @@ async fn rscap(running: Arc<AtomicBool>) {
         let mut base64_image = String::new();
         let output_file_without_jpg = args.output_file.replace(".jpg", "");
 
+        info!("Kafka publisher startup {}", args.kafka_broker);
         let mut kafka_conf = ClientConfig::new();
         kafka_conf.set("bootstrap.servers", &args.kafka_broker);
         kafka_conf.set("client.id", "rscap");
@@ -1109,7 +1104,7 @@ async fn rscap(running: Arc<AtomicBool>) {
             .expect("Failed to create Kafka producer");
 
         while running_kafka.load(Ordering::SeqCst) {
-            while let Ok(mut batch) = krx.try_recv() {
+            while let Some(mut batch) = krx.recv().await {
                 // Process and send messages
                 for stream_data in batch.iter() {
                     let mut force_send_message = false;
@@ -1522,7 +1517,6 @@ async fn rscap(running: Arc<AtomicBool>) {
     // Create a separate thread for processing chunks
     tokio::spawn(async move {
         let mut batch = Vec::new();
-        let batch_size = kafka_batch_size.clone(); // Adjust the batch size as needed
         let batch_timeout = tokio::time::Duration::from_millis(1); // Adjust the batch timeout as needed
         let mut last_batch_time = tokio::time::Instant::now();
 
@@ -1696,31 +1690,17 @@ async fn rscap(running: Arc<AtomicBool>) {
                 batch.push(stream_data);
 
                 // Check if the batch size is reached or the batch timeout has elapsed
-                if batch.len() >= batch_size || last_batch_time.elapsed() >= batch_timeout {
-                    // go through each stream_data in batch and print out the stream_type and bitrate
-                    /*for stream_data in &batch {
-                    let bitrate = stream_data.bitrate_avg;
-                    info!(
-                        "STATUS::STREAM_TYPE: {} Bitrate: {}",
-                        stream_data.stream_type.clone(),
-                        bitrate
-                    );
-                    }*/
+                if batch.len() >= args.kafka_batch_size
+                    || last_batch_time.elapsed() >= batch_timeout
+                {
                     // Send the batch to the Kafka thread
-                    if ktx_clone1.try_send(batch).is_err() {
-                        // If the channel is full, drop the batch
-                        info!("Batch channel is full. Dropping batch.");
+                    if ktx_clone1.send(batch).await.is_err() {
+                        // If the channel is full, drop the batch and log a warning
+                        log::warn!("Batch channel is full. Dropping batch.");
                     }
                     batch = Vec::new(); // Reset the batch
                     last_batch_time = tokio::time::Instant::now(); // Reset the batch timeout
                 }
-            }
-        }
-
-        // Send any remaining items in the batch
-        if !batch.is_empty() {
-            if ktx.try_send(batch).is_err() {
-                info!("Batch channel is full. Dropping batch.");
             }
         }
     });

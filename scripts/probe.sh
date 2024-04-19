@@ -26,7 +26,7 @@ if [ "$BUILD" == "" ]; then
     BUILD=release-with-debug
 fi
 if [ "$GST_DEBUG_LEVEL" == "" ]; then
-    GST_DEBUG_LEVEL=3
+    GST_DEBUG_LEVEL=1
 fi
 if [ "$SOURCE_IP" == "" ]; then
     SOURCE_IP=224.0.0.200
@@ -52,17 +52,18 @@ $PROBE_BIN -V
 
 #VALGRIND="valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --log-file=valgrind.log "
 
+#    --output-file $OUTPUT_FILE \#
+#    --pcap-stats \
+
 sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     LD_LIBRARY_PATH=$LD_LIBRARY_PATH \
     GST_DEBUG=$GST_DEBUG_LEVEL \
     RUST_BACKTRACE=$BACKTRACE \
     $VALGRIND $PROBE_BIN \
-    --pcap-stats \
     --source-device $SOURCE_DEVICE \
     --source-ip $SOURCE_IP \
     --source-port $SOURCE_PORT \
     --kafka-broker $KAFKA_BROKER \
-    --send-to-kafka \
-    --output-file $OUTPUT_FILE \
+    --kafka-topic "rscap" \
     --extract-images \
     $@
