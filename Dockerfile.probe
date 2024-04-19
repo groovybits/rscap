@@ -12,16 +12,21 @@ RUN apk update && apk add --no-cache --update-cache zlib libgcc libpcap libstdc+
 ARG SOURCE_DEVICE=eth0
 ARG SOURCE_IP=224.0.0.200
 ARG SOURCE_PORT=10001
+
 ARG KAFKA_KEY=
 ARG KAFKA_TOPIC=rscap
 ARG KAFKA_BROKER=localhost:9092
+ARG EXTRACT_IMAGES=true
+
+ENV RUST_LOG="error"
 
 ENV SOURCE_DEVICE=${SOURCE_DEVICE}
 ENV SOURCE_IP=${SOURCE_IP}
 ENV SOURCE_PORT=${SOURCE_PORT}
-ENV RUST_LOG="info"
+
 ENV KAFKA_KEY=${KAFKA_KEY}
 ENV KAFKA_TOPIC=${KAFKA_TOPIC}
 ENV KAFKA_BROKER=${KAFKA_BROKER}
+ENV EXTRACT_IMAGES=${EXTRACT_IMAGES}
 
-ENTRYPOINT ["/opt/rscap/bin/probe", "--pcap-stats", "--send-to-kafka"]
+ENTRYPOINT ["/opt/rscap/bin/probe", "--pcap-stats"]
