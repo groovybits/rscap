@@ -779,10 +779,9 @@ impl StreamData {
                     / (self.count as u64 + 1)) as u64;
             }
             self.last_arrival_time = self.capture_time; // Update for the next packet's IAT calculation
-
-            // Properly increment the count after all checks
-            self.count += 1;
         }
+        // Properly increment the count after all checks
+        self.count += 1;
     }
 }
 

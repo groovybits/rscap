@@ -780,7 +780,7 @@ async fn rscap(running: Arc<AtomicBool>) {
     };
 
     // Setup channel for passing stream_data for Kafka thread sending the stream data to monitor process
-    let (ktx, mut krx) = mpsc::channel::<Vec<StreamData>>(kafka_channel_size);
+    let (ktx, mut krx) = mpsc::channel::<Arc<Vec<StreamData>>>(kafka_channel_size);
 
     let ktx_clone1 = ktx.clone();
     let ktx_clone2 = ktx.clone();
@@ -792,11 +792,18 @@ async fn rscap(running: Arc<AtomicBool>) {
         let mut dot_file_last_write = Instant::now();
 
         while running_kafka.load(Ordering::SeqCst) {
-            while let Ok(mut batch) = krx.try_recv() {
+            while let Ok(batch) = krx.try_recv() {
                 // Process and send messages
                 for stream_data in batch.iter() {
                     //let packet_slice = &stream_data.packet[stream_data.packet_start
                     //    ..stream_data.packet_start + stream_data.packet_len];
+
+                    // print out stream_data as json string
+                    let mut json_string = serde_json::to_string(&stream_data).unwrap();
+                    // pretty print json string
+                    let json_value: serde_json::Value = serde_json::from_str(&json_string).unwrap();
+                    json_string = serde_json::to_string_pretty(&json_value).unwrap();
+                    log::info!("StreamData: {}", json_string);
 
                     // Call the `send` function with the necessary arguments
                     send(
@@ -815,7 +822,6 @@ async fn rscap(running: Arc<AtomicBool>) {
                     )
                     .await;
                 }
-                batch.clear();
             }
             // Sleep for a short time to avoid busy waiting
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
@@ -1058,7 +1064,7 @@ async fn rscap(running: Arc<AtomicBool>) {
                             stream_data.image_pts = pts;
 
                             // Process the received image data
-                            debug!(
+                            info!(
                                 "Probe: Received a jpeg image with size: {} bytes",
                                 image_data.len()
                             );
@@ -1089,13 +1095,20 @@ async fn rscap(running: Arc<AtomicBool>) {
                     stream_data.packet_start = 0;
                 }
 
+                // print out stream_data as json string
+                let mut json_string = serde_json::to_string(&stream_data).unwrap();
+                // pretty print json string
+                let json_value: serde_json::Value = serde_json::from_str(&json_string).unwrap();
+                json_string = serde_json::to_string_pretty(&json_value).unwrap();
+                log::debug!("Sending to Batch StreamData: {}", json_string);
+
                 // Add the processed stream_data to the batch
                 batch.push(stream_data);
 
                 // Check if the batch size is reached or the batch timeout has elapsed
                 if batch.len() >= batch_size || last_batch_time.elapsed() >= batch_timeout {
                     // Send the batch to the Kafka thread
-                    if ktx_clone1.try_send(batch).is_err() {
+                    if ktx_clone1.try_send(Arc::new(batch)).is_err() {
                         // If the channel is full, drop the batch
                         info!("Batch channel is full. Dropping batch.");
                     }
@@ -1107,7 +1120,7 @@ async fn rscap(running: Arc<AtomicBool>) {
 
         // Send any remaining items in the batch
         if !batch.is_empty() {
-            if ktx.try_send(batch).is_err() {
+            if ktx.try_send(Arc::new(batch)).is_err() {
                 info!("Batch channel is full. Dropping batch.");
             }
         }
@@ -1220,7 +1233,7 @@ async fn rscap(running: Arc<AtomicBool>) {
     println!("\nWaiting for threads to finish...");
 
     // Send Kafka stop signal
-    let _ = ktx_clone2.try_send(Vec::new());
+    let _ = ktx_clone2.try_send(Arc::new(Vec::new()));
     drop(ktx_clone2);
 
     // Wait for the kafka thread to finish
