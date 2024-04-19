@@ -312,6 +312,84 @@ fn flatten_streams(
             json!(system_stats.os_version),
         );
 
+        flat_structure.insert(
+            format!("{}.process_count", prefix),
+            json!(system_stats.process_count),
+        );
+        flat_structure.insert(format!("{}.uptime", prefix), json!(system_stats.uptime));
+        flat_structure.insert(
+            format!("{}.system_name", prefix),
+            json!(system_stats.system_name),
+        );
+
+        // Flatten the network stats and insert them into the structure
+        for network in &system_stats.network_stats {
+            flat_structure.insert(
+                format!("{}.network.{}.received", prefix, network.name),
+                json!(network.received),
+            );
+            flat_structure.insert(
+                format!("{}.network.{}.transmitted", prefix, network.name),
+                json!(network.transmitted),
+            );
+            flat_structure.insert(
+                format!("{}.network.{}.packets_received", prefix, network.name),
+                json!(network.packets_received),
+            );
+            flat_structure.insert(
+                format!("{}.network.{}.packets_transmitted", prefix, network.name),
+                json!(network.packets_transmitted),
+            );
+            flat_structure.insert(
+                format!("{}.network.{}.errors_on_received", prefix, network.name),
+                json!(network.errors_on_received),
+            );
+            flat_structure.insert(
+                format!("{}.network.{}.errors_on_transmitted", prefix, network.name),
+                json!(network.errors_on_transmitted),
+            );
+        }
+
+        // Flatten the disk stats and insert them into the structure
+        for (i, disk) in system_stats.disk_stats.iter().enumerate() {
+            flat_structure.insert(
+                format!("{}.disk_stats_{}_name", prefix, i),
+                json!(disk.name),
+            );
+            flat_structure.insert(
+                format!("{}.disk_stats_{}_total_space", prefix, i),
+                json!(disk.total_space),
+            );
+            flat_structure.insert(
+                format!("{}.disk_stats_{}_available_space", prefix, i),
+                json!(disk.available_space),
+            );
+            flat_structure.insert(
+                format!("{}.disk_stats_{}_is_removable", prefix, i),
+                json!(disk.is_removable),
+            );
+        }
+
+        // Flatten the processes and insert them into the structure as an array of strings
+        let cpu_threshold = 5.0; // CPU usage threshold (in percentage)
+        let ram_threshold = 100 * 1024 * 1024; // RAM usage threshold (in bytes)
+
+        let processes: Vec<String> = system_stats
+            .processes
+            .iter()
+            .filter(|process| {
+                process.cpu_usage > cpu_threshold || process.memory > ram_threshold
+            })
+            .map(|process| {
+                format!(
+                    "{{\"name\":\"{}\",\"pid\":{},\"cpu_usage\":{},\"memory\":{},\"virtual_memory\":{},\"start_time\":{}}}",
+                    process.name, process.pid, process.cpu_usage, process.memory, process.virtual_memory, process.start_time
+                )
+            })
+            .collect();
+
+        flat_structure.insert(format!("{}.processes", prefix), json!(processes));
+
         flat_structure.insert(format!("{}.id", prefix), json!(stream_data.probe_id));
         flat_structure.insert(format!("{}.captions", prefix), json!(stream_data.captions));
     }

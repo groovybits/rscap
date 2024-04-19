@@ -34,17 +34,21 @@ pub struct SystemStats {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct NetworkStats {
-    name: String,
-    received: u64,
-    transmitted: u64,
+    pub name: String,
+    pub received: u64,
+    pub transmitted: u64,
+    pub packets_received: u64,
+    pub packets_transmitted: u64,
+    pub errors_on_received: u64,
+    pub errors_on_transmitted: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DiskStats {
-    name: String,
-    total_space: u64,
-    available_space: u64,
-    is_removable: bool,
+    pub name: String,
+    pub total_space: u64,
+    pub available_space: u64,
+    pub is_removable: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -56,12 +60,12 @@ pub struct LoadAverage {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ProcessStats {
-    name: String,
-    pid: i32,
-    cpu_usage: f32,
-    memory: u64,
-    virtual_memory: u64,
-    start_time: u64,
+    pub name: String,
+    pub pid: i32,
+    pub cpu_usage: f32,
+    pub memory: u64,
+    pub virtual_memory: u64,
+    pub start_time: u64,
 }
 
 fn get_system_stats_internal() -> SystemStats {
@@ -89,6 +93,10 @@ fn get_system_stats_internal() -> SystemStats {
             name: name.to_string(),
             received: data.received(),
             transmitted: data.transmitted(),
+            packets_received: data.packets_received(),
+            packets_transmitted: data.packets_transmitted(),
+            errors_on_received: data.errors_on_received(),
+            errors_on_transmitted: data.errors_on_transmitted(),
         })
         .collect();
     let cpu_usage = system.global_processor_info().cpu_usage();
