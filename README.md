@@ -7,7 +7,7 @@ Distribute an PCap sourced MpegTS/SMPTE2110 multcast network stream and send met
 Capture the TS/SMPTE2110 using pcap with filter rules for specifying which stream ip and port. Validate the stream for conformance
 Send metrics to Kafka if requested for long-term storage.
 
-Gstreamer support with --features gst `make build_gst` for using Gstreamer for stream demuxing/decoding. Currently `--extract-images` will extract images from the stream and save them to disk or send them off to a kafka feed as base64 with json metadata. See [scripts/probe.sh](src/bin/probe.rs) for examples of how to use RsCap in a common use case.
+Gstreamer support with --features gst `make build_gst` for using Gstreamer for stream demuxing/decoding. Currently `--extract-images` will extract images from the stream and save them to disk or send them off to a kafka feed as base64 with json metadata. See [scripts/probe.sh](src/bin/probe.sh) for examples of how to use RsCap in a common use case.
 
 # The probe client
 
