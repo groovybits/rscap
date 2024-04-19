@@ -1414,23 +1414,6 @@ async fn rscap(running: Arc<AtomicBool>) {
                             last_kafka_send_time = Instant::now();
                         }
                     }
-
-                    // Call the `send` function with the necessary arguments
-                    /*send(
-                        &stream_data,
-                        args.output_file.clone(),
-                        args.kafka_broker.clone(),
-                        args.kafka_topic.clone(),
-                        args.send_to_kafka,
-                        args.kafka_timeout,
-                        args.kafka_key.clone(),
-                        args.kafka_interval,
-                        args.no_progress,
-                        &mut output_file_counter,
-                        &mut last_kafka_send_time,
-                        &mut dot_file_last_write,
-                    )
-                    .await;*/
                 }
                 batch.clear();
             }
@@ -1622,7 +1605,6 @@ async fn rscap(running: Arc<AtomicBool>) {
 
                 if video_pid < Some(0x1FFF)
                     && video_pid > Some(0)
-                    && video_stream_type > 0
                     && stream_data.pid == video_pid.unwrap()
                     && video_stream_type != stream_data.stream_type_number
                 {
