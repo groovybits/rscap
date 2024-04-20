@@ -94,36 +94,36 @@ fn flatten_streams(
 
         let prefix = format!("streams.{}", pid);
 
-        // Adding basic info of the stream
+        flat_structure.insert(format!("{}.id", prefix), json!(stream_data.probe_id));
+        flat_structure.insert(
+            format!("{}.program_number", prefix),
+            json!(stream_data.program_number),
+        );
+        flat_structure.insert(format!("{}.pid", prefix), json!(stream_data.pid));
+        flat_structure.insert(format!("{}.pmt_pid", prefix), json!(stream_data.pmt_pid));
         flat_structure.insert(
             format!("{}.stream_type", prefix),
             json!(stream_data.stream_type),
         );
         flat_structure.insert(
-            format!("{}.program_number", prefix),
-            json!(stream_data.program_number),
+            format!("{}.capture_time", prefix),
+            json!(stream_data.capture_time),
         );
-        flat_structure.insert(format!("{}.pmt_pid", prefix), json!(stream_data.pmt_pid));
         flat_structure.insert(
-            format!("{}.bitrate_avg", prefix),
-            json!(stream_data.bitrate_avg),
+            format!("{}.capture_iat", prefix),
+            json!(stream_data.capture_iat),
         );
+        flat_structure.insert(
+            format!("{}.capture_iat_max", prefix),
+            json!(stream_data.capture_iat_max),
+        );
+        flat_structure.insert(format!("{}.iat", prefix), json!(stream_data.iat));
+        flat_structure.insert(format!("{}.iat_max", prefix), json!(stream_data.iat_max));
+        flat_structure.insert(format!("{}.iat_min", prefix), json!(stream_data.iat_min));
         flat_structure.insert(format!("{}.iat_avg", prefix), json!(stream_data.iat_avg));
         flat_structure.insert(
             format!("{}.packet_count", prefix),
             json!(grouping.stream_data_list.len()),
-        );
-
-        // Adding detailed stats of the stream
-        flat_structure.insert(format!("{}.pid", prefix), json!(stream_data.pid));
-        flat_structure.insert(format!("{}.pmt_pid", prefix), json!(stream_data.pmt_pid));
-        flat_structure.insert(
-            format!("{}.program_number", prefix),
-            json!(stream_data.program_number),
-        );
-        flat_structure.insert(
-            format!("{}.stream_type", prefix),
-            json!(stream_data.stream_type),
         );
         flat_structure.insert(
             format!("{}.continuity_counter", prefix),
@@ -146,10 +146,6 @@ fn flatten_streams(
             format!("{}.bitrate_avg", prefix),
             json!(stream_data.bitrate_avg),
         );
-        flat_structure.insert(format!("{}.iat", prefix), json!(stream_data.iat));
-        flat_structure.insert(format!("{}.iat_max", prefix), json!(stream_data.iat_max));
-        flat_structure.insert(format!("{}.iat_min", prefix), json!(stream_data.iat_min));
-        flat_structure.insert(format!("{}.iat_avg", prefix), json!(stream_data.iat_avg));
         flat_structure.insert(
             format!("{}.error_count", prefix),
             json!(stream_data.error_count),
@@ -191,21 +187,6 @@ fn flatten_streams(
             format!("{}.stream_type_number", prefix),
             json!(stream_data.stream_type_number),
         );
-
-        flat_structure.insert(
-            format!("{}.capture_time", prefix),
-            json!(stream_data.capture_time),
-        );
-        flat_structure.insert(
-            format!("{}.capture_iat", prefix),
-            json!(stream_data.capture_iat),
-        );
-        flat_structure.insert(
-            format!("{}.capture_iat_max", prefix),
-            json!(stream_data.capture_iat_max),
-        );
-
-        flat_structure.insert(format!("{}.id", prefix), json!(stream_data.probe_id));
     }
 
     flat_structure
@@ -238,7 +219,6 @@ async fn kafka_produce_message(
     );
 
     let record = FutureRecord::to(&kafka_topic).payload(&data).key(&key);
-    /* .timestamp(stream_data_timestamp);*/
 
     let delivery_future = producer
         .send(record, Duration::from_secs(kafka_timeout))
@@ -493,7 +473,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.110",
+    version = "0.5.111",
     about = "MpegTS Stream Analysis Probe with Kafka and GStreamer"
 )]
 struct Args {
@@ -1084,9 +1064,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                     let mut averaged_probe_data: serde_json::Map<String, serde_json::Value> =
                         serde_json::Map::new();
 
-                    //let packet_slice = &stream_data.packet[stream_data.packet_start
-                    //    ..stream_data.packet_start + stream_data.packet_len];
-
                     // Check if it's time to send data to Kafka based on the interval
                     if !args.kafka_broker.is_empty() && args.kafka_broker != "" {
                         // Acquire write access to PROBE_DATA
@@ -1227,15 +1204,16 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                     .insert("captions".to_string(), serde_json::json!(captions));
 
                                 // Insert the base64_image field into the flattened_data map
-                                flattened_data
-                                    .insert("image_pts".to_string(), serde_json::json!(image_pts));
                                 let base64_image_tag = if !base64_image.is_empty() {
                                     log::debug!("Got Image: {} bytes", base64_image.len());
+
                                     force_send_message = true;
                                     format!("data:image/jpeg;base64,{}", base64_image)
                                 } else {
                                     "".to_string()
                                 };
+                                flattened_data
+                                    .insert("image_pts".to_string(), serde_json::json!(image_pts));
                                 flattened_data.insert(
                                     "base64_image".to_string(),
                                     serde_json::json!(base64_image_tag),
@@ -1350,17 +1328,17 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                 // Flatten the disk stats and insert them into the structure
                                 for (i, disk) in system_stats.disk_stats.iter().enumerate() {
                                     flattened_data
-                                        .insert(format!("disk_stats_{}_name", i), json!(disk.name));
+                                        .insert(format!("disk_stats.{}.name", i), json!(disk.name));
                                     flattened_data.insert(
-                                        format!("disk_stats_{}_total_space", i),
+                                        format!("disk_stats.{}.total_space", i),
                                         json!(disk.total_space),
                                     );
                                     flattened_data.insert(
-                                        format!("disk_stats_{}_available_space", i),
+                                        format!("disk_stats.{}.available_space", i),
                                         json!(disk.available_space),
                                     );
                                     flattened_data.insert(
-                                        format!("disk_stats_{}_is_removable", i),
+                                        format!("disk_stats.{}.is_removable", i),
                                         json!(disk.is_removable),
                                     );
                                 }
