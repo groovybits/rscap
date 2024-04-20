@@ -473,7 +473,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.112",
+    version = "0.5.113",
     about = "MpegTS Stream Analysis Probe with Kafka and GStreamer"
 )]
 struct Args {
@@ -649,10 +649,6 @@ struct Args {
     /// Video buffer size - Size of the buffer for the video to gstreamer
     #[clap(long, env = "VIDEO_BUFFER_SIZE", default_value_t = 100000)]
     video_buffer_size: usize,
-
-    /// Chunk Buffer size = Size of the buffer for the chunked packet bundles to the main processing thread
-    #[clap(long, env = "CHUNK_BUFFER_SIZE", default_value_t = 100000)]
-    chunk_buffer_size: usize,
 
     /// Kafka Broker
     #[clap(long, env = "KAFKA_BROKER", default_value = "")]
@@ -1422,52 +1418,70 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     #[cfg(feature = "gst")]
     let (image_sender, mut image_receiver) = mpsc::channel(args.image_buffer_size);
 
+    // Initialize GStreamer
+    #[cfg(feature = "gst")]
+    gstreamer::init().expect("Failed to initialize GStreamer");
+
     // Initialize the pipeline
     #[cfg(feature = "gst")]
-    let (pipeline, appsrc, appsink) = match initialize_pipeline(
-        &args.input_codec,
-        args.image_height,
-        args.gst_queue_buffers,
-        !args.scale_images_after_gstreamer,
-        &args.image_framerate,
-    ) {
-        Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
-        Err(err) => {
-            eprintln!("Failed to initialize the pipeline: {}", err);
-            return;
+    let (pipeline, appsrc, appsink) = if args.extract_images {
+        match initialize_pipeline(
+            &args.input_codec,
+            args.image_height,
+            args.gst_queue_buffers,
+            !args.scale_images_after_gstreamer,
+            &args.image_framerate,
+        ) {
+            Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
+            Err(err) => {
+                eprintln!("Failed to initialize the pipeline: {}", err);
+                return;
+            }
         }
+    } else {
+        (
+            gstreamer::Pipeline::new(),
+            gstreamer_app::AppSrc::builder().build(),
+            gstreamer_app::AppSink::builder().build(),
+        )
     };
 
     // Start the pipeline
     #[cfg(feature = "gst")]
-    match pipeline.set_state(gst::State::Playing) {
-        Ok(_) => (),
-        Err(err) => {
-            eprintln!("Failed to set the pipeline state to Playing: {}", err);
-            return;
+    if args.extract_images {
+        match pipeline.set_state(gst::State::Playing) {
+            Ok(_) => (),
+            Err(err) => {
+                eprintln!("Failed to set the pipeline state to Playing: {}", err);
+                return;
+            }
         }
     }
 
     // Spawn separate tasks for processing video packets and pulling images
     #[cfg(feature = "gst")]
-    process_video_packets(
-        appsrc,
-        video_packet_receiver,
-        running_gstreamer_process.clone(),
-    );
+    if args.extract_images {
+        process_video_packets(
+            appsrc,
+            video_packet_receiver,
+            running_gstreamer_process.clone(),
+        );
+    }
     #[cfg(feature = "gst")]
-    pull_images(
-        appsink,
-        /*Arc::new(Mutex::new(image_sender)),*/
-        image_sender,
-        args.save_images,
-        args.image_sample_rate_ns,
-        args.image_height,
-        args.filmstrip_length,
-        args.jpeg_quality,
-        args.image_frame_increment,
-        running_gstreamer_pull,
-    );
+    if args.extract_images {
+        pull_images(
+            appsink,
+            /*Arc::new(Mutex::new(image_sender)),*/
+            image_sender,
+            args.save_images,
+            args.image_sample_rate_ns,
+            args.image_height,
+            args.filmstrip_length,
+            args.jpeg_quality,
+            args.image_frame_increment,
+            running_gstreamer_pull,
+        );
+    }
 
     // Watch file thread and sender/receiver for log file input
     let (watch_file_sender, watch_file_receiver) = channel();
@@ -1783,10 +1797,12 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
     // Stop the pipeline when done
     #[cfg(feature = "gst")]
-    match pipeline.set_state(gst::State::Null) {
-        Ok(_) => (),
-        Err(err) => {
-            eprintln!("Failed to set the pipeline state to Null: {}", err);
+    if args.extract_images {
+        match pipeline.set_state(gst::State::Null) {
+            Ok(_) => (),
+            Err(err) => {
+                eprintln!("Failed to set the pipeline state to Null: {}", err);
+            }
         }
     }
 

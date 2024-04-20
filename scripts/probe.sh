@@ -46,6 +46,9 @@ else
     exit 1
 fi
 
+EXTRACT_IMAGES_ARG=
+EXTRACT_IMAGES_ARG=--extract-images
+
 echo "Using $PROBE_BIN"
 
 $PROBE_BIN -V
@@ -64,10 +67,10 @@ sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     GST_DEBUG=$GST_DEBUG_LEVEL \
     RUST_BACKTRACE=$BACKTRACE \
     $VALGRIND $NUMACTL $PROBE_BIN \
+    $EXTRACT_IMAGES_ARG \
     --source-device $SOURCE_DEVICE \
     --source-ip $SOURCE_IP \
     --source-port $SOURCE_PORT \
     --kafka-broker $KAFKA_BROKER \
     --kafka-topic "rsprobe" \
-    --extract-images \
     $@
