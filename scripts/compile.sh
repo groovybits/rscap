@@ -9,13 +9,13 @@ if [ "$1" != "" ]; then
 fi
 
 BUILD=release-with-debug
-PREFIX=/opt/rscap
+PREFIX=/opt/rsprobe
 
 LD_LIBRARY_PATH=$PREFIX/lib:$PREFIX/lib64:$LD_LIBRARY_PATH
 export LD_LIBRARY_PATH
 
-# Assuming your pkg-config files are in /opt/rscap/lib64/pkgconfig
-PKG_CONFIG_PATH=/opt/rscap/lib64/pkgconfig:$PKG_CONFIG_PATH
+# Assuming your pkg-config files are in /opt/rsprobe/lib64/pkgconfig
+PKG_CONFIG_PATH=/opt/rsprobe/lib64/pkgconfig:$PKG_CONFIG_PATH
 export PKG_CONFIG_PATH
 
 # Function to prompt for installation
@@ -44,7 +44,7 @@ install_rust() {
 
 # Function to run a command within the SCL environment for CentOS
 run_with_scl() {
-    export PKG_CONFIG_PATH=/opt/rscap/lib64/pkgconfig:/opt/rscap/lib/pkgconfig:$PKG_CONFIG_PATH
+    export PKG_CONFIG_PATH=/opt/rspobe/lib64/pkgconfig:/opt/rsprobe/lib/pkgconfig:$PKG_CONFIG_PATH
     scl enable devtoolset-11 -- "$@"
 }
 

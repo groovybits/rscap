@@ -19,7 +19,7 @@ RUN /app/install.sh gst
 FROM centos:7 AS binary
 
 # Copy the installed RsCap files from the builder stage
-COPY --from=builder /opt/rscap /opt/rscap
+COPY --from=builder /opt/rsprobe /opt/rsprobe
 
 # Install required runtime dependencies
 RUN yum install -y libpcap zlib glibc-devel libstdc++ && \
@@ -30,7 +30,7 @@ ARG SOURCE_DEVICE=eth0
 ARG SOURCE_IP=224.0.0.200
 ARG SOURCE_PORT=10001
 ARG KAFKA_KEY=
-ARG KAFKA_TOPIC=rscap
+ARG KAFKA_TOPIC=rsprobe
 ARG KAFKA_BROKER=localhost:9092
 ARG EXTRACT_IMAGES=true
 
@@ -44,4 +44,4 @@ ENV KAFKA_BROKER=${KAFKA_BROKER}
 ENV EXTRACT_IMAGES=${EXTRACT_IMAGES}
 
 # Set the entrypoint
-ENTRYPOINT ["/opt/rscap/bin/probe", "--pcap-stats"]
+ENTRYPOINT ["/opt/rsprobe/bin/probe", "--pcap-stats"]

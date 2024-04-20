@@ -2,8 +2,8 @@
 #
 if [ -f "scripts/setup_env.sh" ]; then
     source scripts/setup_env.sh
-elif [ -f "/opt/rscap/bin/setup_env.sh" ]; then
-    source /opt/rscap/bin/setup_env.sh
+elif [ -f "/opt/rsprobe/bin/setup_env.sh" ]; then
+    source /opt/rsprobe/bin/setup_env.sh
 fi
 
 if [ -f ".env" ]; then
@@ -68,6 +68,6 @@ sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     --source-ip $SOURCE_IP \
     --source-port $SOURCE_PORT \
     --kafka-broker $KAFKA_BROKER \
-    --kafka-topic "rscap" \
+    --kafka-topic "rsprobe" \
     --extract-images \
     $@

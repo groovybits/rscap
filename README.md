@@ -28,11 +28,11 @@ rpmbuild -bb specs/rsprobe.spec
 
 ## Building and Executing RsCap with Gstreamer Dependencies
 
-- RsProbe + Gstreamer Install script: [scripts/install.sh](scripts/install.sh) for Gstreamer + deps setup on Linux CentOS 7 and macOS into the `/opt/rscap` contained directory.
-- RsProbe Compile script: [scripts/compile.sh](scripts/compile.sh) for RsProbe build using Gstreamer setup in `/opt/rscap`.
+- RsProbe + Gstreamer Install script: [scripts/install.sh](scripts/install.sh) for Gstreamer + deps setup on Linux CentOS 7 and macOS into the `/opt/rsprobe` contained directory.
+- RsProbe Compile script: [scripts/compile.sh](scripts/compile.sh) for RsProbe build using Gstreamer setup in `/opt/rsprobe`.
 
 ```text
-# Install RsProbe w/gstreamer in /opt/rscap/ (MacOS or CentOS 7)
+# Install RsProbe w/gstreamer in /opt/rsprobe/ (MacOS or CentOS 7)
 ./scripts/install.sh
 
 # Optionally rebuild RsProbe if making changes

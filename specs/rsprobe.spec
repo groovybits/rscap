@@ -275,9 +275,9 @@ echo "Building RsCap..."
 echo "------------------------------------------------------------"
 
 # Clone RsCap repository and checkout the specific tag
-rm -rf rscap
-git clone https://github.com/groovybits/rscap.git
-cd rscap
+rm -rf rsprobe
+git clone https://github.com/groovybits/rscap.git rsprobe
+cd rsprobe
 
 ## Build RsCap
 git checkout $RSCAP_VERSION
@@ -290,8 +290,8 @@ cp scripts/setup_env.sh %{_builddir}%{prefix}/bin
 
 cd ..
 
-# cleanup rscap
-rm -rf rscap
+# cleanup rsprobe
+rm -rf rsprobe
 
 # Remove unnecessary build dependencies
 rm -rf %{_builddir}%{prefix}/cargo
@@ -376,13 +376,13 @@ echo "------------------------------------------------------------"
 
 # Post installation script
 %post
-echo "%{prefix}/lib64" > %{_sysconfdir}/ld.so.conf.d/rscap64.conf
+echo "%{prefix}/lib64" > %{_sysconfdir}/ld.so.conf.d/rsprobe64.conf
 /sbin/ldconfig
 
 # Post uninstallation script
 %postun
 if [ $1 -eq 0 ]; then
-    rm -f %{_sysconfdir}/ld.so.conf.d/rscap64.conf
+    rm -f %{_sysconfdir}/ld.so.conf.d/rsprobe64.conf
     /sbin/ldconfig
 fi
 
