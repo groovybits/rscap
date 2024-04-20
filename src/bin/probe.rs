@@ -192,6 +192,19 @@ fn flatten_streams(
             json!(stream_data.stream_type_number),
         );
 
+        flat_structure.insert(
+            format!("{}.capture_time", prefix),
+            json!(stream_data.capture_time),
+        );
+        flat_structure.insert(
+            format!("{}.capture_iat", prefix),
+            json!(stream_data.capture_iat),
+        );
+        flat_structure.insert(
+            format!("{}.capture_iat_max", prefix),
+            json!(stream_data.capture_iat_max),
+        );
+
         flat_structure.insert(format!("{}.id", prefix), json!(stream_data.probe_id));
     }
 
