@@ -1,196 +1,326 @@
 {
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
-    "streams": {
-      "type": "object",
-      "patternProperties": {
-        "^\\d+$": {
-          "type": "object",
-          "properties": {
-            "stream_type": { "type": "string" },
-            "program_number": { "type": "integer" },
-            "pmt_pid": { "type": "integer" },
-            "bitrate_avg": { "type": "number" },
-            "iat_avg": { "type": "number" },
-            "packet_count": { "type": "integer" },
-            "pid": { "type": "integer" },
-            "continuity_counter": { "type": "integer" },
-            "timestamp": { "type": "integer" },
-            "bitrate": { "type": "number" },
-            "bitrate_max": { "type": "number" },
-            "bitrate_min": { "type": "number" },
-            "iat": { "type": "number" },
-            "iat_max": { "type": "number" },
-            "iat_min": { "type": "number" },
-            "error_count": { "type": "integer" },
-            "current_error_count": { "type": "integer" },
-            "last_arrival_time": { "type": "integer" },
-            "last_sample_time": { "type": "integer" },
-            "start_time": { "type": "integer" },
-            "total_bits": { "type": "integer" },
-            "total_bits_sample": { "type": "integer" },
-            "count": { "type": "integer" },
-            "packet_start": { "type": "integer" },
-            "packet_len": { "type": "integer" },
-            "rtp_timestamp": { "type": "integer" },
-            "rtp_payload_type": { "type": "integer" },
-            "rtp_payload_type_name": { "type": "string" },
-            "rtp_line_number": { "type": "integer" },
-            "rtp_line_offset": { "type": "integer" },
-            "rtp_line_length": { "type": "integer" },
-            "rtp_field_id": { "type": "integer" },
-            "rtp_line_continuation": { "type": "boolean" },
-            "rtp_extended_sequence_number": { "type": "integer" },
-            "stream_type_number": { "type": "integer" },
-            "capture_time": { "type": "integer" },
-            "capture_iat": { "type": "number" },
-            "capture_iat_max": { "type": "number" },
-            "has_image": { "type": "boolean" },
-            "image_pts": { "type": "integer" },
-            "log_message": { "type": "string" },
-            "total_memory": { "type": "integer" },
-            "used_memory": { "type": "integer" },
-            "total_swap": { "type": "integer" },
-            "used_swap": { "type": "integer" },
-            "cpu_usage": { "type": "number" },
-            "cpu_count": { "type": "integer" },
-            "core_count": { "type": "integer" },
-            "boot_time": { "type": "integer" },
-            "load_avg_one": { "type": "number" },
-            "load_avg_five": { "type": "number" },
-            "load_avg_fifteen": { "type": "number" },
-            "host_name": { "type": "string" },
-            "kernel_version": { "type": "string" },
-            "os_version": { "type": "string" },
-            "process_count": { "type": "integer" },
-            "uptime": { "type": "integer" },
-            "system_name": { "type": "string" },
-            "network": {
-              "type": "object",
-              "patternProperties": {
-                "^.*$": {
-                  "type": "object",
-                  "properties": {
-                    "received": { "type": "integer" },
-                    "transmitted": { "type": "integer" },
-                    "packets_received": { "type": "integer" },
-                    "packets_transmitted": { "type": "integer" },
-                    "errors_on_received": { "type": "integer" },
-                    "errors_on_transmitted": { "type": "integer" }
-                  },
-                  "required": [
-                    "received",
-                    "transmitted",
-                    "packets_received",
-                    "packets_transmitted",
-                    "errors_on_received",
-                    "errors_on_transmitted"
-                  ],
-                  "additionalProperties": false
-                }
-              },
-              "additionalProperties": false
-            },
-            "disk_stats": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "name": { "type": "string" },
-                  "total_space": { "type": "integer" },
-                  "available_space": { "type": "integer" },
-                  "is_removable": { "type": "boolean" }
-                },
-                "required": [
-                  "name",
-                  "total_space",
-                  "available_space",
-                  "is_removable"
-                ],
-                "additionalProperties": false
-              }
-            },
-            "processes": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "pattern": "^{\"name\":\".*\",\"pid\":\\d+,\"cpu_usage\":\\d+\\.\\d+,\"memory\":\\d+,\"virtual_memory\":\\d+,\"start_time\":\\d+}$"
-              }
-            },
-            "id": { "type": "string" },
-            "captions": { "type": "string" }
+    "audio_loudness": {
+      "type": "string"
+    },
+    "base64_image": {
+      "type": "string"
+    },
+    "bitrate_avg_global": {
+      "type": "integer"
+    },
+    "boot_time": {
+      "type": "integer"
+    },
+    "captions": {
+      "type": "string"
+    },
+    "cc_errors_global": {
+      "type": "integer"
+    },
+    "core_count": {
+      "type": "integer"
+    },
+    "cpu_count": {
+      "type": "integer"
+    },
+    "cpu_usage": {
+      "type": "number"
+    },
+    "current_cc_errors_global": {
+      "type": "integer"
+    },
+    "disk_stats": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "available_space": {
+            "type": "integer"
           },
-          "required": [
-            "stream_type",
-            "program_number",
-            "pmt_pid",
-            "bitrate_avg",
-            "iat_avg",
-            "packet_count",
-            "pid",
-            "continuity_counter",
-            "timestamp",
-            "bitrate",
-            "bitrate_max",
-            "bitrate_min",
-            "iat",
-            "iat_max",
-            "iat_min",
-            "error_count",
-            "current_error_count",
-            "last_arrival_time",
-            "last_sample_time",
-            "start_time",
-            "total_bits",
-            "total_bits_sample",
-            "count",
-            "packet_start",
-            "packet_len",
-            "rtp_timestamp",
-            "rtp_payload_type",
-            "rtp_payload_type_name",
-            "rtp_line_number",
-            "rtp_line_offset",
-            "rtp_line_length",
-            "rtp_field_id",
-            "rtp_line_continuation",
-            "rtp_extended_sequence_number",
-            "stream_type_number",
-            "capture_time",
-            "capture_iat",
-            "capture_iat_max",
-            "has_image",
-            "image_pts",
-            "log_message",
-            "total_memory",
-            "used_memory",
-            "total_swap",
-            "used_swap",
-            "cpu_usage",
-            "cpu_count",
-            "core_count",
-            "boot_time",
-            "load_avg_one",
-            "load_avg_five",
-            "load_avg_fifteen",
-            "host_name",
-            "kernel_version",
-            "os_version",
-            "process_count",
-            "uptime",
-            "system_name",
-            "network",
-            "disk_stats",
-            "processes",
-            "id",
-            "captions"
-          ],
-          "additionalProperties": false
-        }
-      },
-      "additionalProperties": false
+          "is_removable": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "total_space": {
+            "type": "integer"
+          }
+        },
+        "required": ["available_space", "is_removable", "name", "total_space"]
+      }
+    },
+    "host_name": {
+      "type": "string"
+    },
+    "iat_avg_global": {
+      "type": "number"
+    },
+    "iat_max_global": {
+      "type": "number"
+    },
+    "id": {
+      "type": "string"
+    },
+    "image_pts": {
+      "type": "integer"
+    },
+    "kernel_version": {
+      "type": "string"
+    },
+    "load_avg_fifteen": {
+      "type": "number"
+    },
+    "load_avg_five": {
+      "type": "number"
+    },
+    "load_avg_one": {
+      "type": "number"
+    },
+    "log_message": {
+      "type": "string"
+    },
+    "os_version": {
+      "type": "string"
+    },
+    "pid_map": {
+      "type": "string"
+    },
+    "process_count": {
+      "type": "integer"
+    },
+    "processes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "scte35": {
+      "type": "string"
+    },
+    "source_ip": {
+      "type": "string"
+    },
+    "source_port": {
+      "type": "integer"
+    },
+    "streams": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "bitrate": {
+            "type": "integer"
+          },
+          "bitrate_avg": {
+            "type": "integer"
+          },
+          "bitrate_max": {
+            "type": "integer"
+          },
+          "bitrate_min": {
+            "type": "integer"
+          },
+          "capture_iat": {
+            "type": "integer"
+          },
+          "capture_iat_max": {
+            "type": "integer"
+          },
+          "capture_time": {
+            "type": "integer"
+          },
+          "continuity_counter": {
+            "type": "integer"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "current_error_count": {
+            "type": "integer"
+          },
+          "error_count": {
+            "type": "integer"
+          },
+          "iat": {
+            "type": "integer"
+          },
+          "iat_avg": {
+            "type": "integer"
+          },
+          "iat_max": {
+            "type": "integer"
+          },
+          "iat_min": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_arrival_time": {
+            "type": "integer"
+          },
+          "last_sample_time": {
+            "type": "integer"
+          },
+          "packet_count": {
+            "type": "integer"
+          },
+          "packet_len": {
+            "type": "integer"
+          },
+          "packet_start": {
+            "type": "integer"
+          },
+          "pid": {
+            "type": "integer"
+          },
+          "pmt_pid": {
+            "type": "integer"
+          },
+          "program_number": {
+            "type": "integer"
+          },
+          "start_time": {
+            "type": "integer"
+          },
+          "stream_type": {
+            "type": "string"
+          },
+          "stream_type_number": {
+            "type": "integer"
+          },
+          "timestamp": {
+            "type": "integer"
+          },
+          "total_bits": {
+            "type": "integer"
+          },
+          "total_bits_sample": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bitrate",
+          "bitrate_avg",
+          "bitrate_max",
+          "bitrate_min",
+          "capture_iat",
+          "capture_iat_max",
+          "capture_time",
+          "continuity_counter",
+          "count",
+          "current_error_count",
+          "error_count",
+          "iat",
+          "iat_avg",
+          "iat_max",
+          "iat_min",
+          "id",
+          "last_arrival_time",
+          "last_sample_time",
+          "packet_count",
+          "packet_len",
+          "packet_start",
+          "pid",
+          "pmt_pid",
+          "program_number",
+          "start_time",
+          "stream_type",
+          "stream_type_number",
+          "timestamp",
+          "total_bits",
+          "total_bits_sample"
+        ]
+      }
+    },
+    "system_name": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "integer"
+    },
+    "total_memory": {
+      "type": "integer"
+    },
+    "total_swap": {
+      "type": "integer"
+    },
+    "uptime": {
+      "type": "integer"
+    },
+    "used_memory": {
+      "type": "integer"
+    },
+    "used_swap": {
+      "type": "integer"
     }
   },
-  "required": ["streams"],
-  "additionalProperties": false
+  "patternProperties": {
+    "^[a-zA-Z0-9_-]+\\.(network)$": {
+      "type": "object",
+      "properties": {
+        "errors_on_received": {
+          "type": "integer"
+        },
+        "errors_on_transmitted": {
+          "type": "integer"
+        },
+        "packets_received": {
+          "type": "integer"
+        },
+        "packets_transmitted": {
+          "type": "integer"
+        },
+        "received": {
+          "type": "integer"
+        },
+        "transmitted": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "errors_on_received",
+        "errors_on_transmitted",
+        "packets_received",
+        "packets_transmitted",
+        "received",
+        "transmitted"
+      ]
+    }
+  },
+  "required": [
+    "bitrate_avg_global",
+    "boot_time",
+    "cc_errors_global",
+    "core_count",
+    "cpu_count",
+    "cpu_usage",
+    "current_cc_errors_global",
+    "disk_stats",
+    "host_name",
+    "iat_avg_global",
+    "iat_max_global",
+    "id",
+    "kernel_version",
+    "load_avg_fifteen",
+    "load_avg_five",
+    "load_avg_one",
+    "os_version",
+    "process_count",
+    "processes",
+    "source_ip",
+    "source_port",
+    "streams",
+    "system_name",
+    "timestamp",
+    "total_memory",
+    "total_swap",
+    "uptime",
+    "used_memory",
+    "used_swap"
+  ]
 }

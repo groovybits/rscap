@@ -1516,7 +1516,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     // Create a separate thread for processing chunks
     tokio::spawn(async move {
         let mut batch = Vec::new();
-        let batch_timeout = tokio::time::Duration::from_millis(1); // Adjust the batch timeout as needed
+        let batch_timeout = tokio::time::Duration::from_millis(args.kafka_interval);
         let mut last_batch_time = tokio::time::Instant::now();
 
         while let Some(stream_data_chunk) = chunk_receiver.recv().await {
@@ -1786,7 +1786,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                 // Flush stdout to ensure the 'X' is printed
                 io::stdout().flush().unwrap();
                 // Sleep for a short duration to avoid high CPU usage
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
             }
             Err(TryRecvError::Disconnected) => {
                 // The channel has been disconnected, break the loop
