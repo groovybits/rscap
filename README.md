@@ -20,10 +20,10 @@ Use `.env` and/or command line args to override the default/env variables. See [
 
 ## RsProbe RPM for CentOS 7 with Gstreamer Support
 
-[specs/rscap.spec](specs/rscap.spec) builds for CentOS 7 with all the Gstreamer build dependencies handled for you.
+[specs/rsprobe.spec](specs/rsprobe.spec) builds for CentOS 7 with all the Gstreamer build dependencies handled for you.
 
 ```
-rpmbuild -bb specs/rscap.spec
+rpmbuild -bb specs/rsprobe.spec
 ```
 
 ## Building and Executing RsCap with Gstreamer Dependencies
