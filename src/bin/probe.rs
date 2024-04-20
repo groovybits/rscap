@@ -70,20 +70,6 @@ struct StreamGrouping {
     stream_data_list: Vec<StreamData>,
 }
 
-// Callback function to check the status of the sent messages
-async fn delivery_report(
-    result: Result<(i32, i64), (rdkafka::error::KafkaError, rdkafka::message::OwnedMessage)>,
-) {
-    match result {
-        Ok((partition, offset)) => log::debug!(
-            "Message delivered to partition {} at offset {}",
-            partition,
-            offset
-        ),
-        Err((err, _)) => println!("Message delivery failed: {:?}", err),
-    }
-}
-
 fn flatten_streams(
     stream_groupings: &AHashMap<u16, StreamGrouping>,
 ) -> serde_json::Map<String, Value> {
@@ -219,13 +205,19 @@ async fn kafka_produce_message(
     );
 
     let record = FutureRecord::to(&kafka_topic).payload(&data).key(&key);
+    let delivery_future = producer.send(record, Duration::from_millis(kafka_timeout));
 
-    let delivery_future = producer
-        .send(record, Duration::from_secs(kafka_timeout))
-        .await;
-    match delivery_future {
-        Ok(delivery_result) => delivery_report(Ok(delivery_result)).await,
-        Err(e) => log::error!("Failed to send message: {:?}", e),
+    match delivery_future.await {
+        Ok((partition, offset)) => {
+            log::debug!(
+                "Message delivered to partition {} at offset {}",
+                partition,
+                offset
+            );
+        }
+        Err(e) => {
+            log::error!("Failed to deliver message: {:?}", e);
+        }
     }
 }
 
@@ -967,6 +959,9 @@ async fn rsprobe(running: Arc<AtomicBool>) {
         let mut kafka_conf = ClientConfig::new();
         kafka_conf.set("bootstrap.servers", &args.kafka_broker);
         kafka_conf.set("client.id", "rsprobe");
+        kafka_conf.set("queue.buffering.max.messages", "10000");
+        kafka_conf.set("batch.num.messages", "1000");
+        kafka_conf.set("queue.buffering.max.ms", "500");
 
         let admin_client: AdminClient<DefaultClientContext> =
             kafka_conf.create().expect("Failed to create admin client");
