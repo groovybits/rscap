@@ -29,6 +29,7 @@ use rdkafka::admin::{AdminClient, AdminOptions, NewTopic};
 use rdkafka::client::DefaultClientContext;
 use rdkafka::config::ClientConfig;
 use rdkafka::producer::{FutureProducer, FutureRecord};
+use rsprobe::get_system_stats;
 use rsprobe::stream_data::{
     identify_video_pid, is_mpegts_or_smpte2110, parse_and_store_pat, process_packet,
     update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
@@ -38,7 +39,6 @@ use rsprobe::stream_data::{initialize_pipeline, process_video_packets, pull_imag
 use rsprobe::stream_data::{process_mpegts_packet, process_smpte2110_packet};
 use rsprobe::watch_file::watch_daemon;
 use rsprobe::{current_unix_timestamp_ms, hexdump};
-use rsprobe::{get_system_stats, SystemStats};
 use serde_json::{json, Value};
 use std::fs::File;
 use std::sync::mpsc::channel;
@@ -86,7 +86,6 @@ async fn delivery_report(
 
 fn flatten_streams(
     stream_groupings: &AHashMap<u16, StreamGrouping>,
-    system_stats: SystemStats,
 ) -> serde_json::Map<String, Value> {
     let mut flat_structure: serde_json::Map<String, Value> = serde_json::Map::new();
 
@@ -189,209 +188,11 @@ fn flatten_streams(
             json!(stream_data.packet_len),
         );
         flat_structure.insert(
-            format!("{}.rtp_timestamp", prefix),
-            json!(stream_data.rtp_timestamp),
-        );
-        flat_structure.insert(
-            format!("{}.rtp_payload_type", prefix),
-            json!(stream_data.rtp_payload_type),
-        );
-        flat_structure.insert(
-            format!("{}.rtp_payload_type_name", prefix),
-            json!(stream_data.rtp_payload_type_name),
-        );
-        flat_structure.insert(
-            format!("{}.rtp_line_number", prefix),
-            json!(stream_data.rtp_line_number),
-        );
-        flat_structure.insert(
-            format!("{}.rtp_line_offset", prefix),
-            json!(stream_data.rtp_line_offset),
-        );
-        flat_structure.insert(
-            format!("{}.rtp_line_length", prefix),
-            json!(stream_data.rtp_line_length),
-        );
-        flat_structure.insert(
-            format!("{}.rtp_field_id", prefix),
-            json!(stream_data.rtp_field_id),
-        );
-        flat_structure.insert(
-            format!("{}.rtp_line_continuation", prefix),
-            json!(stream_data.rtp_line_continuation),
-        );
-        flat_structure.insert(
-            format!("{}.rtp_extended_sequence_number", prefix),
-            json!(stream_data.rtp_extended_sequence_number),
-        );
-        flat_structure.insert(
             format!("{}.stream_type_number", prefix),
             json!(stream_data.stream_type_number),
         );
-        flat_structure.insert(
-            format!("{}.capture_time", prefix),
-            json!(stream_data.capture_time),
-        );
-        flat_structure.insert(
-            format!("{}.capture_iat", prefix),
-            json!(stream_data.capture_iat),
-        );
-        flat_structure.insert(
-            format!("{}.capture_iat_max", prefix),
-            json!(stream_data.capture_iat_max),
-        );
-
-        flat_structure.insert(
-            format!("{}.has_image", prefix),
-            json!(stream_data.has_image),
-        );
-        flat_structure.insert(
-            format!("{}.image_pts", prefix),
-            json!(stream_data.image_pts),
-        );
-        flat_structure.insert(
-            format!("{}.log_message", prefix),
-            json!(stream_data.log_message),
-        );
-
-        // Add system stats fields to the flattened structure
-        flat_structure.insert(
-            format!("{}.total_memory", prefix),
-            json!(system_stats.total_memory),
-        );
-        flat_structure.insert(
-            format!("{}.used_memory", prefix),
-            json!(system_stats.used_memory),
-        );
-        flat_structure.insert(
-            format!("{}.total_swap", prefix),
-            json!(system_stats.total_swap),
-        );
-        flat_structure.insert(
-            format!("{}.used_swap", prefix),
-            json!(system_stats.used_swap),
-        );
-        flat_structure.insert(
-            format!("{}.cpu_usage", prefix),
-            json!(system_stats.cpu_usage),
-        );
-        flat_structure.insert(
-            format!("{}.cpu_count", prefix),
-            json!(system_stats.cpu_count),
-        );
-        flat_structure.insert(
-            format!("{}.core_count", prefix),
-            json!(system_stats.core_count),
-        );
-        flat_structure.insert(
-            format!("{}.boot_time", prefix),
-            json!(system_stats.boot_time),
-        );
-        flat_structure.insert(
-            format!("{}.load_avg_one", prefix),
-            json!(system_stats.load_avg.one),
-        );
-        flat_structure.insert(
-            format!("{}.load_avg_five", prefix),
-            json!(system_stats.load_avg.five),
-        );
-        flat_structure.insert(
-            format!("{}.load_avg_fifteen", prefix),
-            json!(system_stats.load_avg.fifteen),
-        );
-        flat_structure.insert(
-            format!("{}.host_name", prefix),
-            json!(system_stats.host_name),
-        );
-        flat_structure.insert(
-            format!("{}.kernel_version", prefix),
-            json!(system_stats.kernel_version),
-        );
-        flat_structure.insert(
-            format!("{}.os_version", prefix),
-            json!(system_stats.os_version),
-        );
-
-        flat_structure.insert(
-            format!("{}.process_count", prefix),
-            json!(system_stats.process_count),
-        );
-        flat_structure.insert(format!("{}.uptime", prefix), json!(system_stats.uptime));
-        flat_structure.insert(
-            format!("{}.system_name", prefix),
-            json!(system_stats.system_name),
-        );
-
-        // Flatten the network stats and insert them into the structure
-        for network in &system_stats.network_stats {
-            flat_structure.insert(
-                format!("{}.network.{}.received", prefix, network.name),
-                json!(network.received),
-            );
-            flat_structure.insert(
-                format!("{}.network.{}.transmitted", prefix, network.name),
-                json!(network.transmitted),
-            );
-            flat_structure.insert(
-                format!("{}.network.{}.packets_received", prefix, network.name),
-                json!(network.packets_received),
-            );
-            flat_structure.insert(
-                format!("{}.network.{}.packets_transmitted", prefix, network.name),
-                json!(network.packets_transmitted),
-            );
-            flat_structure.insert(
-                format!("{}.network.{}.errors_on_received", prefix, network.name),
-                json!(network.errors_on_received),
-            );
-            flat_structure.insert(
-                format!("{}.network.{}.errors_on_transmitted", prefix, network.name),
-                json!(network.errors_on_transmitted),
-            );
-        }
-
-        // Flatten the disk stats and insert them into the structure
-        for (i, disk) in system_stats.disk_stats.iter().enumerate() {
-            flat_structure.insert(
-                format!("{}.disk_stats_{}_name", prefix, i),
-                json!(disk.name),
-            );
-            flat_structure.insert(
-                format!("{}.disk_stats_{}_total_space", prefix, i),
-                json!(disk.total_space),
-            );
-            flat_structure.insert(
-                format!("{}.disk_stats_{}_available_space", prefix, i),
-                json!(disk.available_space),
-            );
-            flat_structure.insert(
-                format!("{}.disk_stats_{}_is_removable", prefix, i),
-                json!(disk.is_removable),
-            );
-        }
-
-        // Flatten the processes and insert them into the structure as an array of strings
-        let cpu_threshold = 5.0; // CPU usage threshold (in percentage)
-        let ram_threshold = 100 * 1024 * 1024; // RAM usage threshold (in bytes)
-
-        let processes: Vec<String> = system_stats
-            .processes
-            .iter()
-            .filter(|process| {
-                process.cpu_usage > cpu_threshold || process.memory > ram_threshold
-            })
-            .map(|process| {
-                format!(
-                    "{{\"name\":\"{}\",\"pid\":{},\"cpu_usage\":{},\"memory\":{},\"virtual_memory\":{},\"start_time\":{}}}",
-                    process.name, process.pid, process.cpu_usage, process.memory, process.virtual_memory, process.start_time
-                )
-            })
-            .collect();
-
-        flat_structure.insert(format!("{}.processes", prefix), json!(processes));
 
         flat_structure.insert(format!("{}.id", prefix), json!(stream_data.probe_id));
-        flat_structure.insert(format!("{}.captions", prefix), json!(stream_data.captions));
     }
 
     flat_structure
@@ -845,7 +646,7 @@ struct Args {
     image_framerate: String,
 
     /// image_frame_increment - Increment the frame number by this amount for jpeg image strip, 0 matches filmstrip-length
-    #[clap(long, env = "IMAGE_FRAME_INCREMENT", default_value_t = 1)]
+    #[clap(long, env = "IMAGE_FRAME_INCREMENT", default_value_t = 0)]
     image_frame_increment: u8,
 
     /// Image buffer size - Size of the buffer for the images from gstreamer
@@ -1171,7 +972,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
         let mut last_system_stats = Instant::now();
         let mut dot_last_file_write = Instant::now();
         let mut log_messages = Vec::<String>::new();
-        let mut base64_image = String::new();
         let output_file_without_jpg = args.output_file.replace(".jpg", "");
 
         info!("Kafka publisher startup {}", args.kafka_broker);
@@ -1191,6 +991,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                 // Process and send messages
                 for stream_data in batch.iter() {
                     let mut force_send_message = false;
+                    let mut base64_image = String::new();
 
                     if stream_data.packet_len > 0 && stream_data.has_image > 0 {
                         let output_file_incremental =
@@ -1286,8 +1087,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             // Process each probe's data
                             for (_probe_id, probe_data) in probe_data_map.iter_mut() {
                                 let stream_groupings = &probe_data.stream_groupings;
-                                let mut flattened_data =
-                                    flatten_streams(&stream_groupings, system_stats.clone());
+                                let mut flattened_data = flatten_streams(&stream_groupings);
 
                                 // Initialize variables to accumulate global averages
                                 let mut total_bitrate_avg: u64 = 0;
@@ -1452,6 +1252,125 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                     "audio_loudness".to_string(),
                                     serde_json::json!(audio_loudness),
                                 );
+
+                                // Add system stats fields to the flattened structure
+                                flattened_data.insert(
+                                    format!("total_memory"),
+                                    json!(system_stats.total_memory),
+                                );
+                                flattened_data.insert(
+                                    format!("used_memory"),
+                                    json!(system_stats.used_memory),
+                                );
+                                flattened_data
+                                    .insert(format!("total_swap"), json!(system_stats.total_swap));
+                                flattened_data
+                                    .insert(format!("used_swap"), json!(system_stats.used_swap));
+                                flattened_data
+                                    .insert(format!("cpu_usage"), json!(system_stats.cpu_usage));
+                                flattened_data
+                                    .insert(format!("cpu_count"), json!(system_stats.cpu_count));
+                                flattened_data
+                                    .insert(format!("core_count"), json!(system_stats.core_count));
+                                flattened_data
+                                    .insert(format!("boot_time"), json!(system_stats.boot_time));
+                                flattened_data.insert(
+                                    format!("load_avg_one"),
+                                    json!(system_stats.load_avg.one),
+                                );
+                                flattened_data.insert(
+                                    format!("load_avg_five"),
+                                    json!(system_stats.load_avg.five),
+                                );
+                                flattened_data.insert(
+                                    format!("load_avg_fifteen"),
+                                    json!(system_stats.load_avg.fifteen),
+                                );
+                                flattened_data
+                                    .insert(format!("host_name"), json!(system_stats.host_name));
+                                flattened_data.insert(
+                                    format!("kernel_version"),
+                                    json!(system_stats.kernel_version),
+                                );
+                                flattened_data
+                                    .insert(format!("os_version"), json!(system_stats.os_version));
+
+                                flattened_data.insert(
+                                    format!("process_count"),
+                                    json!(system_stats.process_count),
+                                );
+                                flattened_data
+                                    .insert(format!("uptime"), json!(system_stats.uptime));
+                                flattened_data.insert(
+                                    format!("system_name"),
+                                    json!(system_stats.system_name),
+                                );
+
+                                // Flatten the network stats and insert them into the structure
+                                for network in &system_stats.network_stats {
+                                    flattened_data.insert(
+                                        format!("{}.network.received", network.name),
+                                        json!(network.received),
+                                    );
+                                    flattened_data.insert(
+                                        format!("{}.network.transmitted", network.name),
+                                        json!(network.transmitted),
+                                    );
+                                    flattened_data.insert(
+                                        format!("{}.network.packets_received", network.name),
+                                        json!(network.packets_received),
+                                    );
+                                    flattened_data.insert(
+                                        format!("{}.network.packets_transmitted", network.name),
+                                        json!(network.packets_transmitted),
+                                    );
+                                    flattened_data.insert(
+                                        format!("{}.network.errors_on_received", network.name),
+                                        json!(network.errors_on_received),
+                                    );
+                                    flattened_data.insert(
+                                        format!("{}.network.errors_on_transmitted", network.name),
+                                        json!(network.errors_on_transmitted),
+                                    );
+                                }
+
+                                // Flatten the disk stats and insert them into the structure
+                                for (i, disk) in system_stats.disk_stats.iter().enumerate() {
+                                    flattened_data
+                                        .insert(format!("disk_stats_{}_name", i), json!(disk.name));
+                                    flattened_data.insert(
+                                        format!("disk_stats_{}_total_space", i),
+                                        json!(disk.total_space),
+                                    );
+                                    flattened_data.insert(
+                                        format!("disk_stats_{}_available_space", i),
+                                        json!(disk.available_space),
+                                    );
+                                    flattened_data.insert(
+                                        format!("disk_stats_{}_is_removable", i),
+                                        json!(disk.is_removable),
+                                    );
+                                }
+
+                                // Flatten the processes and insert them into the structure as an array of strings
+                                let cpu_threshold = 5.0; // CPU usage threshold (in percentage)
+                                let ram_threshold = 100 * 1024 * 1024; // RAM usage threshold (in bytes)
+
+                                let processes: Vec<String> = system_stats
+                                    .processes
+                                    .iter()
+                                    .filter(|process| {
+                                        process.cpu_usage > cpu_threshold || process.memory > ram_threshold
+                                    })
+                                    .map(|process| {
+                                        format!(
+                                            "{{\"name\":\"{}\",\"pid\":{},\"cpu_usage\":{},\"memory\":{},\"virtual_memory\":{},\"start_time\":{}}}",
+                                            process.name, process.pid, process.cpu_usage, process.memory, process.virtual_memory, process.start_time
+                                        )
+                                    })
+                                    .collect();
+
+                                flattened_data.insert(format!("processes"), json!(processes));
 
                                 // Merge the probe-specific flattened data with the global data
                                 flattened_data.extend(probe_data.global_data.clone());
