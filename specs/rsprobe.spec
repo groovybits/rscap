@@ -237,7 +237,7 @@ export RUSTC=%{_builddir}%{prefix}/bin/rustc
 git clone git@github.com:groovybits/cargo-c.git
 cd cargo-c
 #run_with_scl cargo install cargo-c --root=%{_builddir}%{prefix}
-run_with_scl cargo install cargo-c --root=%{_builddir}%{prefix}
+run_with_scl cargo install --path=. --root=%{_builddir}%{prefix}
 cd ../
 
 rm -rf gst-plugin-rs

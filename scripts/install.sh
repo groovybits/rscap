@@ -424,7 +424,7 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   git clone git@github.com:groovybits/cargo-c.git
   cd cargo-c
   #run_with_scl cargo install cargo-c --root=$PREFIX
-  run_with_scl cargo install cargo-c --root=$PREFIX
+  run_with_scl cargo install --path=. --root=$PREFIX
   cd ../
 
   # Download gst-plugins-rs source code
