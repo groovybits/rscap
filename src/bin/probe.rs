@@ -1516,8 +1516,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     // Create a separate thread for processing chunks
     tokio::spawn(async move {
         let mut batch = Vec::new();
-        let batch_timeout = tokio::time::Duration::from_millis(args.kafka_interval * 3);
-        let mut last_batch_time = tokio::time::Instant::now();
 
         while let Some(stream_data_chunk) = chunk_receiver.recv().await {
             for mut stream_data in stream_data_chunk {
@@ -1689,16 +1687,13 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                 batch.push(stream_data);
 
                 // Check if the batch size is reached or the batch timeout has elapsed
-                if batch.len() >= args.kafka_batch_size
-                    || last_batch_time.elapsed() >= batch_timeout
-                {
+                if batch.len() >= args.kafka_batch_size {
                     // Send the batch to the Kafka thread
                     if ktx_clone1.send(batch).await.is_err() {
                         // If the channel is full, drop the batch and log a warning
                         log::warn!("Batch channel is full. Dropping batch.");
                     }
                     batch = Vec::new(); // Reset the batch
-                    last_batch_time = tokio::time::Instant::now(); // Reset the batch timeout
                 }
             }
         }
