@@ -421,7 +421,7 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   echo "---"
 
   # GStreamer Rust plugins
-  GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com:groovybits/cargo-c.git
+  GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/cargo-c.git
   cd cargo-c
   #run_with_scl cargo install cargo-c --root=$PREFIX
   run_with_scl cargo install --path=. --root=$PREFIX

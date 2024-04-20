@@ -1,5 +1,5 @@
 Name:           rsprobe
-Version:        0.5.107
+Version:        0.5.108
 Release:        1%{?dist}
 Summary:        MpegTS Stream Analysis Probe with Kafka and GStreamer
 License:        MIT
@@ -234,7 +234,7 @@ export CARGO=%{_builddir}%{prefix}/bin/cargo
 export RUSTC=%{_builddir}%{prefix}/bin/rustc
 
 # gstreamer rust plugins
-GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com:groovybits/cargo-c.git
+GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/cargo-c.git
 cd cargo-c
 #run_with_scl cargo install cargo-c --root=%{_builddir}%{prefix}
 run_with_scl cargo install --path=. --root=%{_builddir}%{prefix}
