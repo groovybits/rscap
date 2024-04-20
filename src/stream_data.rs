@@ -307,6 +307,8 @@ pub fn pull_images(
                                 scaled_data.len()
                             );
                         }
+
+                        drop(map);
                     } else {
                         // Sleep for a short time to prevent a busy loop
                         tokio::time::sleep(Duration::from_millis(10)).await;

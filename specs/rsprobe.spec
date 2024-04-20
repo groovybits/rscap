@@ -44,9 +44,6 @@ export PATH=%{_builddir}%{prefix}/bin:$PATH
 export PKG_CONFIG_PATH=%{_builddir}%{prefix}/lib64/pkgconfig:%{_builddir}%{prefix}/lib/pkgconfig:$PKG_CONFIG_PATH
 export LD_LIBRARY_PATH=%{_builddir}%{prefix}/lib64:%{_builddir}%{prefix}/lib:$LD_LIBRARY_PATH
 
-# Set RUSTFLAGS for RPATH
-export RUSTFLAGS="-C link-args=-Wl,-rpath,%{prefix}/lib:%{prefix}/lib64"
-
 # Explicitly use cmake3 for Meson configuration
 echo "[binaries]" > %{_builddir}/meson-native-file.ini
 echo "cmake = 'cmake3'" >> %{_builddir}/meson-native-file.ini
@@ -278,6 +275,9 @@ echo "------------------------------------------------------------"
 rm -rf rsprobe
 git clone https://github.com/groovybits/rscap.git rsprobe
 cd rsprobe
+
+# Set RUSTFLAGS for RPATH
+export RUSTFLAGS="-C link-args=-Wl,-rpath,%{prefix}/lib:%{prefix}/lib64"
 
 ## Build RsProbe
 git checkout $RSCAP_VERSION
