@@ -39,7 +39,7 @@ FFMPEG_VERSION=6.1.1
 LIBZVBI_VERSION=0.2.42
 
 # Define the installation prefix
-PREFIX=/opt/rscap
+PREFIX=/opt/rsprobe
 export PATH=$PREFIX/bin:$PATH
 
 USER=$(whoami)

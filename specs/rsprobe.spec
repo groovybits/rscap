@@ -6,7 +6,7 @@ License:        MIT
 URL:            https://github.com/groovybits/rscap
 BuildRequires:  epel-release, centos-release-scl-rh, gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3, libxml2-devel, pango-devel, cairo-devel, zvbi-devel, ladspa-devel, cairo-gobject-devel, cairo-gobject, rh-python38, rh-python38-python-pip
 Requires:       orc, libffi
-Prefix:        /opt/rscap
+Prefix:        /opt/rsprobe
 
 %description
 Capture probe analyzing MpegTS UDP Streams and sending status to Kafka with thumbnails and metadata information.
