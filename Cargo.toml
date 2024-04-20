@@ -8,7 +8,7 @@ license-file = "LICENSE"
 homepage = "https://github.com/groovybits/rscap"
 repository = "https://github.com/groovybits/rscap"
 authors = ["Chris Kennedy"]
-version = "0.5.106"
+version = "0.5.107"
 edition = "2021"
 
 [lib]
