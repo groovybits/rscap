@@ -1,5 +1,5 @@
 /*
- * rsprobe: probe.rs - Rust Stream Capture with pcap, output serialized stats to ZeroMQ
+ * rsprobe: probe.rs - MpegTS Stream Analysis Probe with Kafka and GStreamer
  *
  * Written in 2024 by Chris Kennedy (C)
  *
@@ -679,7 +679,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.105",
+    version = "0.5.106",
     about = "MpegTS Stream Analysis Probe with Kafka and GStreamer"
 )]
 struct Args {

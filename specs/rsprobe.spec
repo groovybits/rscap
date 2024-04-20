@@ -1,5 +1,5 @@
 Name:           rsprobe
-Version:        0.5.105
+Version:        0.5.106
 Release:        1%{?dist}
 Summary:        MpegTS Stream Analysis Probe with Kafka and GStreamer
 License:        MIT
