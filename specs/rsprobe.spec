@@ -110,7 +110,7 @@ rm -f nasm-$NASM_VERSION.tar.gz
 echo "---"
 echo "Cloning and compiling libx264..."
 echo "---"
-git clone https://code.videolan.org/videolan/x264.git
+GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"  git clone https://code.videolan.org/videolan/x264.git
 cd x264
 run_with_scl ./configure --prefix=%{_builddir}%{prefix} --enable-shared --enable-static --enable-pic --libdir=%{_builddir}%{prefix}/lib64 --includedir=%{_builddir}%{prefix}/include --extra-ldflags="-L%{_builddir}%{prefix}/lib64"
 run_with_scl make
@@ -123,7 +123,7 @@ rm -rf x264
 echo "---"
 echo "Cloning and compiling x265..."
 echo "---"
-git clone https://github.com/videolan/x265.git
+GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"  git clone https://github.com/videolan/x265.git
 cd x265
 mkdir -p build
 cd build
@@ -234,14 +234,14 @@ export CARGO=%{_builddir}%{prefix}/bin/cargo
 export RUSTC=%{_builddir}%{prefix}/bin/rustc
 
 # gstreamer rust plugins
-git clone git@github.com:groovybits/cargo-c.git
+GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone git@github.com:groovybits/cargo-c.git
 cd cargo-c
 #run_with_scl cargo install cargo-c --root=%{_builddir}%{prefix}
 run_with_scl cargo install --path=. --root=%{_builddir}%{prefix}
 cd ../
 
 rm -rf gst-plugin-rs
-git clone https://github.com/sdroege/gst-plugin-rs.git
+GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"  git clone https://github.com/sdroege/gst-plugin-rs.git
 cd gst-plugin-rs
 git checkout $GST_PLUGINS_RS_VERSION
 
@@ -277,7 +277,7 @@ echo "------------------------------------------------------------"
 
 # Clone RsProbe repository and checkout the specific tag
 rm -rf rsprobe
-git clone https://github.com/groovybits/rscap.git rsprobe
+GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/rscap.git rsprobe
 cd rsprobe
 
 # Set RUSTFLAGS for RPATH
