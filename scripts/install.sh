@@ -155,7 +155,7 @@ if [ "$(uname)" = "Darwin" ]; then
         echo "---"
         echo "Installing libzvbi..."
         echo "---"
-        git clone https://github.com/zapping-vbi/zvbi.git
+        GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/zapping-vbi/zvbi.git
         cd zvbi
         git checkout v$LIBZVBI_VERSION
         run_with_scl sh autogen.sh
@@ -228,7 +228,7 @@ if [ "$OS" = "Linux" ]; then
 
         # Clone the repository
         if [ ! -d "x264" ]; then
-            git clone https://code.videolan.org/videolan/x264.git
+            GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://code.videolan.org/videolan/x264.git
         fi
         cd x264
 
@@ -252,7 +252,7 @@ if [ "$OS" = "Linux" ]; then
 
         # Clone the x265 repository if it doesn't already exist
         if [ ! -d "x265" ]; then
-            git clone https://github.com/videolan/x265.git
+            GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/videolan/x265.git
         fi
         cd x265
 
@@ -421,7 +421,7 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   echo "---"
 
   # GStreamer Rust plugins
-  git clone git@github.com:groovybits/cargo-c.git
+  GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone git@github.com:groovybits/cargo-c.git
   cd cargo-c
   #run_with_scl cargo install cargo-c --root=$PREFIX
   run_with_scl cargo install --path=. --root=$PREFIX
@@ -429,7 +429,7 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
 
   # Download gst-plugins-rs source code
   if [ ! -f gst-plugin-rs ]; then
-    git clone https://github.com/sdroege/gst-plugin-rs.git
+    GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/sdroege/gst-plugin-rs.git
     cd gst-plugin-rs
     git checkout $GST_PLUGINS_RS_VERSION
     cd ..
