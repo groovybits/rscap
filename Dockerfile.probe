@@ -18,7 +18,7 @@ RUN /app/install.sh gst
 
 FROM centos:7 AS binary
 
-# Copy the installed RsCap files from the builder stage
+# Copy the installed RsProbe files from the builder stage
 COPY --from=builder /opt/rsprobe /opt/rsprobe
 
 # Install required runtime dependencies

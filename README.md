@@ -26,7 +26,7 @@ Use `.env` and/or command line args to override the default/env variables. See [
 rpmbuild -bb specs/rsprobe.spec
 ```
 
-## Building and Executing RsCap with Gstreamer Dependencies
+## Building and Executing RsProbe with Gstreamer Dependencies
 
 - RsProbe + Gstreamer Install script: [scripts/install.sh](scripts/install.sh) for Gstreamer + deps setup on Linux CentOS 7 and macOS into the `/opt/rsprobe` contained directory.
 - RsProbe Compile script: [scripts/compile.sh](scripts/compile.sh) for RsProbe build using Gstreamer setup in `/opt/rsprobe`.

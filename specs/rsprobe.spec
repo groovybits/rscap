@@ -269,21 +269,21 @@ echo "------------------------------------------------------------"
 echo "GStreamer and essential dependencies installed."
 echo "------------------------------------------------------------"
 
-# Build RsCap
+# Build RsProbe
 echo "------------------------------------------------------------"
-echo "Building RsCap..."
+echo "Building RsProbe..."
 echo "------------------------------------------------------------"
 
-# Clone RsCap repository and checkout the specific tag
+# Clone RsProbe repository and checkout the specific tag
 rm -rf rsprobe
 git clone https://github.com/groovybits/rscap.git rsprobe
 cd rsprobe
 
-## Build RsCap
+## Build RsProbe
 git checkout $RSCAP_VERSION
 run_with_scl cargo build --features gst --release
 
-# Copy RsCap binaries to the installation directory
+# Copy RsProbe binaries to the installation directory
 cp target/release/probe %{_builddir}%{prefix}/bin/
 cp scripts/probe.sh %{_builddir}%{prefix}/bin
 cp scripts/setup_env.sh %{_builddir}%{prefix}/bin
