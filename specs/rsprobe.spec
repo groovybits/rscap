@@ -233,8 +233,12 @@ export CARGO_HOME=%{_builddir}%{prefix}/cargo
 export CARGO=%{_builddir}%{prefix}/bin/cargo
 export RUSTC=%{_builddir}%{prefix}/bin/rustc
 
-# GStreamer Rust plugins
+# gstreamer rust plugins
+git clone git@github.com:groovybits/cargo-c.git
+cd cargo-c
+#run_with_scl cargo install cargo-c --root=%{_builddir}%{prefix}
 run_with_scl cargo install cargo-c --root=%{_builddir}%{prefix}
+cd ../
 
 rm -rf gst-plugin-rs
 git clone https://github.com/sdroege/gst-plugin-rs.git

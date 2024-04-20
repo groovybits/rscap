@@ -420,8 +420,12 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   echo "Installing GStreamer Rust plugins..."
   echo "---"
 
-  # Install cargo-c
-  run_with_scl cargo install cargo-c --root $PREFIX
+  # GStreamer Rust plugins
+  git clone git@github.com:groovybits/cargo-c.git
+  cd cargo-c
+  #run_with_scl cargo install cargo-c --root=$PREFIX
+  run_with_scl cargo install cargo-c --root=$PREFIX
+  cd ../
 
   # Download gst-plugins-rs source code
   if [ ! -f gst-plugin-rs ]; then
@@ -474,4 +478,3 @@ echo "------------------------------------------------------------"
 echo "Verifying GStreamer installation..."
 echo "------------------------------------------------------------"
 gst-launch-1.0 --version
-
