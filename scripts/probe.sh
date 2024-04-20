@@ -71,6 +71,6 @@ sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     --source-device $SOURCE_DEVICE \
     --source-ip $SOURCE_IP \
     --source-port $SOURCE_PORT \
-    --kafka-broker $KAFKA_BROKER \
     --kafka-topic "rsprobe" \
+    --kafka-broker $KAFKA_BROKER \
     $@

@@ -941,10 +941,16 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
     // Setup channel for passing stream_data for Kafka thread sending the stream data to monitor process
     let (ktx, mut krx) = mpsc::channel::<Vec<StreamData>>(kafka_channel_size);
+    let kafka_broker_clone = args.kafka_broker.clone();
+    let kafka_topic_clone = args.kafka_topic.clone();
+    let kafka_topic_clone1 = args.kafka_topic.clone();
+    let kafka_broker_clone1 = args.kafka_broker.clone();
+    let kafka_topic_clone2 = args.kafka_topic.clone();
+    let kafka_broker_clone2 = args.kafka_broker.clone();
 
     let kafka_thread = tokio::spawn(async move {
         // exit thread if kafka_broker is not set
-        if args.kafka_broker.is_empty() || args.kafka_topic.is_empty() {
+        if kafka_broker_clone.is_empty() || kafka_topic_clone.is_empty() {
             return;
         }
 
@@ -1383,8 +1389,8 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                 // Produce the message to Kafka
                                 let future = kafka_produce_message(
                                     ser_data,
-                                    args.kafka_broker.clone(),
-                                    args.kafka_topic.clone(),
+                                    kafka_broker_clone1.clone(),
+                                    kafka_topic_clone1.clone(),
                                     args.kafka_timeout.clone(),
                                     args.kafka_key.clone(),
                                     current_unix_timestamp_ms().unwrap_or(0) as i64,
@@ -1595,7 +1601,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             stream_data.packet_len,
                         );
                     }
-
                     // Extract the necessary slice for PID extraction and parsing
                     let packet_chunk = &stream_data.packet[stream_data.packet_start
                         ..stream_data.packet_start + stream_data.packet_len];
@@ -1755,7 +1760,16 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                     batch.push(stream_data);
 
                     // Check if the batch size is reached or the batch timeout has elapsed
-                    if batch.len() >= args.kafka_batch_size {
+                    if kafka_broker_clone2.is_empty() || kafka_topic_clone2.is_empty() {
+                        // If Kafka is not enabled, print the batch to stdout
+                        if batch.len() >= args.kafka_batch_size {
+                            // Print the batch to stdout
+                            for stream_data in &batch {
+                                log::info!("{:?}", stream_data);
+                            }
+                            batch = Vec::new(); // Reset the batch
+                        }
+                    } else if batch.len() >= args.kafka_batch_size {
                         // Send the batch to the Kafka thread
                         if ktx_clone1.send(batch).await.is_err() {
                             // If the channel is full, drop the batch and log a warning
