@@ -1516,7 +1516,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     // Create a separate thread for processing chunks
     tokio::spawn(async move {
         let mut batch = Vec::new();
-        let batch_timeout = tokio::time::Duration::from_millis(args.kafka_interval);
+        let batch_timeout = tokio::time::Duration::from_millis(args.kafka_interval * 3);
         let mut last_batch_time = tokio::time::Instant::now();
 
         while let Some(stream_data_chunk) = chunk_receiver.recv().await {
