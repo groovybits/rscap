@@ -1,4 +1,4 @@
-# Rust MpegTS Monitoring Capture Probe Kafka Producer
+# MpegTS Stream Analysis Probe with Kafka and GStreamer
 
 [![Rust](https://github.com/groovybits/rscap/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/groovybits/rscap/actions/workflows/rust.yml)
 
@@ -6,9 +6,9 @@
 
 This project is an experiment researching Rust and its efficiency at handling high rates of streaming MpegTS and SMPTE2110 for broadcast monitoring usage. The goal is to distribute a PCap-sourced MpegTS/SMPTE2110 multicast network stream and send metrics with image assets and stream metadata to Kafka. The project captures the TS/SMPTE2110 using pcap with filter rules for specifying the stream IP and port, and validates the stream for conformance. If requested, metrics are sent to Kafka for long-term storage.
 
-![RsCap](https://storage.googleapis.com/groovybits/images/rscap/rscap.webp)
+![RsProbe](https://storage.googleapis.com/groovybits/images/rscap/rscap.webp)
 
-Gstreamer support is available with the `--features gst` flag (`make build_gst`) for using Gstreamer for stream demuxing/decoding. Currently, `--extract-images` will extract images from the stream and save them to disk or send them off to a Kafka feed as base64 with JSON metadata. See [scripts/probe.sh](scripts/probe.sh) for examples of how to use RsCap in a common use case.
+Gstreamer support is available with the `--features gst` flag (`make build_gst`) for using Gstreamer for stream demuxing/decoding. Currently, `--extract-images` will extract images from the stream and save them to disk or send them off to a Kafka feed as base64 with JSON metadata. See [scripts/probe.sh](scripts/probe.sh) for examples of how to use RsProbe in a common use case.
 
 ## The Probe Client
 
@@ -18,7 +18,7 @@ The [src/bin/probe.rs](src/bin/probe.rs) takes MpegTS or SMPTE2110 via Packet Ca
 
 Use `.env` and/or command line args to override the default/env variables. See [.env.example](.env.example) for an example configuration.
 
-## RsCap RPM for CentOS 7 with Gstreamer Support
+## RsProbe RPM for CentOS 7 with Gstreamer Support
 
 [specs/rscap.spec](specs/rscap.spec) builds for CentOS 7 with all the Gstreamer build dependencies handled for you.
 
@@ -28,14 +28,14 @@ rpmbuild -bb specs/rscap.spec
 
 ## Building and Executing RsCap with Gstreamer Dependencies
 
-- RsCap + Gstreamer Install script: [scripts/install.sh](scripts/install.sh) for Gstreamer + deps setup on Linux CentOS 7 and macOS into the `/opt/rscap` contained directory.
-- RsCap Compile script: [scripts/compile.sh](scripts/compile.sh) for RsCap build using Gstreamer setup in `/opt/rscap`.
+- RsProbe + Gstreamer Install script: [scripts/install.sh](scripts/install.sh) for Gstreamer + deps setup on Linux CentOS 7 and macOS into the `/opt/rscap` contained directory.
+- RsProbe Compile script: [scripts/compile.sh](scripts/compile.sh) for RsProbe build using Gstreamer setup in `/opt/rscap`.
 
 ```text
-# Install RsCap w/gstreamer in /opt/rscap/ (MacOS or CentOS 7)
+# Install RsProbe w/gstreamer in /opt/rscap/ (MacOS or CentOS 7)
 ./scripts/install.sh
 
-# Optionally rebuild rscap if making changes
+# Optionally rebuild RsProbe if making changes
 ./scripts/compile.sh gst
 
 # Run the probe
@@ -85,6 +85,6 @@ Running VTune [scripts/vtune.sh](scripts/vtune.sh)
 - SMPTE2110 data stream and audio stream support (need to have more than one pcap ip/port and distinguish them apart).
 - Meme-like overlay of current frame and stream metrics on the thumbnail images with precise timing and frame information like a scope. (phone/pad usage)
 
-![RsCap](https://storage.googleapis.com/groovybits/images/rscap/rscap_circuit.webp)
+![RsProbe](https://storage.googleapis.com/groovybits/images/rscap/rscap_circuit.webp)
 
 ### Chris Kennedy (C) 2024 MIT License

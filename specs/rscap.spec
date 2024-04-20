@@ -1,7 +1,7 @@
-Name:           rscap
+Name:           rsprobe
 Version:        0.5.101
 Release:        1%{?dist}
-Summary:        RsCap and GStreamer with essential dependencies
+Summary:        MpegTS Stream Analysis Probe with Kafka and GStreamer
 License:        MIT
 URL:            https://github.com/groovybits/rscap
 BuildRequires:  epel-release, centos-release-scl-rh, gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3, libxml2-devel, pango-devel, cairo-devel, zvbi-devel, ladspa-devel, cairo-gobject-devel, cairo-gobject, rh-python38, rh-python38-python-pip
@@ -343,7 +343,7 @@ rm -rf %{_builddir}%{prefix}/lib64/pkgconfig
 rm -rf %{_builddir}%{prefix}/include
 
 echo "------------------------------------------------------------"
-echo "Done building RsCap and all dependencies."
+echo "Done building RsProbe and all dependencies."
 echo "------------------------------------------------------------"
 
 # Installation script
@@ -365,7 +365,7 @@ cp -R %{_builddir}%{prefix}/lib64/* %{buildroot}%{prefix}/lib64/
 rm -rf %{_builddir}%{prefix}
 
 echo "------------------------------------------------------------"
-echo "Finished installing RsCap."
+echo "Finished installing RsProbe."
 echo "------------------------------------------------------------"
 
 # Create the RPM package
@@ -392,5 +392,5 @@ rm -rf %{buildroot}
 rm -rf %{_builddir}/*
 
 %changelog
-* Mon Apr 08 2024 Chris Kennedy <chris@rscap.com>
+* Mon Apr 08 2024 Chris Kennedy <chris@rsprobe.example>
 - Initial RPM release
