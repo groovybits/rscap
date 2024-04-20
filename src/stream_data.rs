@@ -164,160 +164,144 @@ pub fn pull_images(
         while running.load(Ordering::SeqCst) {
             let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
             if let Some(sample) = sample {
-                if let Some(buffer) = sample.buffer() {
-                    let pts = buffer
-                        .pts()
-                        .map_or(last_processed_pts, |pts| pts.nseconds());
+                let buffer = sample.buffer().unwrap();
+                let pts = buffer
+                    .pts()
+                    .map_or(last_processed_pts, |pts| pts.nseconds());
 
-                    if last_processed_pts == 0 || pts >= last_processed_pts + sample_interval {
-                        last_processed_pts = pts;
+                if last_processed_pts == 0 || pts >= last_processed_pts + sample_interval {
+                    last_processed_pts = pts;
 
-                        let map = buffer.map_readable().unwrap();
-                        let data = map.as_slice();
+                    let map = buffer.map_readable().unwrap();
+                    let data = map.as_slice().to_vec();
+                    drop(map);
 
-                        // Check if the data length matches the expected dimensions for RGB format
-                        let info =
-                            VideoInfo::from_caps(&sample.caps().expect("Sample without caps"))
-                                .expect("Failed to parse caps");
-                        let width = info.width() as usize;
-                        let height = info.height() as usize;
+                    // Check if the data length matches the expected dimensions for RGB format
+                    let info = VideoInfo::from_caps(&sample.caps().expect("Sample without caps"))
+                        .expect("Failed to parse caps");
+                    let width = info.width() as usize;
+                    let height = info.height() as usize;
 
-                        // Check if height is the same as our image_height, if not, scale it to image_height while keeping the aspect ratio
-                        let (scaled_width, scaled_height, scaled_data) =
-                            if height != image_height as usize {
-                                let aspect_ratio = width as f32 / height as f32;
-                                let scaled_height = image_height as usize;
-                                let scaled_width = (scaled_height as f32 * aspect_ratio) as usize;
+                    // Check if height is the same as our image_height, if not, scale it to image_height while keeping the aspect ratio
+                    let (scaled_width, scaled_height, scaled_data) =
+                        if height != image_height as usize {
+                            let aspect_ratio = width as f32 / height as f32;
+                            let scaled_height = image_height as usize;
+                            let scaled_width = (scaled_height as f32 * aspect_ratio) as usize;
 
-                                let scaled = image::imageops::resize(
-                                    &image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(
-                                        width as u32,
-                                        height as u32,
-                                        data.to_vec(),
-                                    )
-                                    .unwrap(),
-                                    scaled_width as u32,
-                                    scaled_height as u32,
-                                    image::imageops::FilterType::Triangle,
-                                );
-
-                                (scaled_width, scaled_height, scaled.into_raw())
-                            } else {
-                                (width, height, data.to_vec())
-                            };
-
-                        let expected_length = scaled_width * scaled_height * 3; // 3 bytes per pixel for RGB
-
-                        log::debug!(
-                            "pull_images: Image scaled to {}x{}",
-                            scaled_width,
-                            scaled_height
-                        );
-
-                        if scaled_data.len() == expected_length {
-                            let image = ImageBuffer::<Rgb<u8>, _>::from_raw(
+                            let scaled = image::imageops::resize(
+                                &image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(
+                                    width as u32,
+                                    height as u32,
+                                    data,
+                                )
+                                .unwrap(),
                                 scaled_width as u32,
                                 scaled_height as u32,
-                                scaled_data,
-                            )
-                            .expect("Failed to create ImageBuffer");
+                                image::imageops::FilterType::Triangle,
+                            );
 
-                            // Save the image as a JPEG with timecode
-                            if save_images {
-                                let filename = format!("images/frame_{:04}.jpg", frame_count);
-                                let mut jpeg_data = Vec::new();
-                                let mut encoder =
-                                    image::codecs::jpeg::JpegEncoder::new_with_quality(
-                                        &mut jpeg_data,
-                                        jpeg_quality,
-                                    );
-                                encoder
-                                    .encode_image(&image)
-                                    .expect("Failed to encode image to JPEG");
-                                std::fs::write(&filename, &jpeg_data)
-                                    .expect("Failed to save JPEG image");
+                            (scaled_width, scaled_height, scaled.into_raw())
+                        } else {
+                            (width, height, data)
+                        };
+
+                    let expected_length = scaled_width * scaled_height * 3; // 3 bytes per pixel for RGB
+
+                    log::debug!(
+                        "pull_images: Image scaled to {}x{}",
+                        scaled_width,
+                        scaled_height
+                    );
+
+                    if scaled_data.len() == expected_length {
+                        let image = ImageBuffer::<Rgb<u8>, _>::from_raw(
+                            scaled_width as u32,
+                            scaled_height as u32,
+                            scaled_data,
+                        )
+                        .expect("Failed to create ImageBuffer");
+
+                        // Save the image as a JPEG with timecode
+                        if save_images {
+                            let filename = format!("images/frame_{:04}.jpg", frame_count);
+                            let mut jpeg_data = Vec::new();
+                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+                                &mut jpeg_data,
+                                jpeg_quality,
+                            );
+                            encoder
+                                .encode_image(&image)
+                                .expect("Failed to encode image to JPEG");
+                            std::fs::write(&filename, &jpeg_data)
+                                .expect("Failed to save JPEG image");
+                        }
+                        frame_count += 1;
+
+                        print!("*");
+                        // flush stdout
+                        io::stdout().flush().unwrap();
+
+                        filmstrip_images.push(image);
+
+                        if filmstrip_length <= 1 || filmstrip_images.len() >= filmstrip_length {
+                            // Create a new image buffer for the filmstrip
+                            let filmstrip_width = (scaled_width * filmstrip_length) as u32;
+                            let mut filmstrip = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(
+                                filmstrip_width,
+                                scaled_height as u32,
+                            );
+
+                            // Concatenate the images into the filmstrip
+                            for (i, img) in filmstrip_images.iter().enumerate() {
+                                let x_offset = i as u32 * scaled_width as u32;
+                                image::imageops::overlay(&mut filmstrip, img, x_offset.into(), 0);
                             }
-                            frame_count += 1;
 
-                            print!("*");
-                            // flush stdout
-                            io::stdout().flush().unwrap();
+                            // Encode the filmstrip to a JPEG vector
+                            let mut jpeg_data = Vec::new();
+                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+                                &mut jpeg_data,
+                                jpeg_quality,
+                            );
+                            encoder
+                                .encode_image(&filmstrip)
+                                .expect("JPEG encoding failed");
 
-                            filmstrip_images.push(image);
+                            // Send the filmstrip over the channel
+                            if let Err(err) = image_sender.send((jpeg_data, pts)).await {
+                                log::error!("Failed to send image data through channel: {}", err);
+                                break;
+                            }
 
-                            if filmstrip_length <= 1 || filmstrip_images.len() >= filmstrip_length {
-                                // Create a new image buffer for the filmstrip
-                                let filmstrip_width = (scaled_width * filmstrip_length) as u32;
-                                let mut filmstrip = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(
-                                    filmstrip_width,
-                                    scaled_height as u32,
-                                );
-
-                                // Concatenate the images into the filmstrip
-                                for (i, img) in filmstrip_images.iter().enumerate() {
-                                    let x_offset = i as u32 * scaled_width as u32;
-                                    image::imageops::overlay(
-                                        &mut filmstrip,
-                                        img,
-                                        x_offset.into(),
-                                        0,
-                                    );
-                                }
-
-                                // Encode the filmstrip to a JPEG vector
-                                let mut jpeg_data = Vec::new();
-                                let mut encoder =
-                                    image::codecs::jpeg::JpegEncoder::new_with_quality(
-                                        &mut jpeg_data,
-                                        jpeg_quality,
-                                    );
-                                encoder
-                                    .encode_image(&filmstrip)
-                                    .expect("JPEG encoding failed");
-
-                                // Send the filmstrip over the channel
-                                if let Err(err) = image_sender.send((jpeg_data, pts)).await {
-                                    log::error!(
-                                        "Failed to send image data through channel: {}",
-                                        err
-                                    );
-                                    break;
-                                }
-
-                                // Clear the filmstrip images for the next set
-                                if frame_increment > 1 {
-                                    let increment = if frame_increment as usize > filmstrip_length {
-                                        filmstrip_length
-                                    } else {
-                                        frame_increment.into()
-                                    };
-                                    // remove the number of frames by frame_increment
-                                    if filmstrip_images.len() > increment as usize {
-                                        filmstrip_images.drain(0..increment as usize);
-                                    } else {
-                                        filmstrip_images.clear();
-                                    }
+                            // Clear the filmstrip images for the next set
+                            if frame_increment > 1 {
+                                let increment = if frame_increment as usize > filmstrip_length {
+                                    filmstrip_length
+                                } else {
+                                    frame_increment.into()
+                                };
+                                // remove the number of frames by frame_increment
+                                if filmstrip_images.len() > increment as usize {
+                                    filmstrip_images.drain(0..increment as usize);
                                 } else {
                                     filmstrip_images.clear();
                                 }
+                            } else {
+                                filmstrip_images.clear();
                             }
-                        } else {
-                            log::error!(
-                                "Received image data with unexpected length: {}",
-                                scaled_data.len()
-                            );
                         }
-
-                        drop(map);
                     } else {
-                        // Sleep for a short time to prevent a busy loop
-                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        log::error!(
+                            "Received image data with unexpected length: {}",
+                            scaled_data.len()
+                        );
                     }
                 }
-            } else {
-                // Sleep for a short time to prevent a busy loop
-                tokio::time::sleep(Duration::from_millis(10)).await;
             }
+
+            // Sleep for a short time to prevent a busy loop
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     });
 }
