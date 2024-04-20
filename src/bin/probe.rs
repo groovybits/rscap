@@ -1505,199 +1505,11 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
     let mut video_stream_type = 0;
 
-    let (chunk_sender, mut chunk_receiver) =
-        tokio::sync::mpsc::channel::<Vec<StreamData>>(args.chunk_buffer_size);
     let probe_id_clone = args.probe_id.clone();
     let source_ip_clone_batch = source_ip.clone();
 
     let ktx_clone1 = ktx.clone();
     let ktx_clone2 = ktx.clone();
-
-    // Create a separate thread for processing chunks
-    tokio::spawn(async move {
-        let mut batch = Vec::new();
-
-        while let Some(stream_data_chunk) = chunk_receiver.recv().await {
-            for mut stream_data in stream_data_chunk {
-                // Process the chunk
-                if debug_on {
-                    hexdump(
-                        &stream_data.packet,
-                        stream_data.packet_start,
-                        stream_data.packet_len,
-                    );
-                }
-
-                // Extract the necessary slice for PID extraction and parsing
-                let packet_chunk = &stream_data.packet
-                    [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
-
-                if is_mpegts {
-                    let pid = stream_data.pid;
-                    // Handle PAT and PMT packets
-                    match pid {
-                        PAT_PID => {
-                            debug!("ProcessPacket: PAT packet detected with PID {}", pid);
-                            pmt_info = parse_and_store_pat(&packet_chunk);
-                            // Print TR 101 290 errors
-                            if show_tr101290 {
-                                info!("STATUS::TR101290:ERRORS: {}", tr101290_errors);
-                            }
-                        }
-                        _ => {
-                            // Check if this is a PMT packet
-                            if pid == pmt_info.pid {
-                                debug!("ProcessPacket: PMT packet detected with PID {}", pid);
-                                // Update PID_MAP with new stream types
-                                update_pid_map(
-                                    &packet_chunk,
-                                    &pmt_info.packet,
-                                    stream_data.capture_time,
-                                    stream_data.capture_iat,
-                                    source_ip_clone_batch.clone(),
-                                    args.source_port,
-                                    probe_id_clone.clone(),
-                                );
-                                // Identify the video PID (if not already identified)
-                                if let Some((new_pid, new_codec)) =
-                                    identify_video_pid(&packet_chunk)
-                                {
-                                    if stream_data.stream_type_number > 0
-                                        && video_pid.map_or(true, |vp| vp != new_pid)
-                                    {
-                                        video_pid = Some(new_pid);
-                                        let old_stream_type = video_stream_type;
-                                        video_stream_type = stream_data.stream_type_number;
-                                        info!(
-                                            "STATUS::VIDEO_PID:CHANGE: to {}/{}/{} from {}/{}/{}",
-                                            new_pid,
-                                            new_codec.clone(),
-                                            video_stream_type,
-                                            video_pid.unwrap(),
-                                            video_codec.unwrap(),
-                                            old_stream_type
-                                        );
-                                        video_codec = Some(new_codec.clone());
-                                        // Reset video frame as the video stream has changed
-                                        current_video_frame.clear();
-                                    } else if video_codec != Some(new_codec.clone()) {
-                                        info!(
-                                            "STATUS::VIDEO_CODEC:CHANGE: to {} from {}",
-                                            new_codec,
-                                            video_codec.unwrap()
-                                        );
-                                        video_codec = Some(new_codec);
-                                        // Reset video frame as the codec has changed
-                                        current_video_frame.clear();
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if video_pid < Some(0x1FFF)
-                    && video_pid > Some(0)
-                    && stream_data.pid == video_pid.unwrap()
-                    && video_stream_type != stream_data.stream_type_number
-                {
-                    let old_stream_type = video_stream_type;
-                    video_stream_type = stream_data.stream_type_number;
-                    info!(
-                        "STATUS::VIDEO_STREAM:FOUND: to {}/{} from {}/{}",
-                        video_pid.unwrap(),
-                        video_stream_type,
-                        video_pid.unwrap(),
-                        old_stream_type
-                    );
-                }
-
-                // Check for TR 101 290 errors
-                process_packet(
-                    &mut stream_data,
-                    &mut tr101290_errors,
-                    is_mpegts,
-                    pmt_info.pid,
-                    probe_id_clone.clone(),
-                );
-
-                // If MpegTS, Check if this is a video PID and if so parse NALS and decode video
-                if is_mpegts {
-                    // Process video packets
-                    #[cfg(feature = "gst")]
-                    if args.extract_images {
-                        #[cfg(feature = "gst")]
-                        let video_packet = Arc::new(
-                            stream_data.packet[stream_data.packet_start
-                                ..stream_data.packet_start + stream_data.packet_len]
-                                .to_vec(),
-                        );
-
-                        // Send the video packet to the processing task
-                        if let Err(_) = video_packet_sender
-                            .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
-                        {
-                            // If the channel is full, drop the packet
-                            log::warn!("Video packet channel is full. Dropping packet.");
-                        }
-
-                        // Receive and process images
-                        #[cfg(feature = "gst")]
-                        if let Ok((image_data, pts)) = image_receiver.try_recv() {
-                            // attach image to the stream_data.packet arc, clearing the current arc value
-                            stream_data.packet = Arc::new(image_data.clone());
-                            stream_data.has_image = image_data.len() as u8;
-                            stream_data.packet_start = 0;
-                            stream_data.packet_len = image_data.len();
-                            stream_data.image_pts = pts;
-
-                            // Process the received image data
-                            debug!(
-                                "Probe: Received a jpeg image with size: {} bytes",
-                                image_data.len()
-                            );
-                        } else {
-                            // zero out the packet data
-                            stream_data.packet_start = 0;
-                            stream_data.packet_len = 0;
-                            stream_data.packet = Arc::new(Vec::new());
-                        }
-                    }
-                } else {
-                    // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
-                }
-
-                // Watch file
-                if args.watch_file != "" {
-                    if let Ok(line) = watch_file_receiver.try_recv() {
-                        info!("WatchFile Received line: {}", line);
-                        // attach to stream_data.log_message
-                        stream_data.log_message = line.clone();
-                    }
-                }
-
-                if !args.extract_images && stream_data.packet_len > 0 {
-                    // release the packet Arc so it can be reused
-                    stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
-                    stream_data.packet_len = 0;
-                    stream_data.packet_start = 0;
-                }
-
-                // Add the processed stream_data to the batch
-                batch.push(stream_data);
-
-                // Check if the batch size is reached or the batch timeout has elapsed
-                if batch.len() >= args.kafka_batch_size {
-                    // Send the batch to the Kafka thread
-                    if ktx_clone1.send(batch).await.is_err() {
-                        // If the channel is full, drop the batch and log a warning
-                        log::warn!("Batch channel is full. Dropping batch.");
-                    }
-                    batch = Vec::new(); // Reset the batch
-                }
-            }
-        }
-    });
 
     info!(
         "RsProbe: Starting up with Probe ID: {}",
@@ -1706,6 +1518,8 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
     let mut dot_last_sent_ts = Instant::now();
     let mut x_last_sent_ts = Instant::now();
+    let mut batch = Vec::new();
+
     loop {
         match prx.try_recv() {
             Ok((packet, timestamp, iat)) => {
@@ -1763,10 +1577,183 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                     )
                 };
 
-                // Send each chunk to the processing thread
-                if chunk_sender.try_send(chunks).is_err() {
-                    // If the channel is full, drop the chunk
-                    log::warn!("Chunk channel is full. Dropping chunk.");
+                for mut stream_data in chunks {
+                    // Process the chunk
+                    if debug_on {
+                        hexdump(
+                            &stream_data.packet,
+                            stream_data.packet_start,
+                            stream_data.packet_len,
+                        );
+                    }
+
+                    // Extract the necessary slice for PID extraction and parsing
+                    let packet_chunk = &stream_data.packet[stream_data.packet_start
+                        ..stream_data.packet_start + stream_data.packet_len];
+
+                    if is_mpegts {
+                        let pid = stream_data.pid;
+                        // Handle PAT and PMT packets
+                        match pid {
+                            PAT_PID => {
+                                debug!("ProcessPacket: PAT packet detected with PID {}", pid);
+                                pmt_info = parse_and_store_pat(&packet_chunk);
+                                // Print TR 101 290 errors
+                                if show_tr101290 {
+                                    info!("STATUS::TR101290:ERRORS: {}", tr101290_errors);
+                                }
+                            }
+                            _ => {
+                                // Check if this is a PMT packet
+                                if pid == pmt_info.pid {
+                                    debug!("ProcessPacket: PMT packet detected with PID {}", pid);
+                                    // Update PID_MAP with new stream types
+                                    update_pid_map(
+                                        &packet_chunk,
+                                        &pmt_info.packet,
+                                        stream_data.capture_time,
+                                        stream_data.capture_iat,
+                                        source_ip_clone_batch.clone(),
+                                        args.source_port,
+                                        probe_id_clone.clone(),
+                                    );
+                                    // Identify the video PID (if not already identified)
+                                    if let Some((new_pid, new_codec)) =
+                                        identify_video_pid(&packet_chunk)
+                                    {
+                                        if stream_data.stream_type_number > 0
+                                            && video_pid.map_or(true, |vp| vp != new_pid)
+                                        {
+                                            video_pid = Some(new_pid);
+                                            let old_stream_type = video_stream_type;
+                                            video_stream_type = stream_data.stream_type_number;
+                                            info!(
+                                                "STATUS::VIDEO_PID:CHANGE: to {}/{}/{} from {}/{}/{}",
+                                                new_pid,
+                                                new_codec.clone(),
+                                                video_stream_type,
+                                                video_pid.unwrap(),
+                                                video_codec.unwrap(),
+                                                old_stream_type
+                                            );
+                                            video_codec = Some(new_codec.clone());
+                                            // Reset video frame as the video stream has changed
+                                            current_video_frame.clear();
+                                        } else if video_codec != Some(new_codec.clone()) {
+                                            info!(
+                                                "STATUS::VIDEO_CODEC:CHANGE: to {} from {}",
+                                                new_codec,
+                                                video_codec.unwrap()
+                                            );
+                                            video_codec = Some(new_codec);
+                                            // Reset video frame as the codec has changed
+                                            current_video_frame.clear();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if video_pid < Some(0x1FFF)
+                        && video_pid > Some(0)
+                        && stream_data.pid == video_pid.unwrap()
+                        && video_stream_type != stream_data.stream_type_number
+                    {
+                        let old_stream_type = video_stream_type;
+                        video_stream_type = stream_data.stream_type_number;
+                        info!(
+                            "STATUS::VIDEO_STREAM:FOUND: to {}/{} from {}/{}",
+                            video_pid.unwrap(),
+                            video_stream_type,
+                            video_pid.unwrap(),
+                            old_stream_type
+                        );
+                    }
+
+                    // Check for TR 101 290 errors
+                    process_packet(
+                        &mut stream_data,
+                        &mut tr101290_errors,
+                        is_mpegts,
+                        pmt_info.pid,
+                        probe_id_clone.clone(),
+                    );
+
+                    // If MpegTS, Check if this is a video PID and if so parse NALS and decode video
+                    if is_mpegts {
+                        // Process video packets
+                        #[cfg(feature = "gst")]
+                        if args.extract_images {
+                            #[cfg(feature = "gst")]
+                            let video_packet = Arc::new(
+                                stream_data.packet[stream_data.packet_start
+                                    ..stream_data.packet_start + stream_data.packet_len]
+                                    .to_vec(),
+                            );
+
+                            // Send the video packet to the processing task
+                            if let Err(_) = video_packet_sender
+                                .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
+                            {
+                                // If the channel is full, drop the packet
+                                log::warn!("Video packet channel is full. Dropping packet.");
+                            }
+
+                            // Receive and process images
+                            #[cfg(feature = "gst")]
+                            if let Ok((image_data, pts)) = image_receiver.try_recv() {
+                                // attach image to the stream_data.packet arc, clearing the current arc value
+                                stream_data.packet = Arc::new(image_data.clone());
+                                stream_data.has_image = image_data.len() as u8;
+                                stream_data.packet_start = 0;
+                                stream_data.packet_len = image_data.len();
+                                stream_data.image_pts = pts;
+
+                                // Process the received image data
+                                debug!(
+                                    "Probe: Received a jpeg image with size: {} bytes",
+                                    image_data.len()
+                                );
+                            } else {
+                                // zero out the packet data
+                                stream_data.packet_start = 0;
+                                stream_data.packet_len = 0;
+                                stream_data.packet = Arc::new(Vec::new());
+                            }
+                        }
+                    } else {
+                        // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
+                    }
+
+                    // Watch file
+                    if args.watch_file != "" {
+                        if let Ok(line) = watch_file_receiver.try_recv() {
+                            info!("WatchFile Received line: {}", line);
+                            // attach to stream_data.log_message
+                            stream_data.log_message = line.clone();
+                        }
+                    }
+
+                    if !args.extract_images && stream_data.packet_len > 0 {
+                        // release the packet Arc so it can be reused
+                        stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
+                        stream_data.packet_len = 0;
+                        stream_data.packet_start = 0;
+                    }
+
+                    // Add the processed stream_data to the batch
+                    batch.push(stream_data);
+
+                    // Check if the batch size is reached or the batch timeout has elapsed
+                    if batch.len() >= args.kafka_batch_size {
+                        // Send the batch to the Kafka thread
+                        if ktx_clone1.send(batch).await.is_err() {
+                            // If the channel is full, drop the batch and log a warning
+                            log::warn!("Batch channel is full. Dropping batch.");
+                        }
+                        batch = Vec::new(); // Reset the batch
+                    }
                 }
             }
             Err(TryRecvError::Empty) => {
