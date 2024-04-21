@@ -8,7 +8,7 @@ license-file = "LICENSE"
 homepage = "https://github.com/groovybits/rscap"
 repository = "https://github.com/groovybits/rscap"
 authors = ["Chris Kennedy"]
-version = "0.6.1"
+version = "0.6.2"
 edition = "2021"
 
 [lib]
@@ -45,7 +45,7 @@ chrono = "0.4.37"
 rdkafka = "0.36.2"
 gstreamer = { version = "0.22", optional = true }
 gstreamer-app = { version = "0.22", optional = true }
-gstreamer-video = { version = "0.22", optional = true }
+gstreamer-video = { version = "0.22", optional = true, features = ["v1_20"] }
 crossbeam = "0.8.4"
 image = "0.25.1"
 base64 = "0.22.0"

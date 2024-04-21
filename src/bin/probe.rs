@@ -490,7 +490,7 @@ async fn send_to_kafka(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.6.1",
+    version = "0.6.2",
     about = "MpegTS Stream Analysis Probe with Kafka and GStreamer"
 )]
 struct Args {
@@ -610,6 +610,10 @@ struct Args {
     #[clap(long, env = "EXTRACT_IMAGES", default_value_t = false)]
     extract_images: bool,
 
+    /// Extract Captions from the video stream (requires feature gst)
+    #[clap(long, env = "EXTRACT_CAPTIONS", default_value_t = false)]
+    extract_captions: bool,
+
     /// Save Images to disk
     #[cfg(feature = "gst")]
     #[clap(long, env = "SAVE_IMAGES", default_value_t = false)]
@@ -678,6 +682,10 @@ struct Args {
     /// System Stats Interval in milliseconds
     #[clap(long, env = "SYSTEM_STATS_INTERVAL", default_value_t = 5000)]
     system_stats_interval: u64,
+
+    /// Dump Packets - Dump packets to the console in hex
+    #[clap(long, env = "DUMP_PACKETS", default_value_t = false)]
+    dump_packets: bool,
 }
 
 // MAIN Function
@@ -1504,7 +1512,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
     // Initialize the pipeline
     #[cfg(feature = "gst")]
-    let (pipeline, appsrc, appsink) = if args.extract_images {
+    let (pipeline, appsrc, appsink, captionssink, audiosink) = if args.extract_images {
         match initialize_pipeline(
             &args.input_codec,
             args.image_height,
@@ -1512,7 +1520,8 @@ async fn rsprobe(running: Arc<AtomicBool>) {
             !args.scale_images_after_gstreamer,
             &args.image_framerate,
         ) {
-            Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
+            Ok((pipeline, appsrc, appsink, captionssink, audiosink)) =>
+                (pipeline, appsrc, appsink, captionssink, audiosink),
             Err(err) => {
                 eprintln!("Failed to initialize the pipeline: {}", err);
                 return;
@@ -1522,6 +1531,8 @@ async fn rsprobe(running: Arc<AtomicBool>) {
         (
             gstreamer::Pipeline::new(),
             gstreamer_app::AppSrc::builder().build(),
+            gstreamer_app::AppSink::builder().build(),
+            gstreamer_app::AppSink::builder().build(),
             gstreamer_app::AppSink::builder().build(),
         )
     };
@@ -1551,7 +1562,8 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     if args.extract_images {
         pull_images(
             appsink,
-            /*Arc::new(Mutex::new(image_sender)),*/
+            captionssink,
+            audiosink,
             image_sender,
             args.save_images,
             args.image_sample_rate_ns,
@@ -1559,6 +1571,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
             args.filmstrip_length,
             args.jpeg_quality,
             args.image_frame_increment,
+            args.extract_captions,
             running_gstreamer_pull,
         );
     }
@@ -1653,7 +1666,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         program_number.expect("Failed to get program number");
 
                     // Process the chunk
-                    if args.debug_on {
+                    if args.dump_packets {
                         hexdump(
                             &stream_data.packet,
                             stream_data.packet_start,
@@ -1702,7 +1715,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                         let old_stream_type = video_stream_type;
                                         video_stream_type = stream_data.stream_type_number;
                                         info!(
-                                            "STATUS::VIDEO_PID:CHANGE: to {}/{}/{} from {}/{}/{}",
+                                            "Found Video PID and Codec {}/{}/{} changed from {}/{}/{}.",
                                             new_pid,
                                             new_codec.clone(),
                                             video_stream_type,
@@ -1715,9 +1728,13 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                         current_video_frame.clear();
                                     } else if video_codec != Some(new_codec.clone()) {
                                         info!(
-                                            "STATUS::VIDEO_CODEC:CHANGE: to {} from {}",
+                                            "[{}][{}] Video Codec Detected: [{}] changed from previous value [{}] stream type {}/{}.",
+                                            stream_data.capture_time,
+                                            stream_data.program_number,
                                             new_codec,
-                                            video_codec.unwrap()
+                                            video_codec.unwrap(),
+                                            stream_data.stream_type_number,
+                                            stream_data.stream_type
                                         );
                                         video_codec = Some(new_codec);
                                         // Reset video frame as the codec has changed
@@ -1736,7 +1753,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         let old_stream_type = video_stream_type;
                         video_stream_type = stream_data.stream_type_number;
                         info!(
-                            "STATUS::VIDEO_STREAM:FOUND: to {}/{} from {}/{}",
+                            "Found Video PID/Stream Type {}/{} changed from previous {}/{}.",
                             video_pid.unwrap(),
                             video_stream_type,
                             video_pid.unwrap(),
