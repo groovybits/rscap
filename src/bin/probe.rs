@@ -468,7 +468,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.118",
+    version = "0.5.119",
     about = "MpegTS Stream Analysis Probe with Kafka and GStreamer"
 )]
 struct Args {

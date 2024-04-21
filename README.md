@@ -46,7 +46,7 @@ Output by default is the original data packet. You can add the JSON header with 
 
 ## Kafka Output of JSON Metrics
 
-After processing and extraction, the project sends JSON metrics to Kafka. See the [Kafka Schema](test_data/kafka.json) for the format of the data sent to Kafka.
+After processing and extraction, the project sends JSON metrics to Kafka. See the [Kafka Schema](kafka_schema/kafka.json) for the format of the data sent to Kafka.
 
 ```text
         --kafka-broker sun:9092 \

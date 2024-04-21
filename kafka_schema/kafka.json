@@ -5,31 +5,66 @@
     "audio_loudness": { "type": "string" },
     "base64_image": { "type": "string" },
     "bitrate_avg_global": { "type": "number" },
-    "boot_time": { "type": "integer" },
+    "boot_time": { "type": "number" },
     "captions": { "type": "string" },
-    "cc_errors_global": { "type": "integer" },
-    "core_count": { "type": "integer" },
-    "cpu_count": { "type": "integer" },
+    "cc_errors_global": { "type": "number" },
+    "core_count": { "type": "number" },
+    "cpu_count": { "type": "number" },
     "cpu_usage": { "type": "number" },
-    "current_cc_errors_global": { "type": "integer" },
+    "current_cc_errors_global": { "type": "number" },
     "disk_stats": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "available_space": { "type": "integer" },
-          "is_removable": { "type": "boolean" },
-          "name": { "type": "string" },
-          "total_space": { "type": "integer" }
-        },
-        "required": ["available_space", "is_removable", "name", "total_space"]
-      }
+      "type": "object",
+      "patternProperties": {
+        "^\\d+$": {
+          "type": "object",
+          "properties": {
+            "available_space": { "type": "number" },
+            "is_removable": { "type": "boolean" },
+            "name": { "type": "string" },
+            "total_space": { "type": "number" }
+          },
+          "required": [
+            "available_space",
+            "is_removable",
+            "name",
+            "total_space"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "network": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-zA-Z0-9_]+$": {
+          "type": "object",
+          "properties": {
+            "errors_on_received": { "type": "number" },
+            "errors_on_transmitted": { "type": "number" },
+            "packets_received": { "type": "number" },
+            "packets_transmitted": { "type": "number" },
+            "received": { "type": "number" },
+            "transmitted": { "type": "number" }
+          },
+          "required": [
+            "errors_on_received",
+            "errors_on_transmitted",
+            "packets_received",
+            "packets_transmitted",
+            "received",
+            "transmitted"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     },
     "host_name": { "type": "string" },
     "iat_avg_global": { "type": "number" },
     "iat_max_global": { "type": "number" },
     "id": { "type": "string" },
-    "image_pts": { "type": "integer" },
+    "image_pts": { "type": "number" },
     "kernel_version": { "type": "string" },
     "load_avg_fifteen": { "type": "number" },
     "load_avg_five": { "type": "number" },
@@ -41,54 +76,63 @@
       "items": {
         "type": "object",
         "properties": {
-          "pid": { "type": "integer" },
+          "ccerrors": { "type": "number" },
+          "media_type": { "type": "string" },
+          "pid": { "type": "number" },
           "stream_type": { "type": "string" },
-          "stream_type_number": { "type": "integer" }
+          "stream_type_number": { "type": "number" }
         },
-        "required": ["pid", "stream_type", "stream_type_number"]
+        "required": [
+          "ccerrors",
+          "media_type",
+          "pid",
+          "stream_type",
+          "stream_type_number"
+        ],
+        "additionalProperties": false
       }
     },
-    "process_count": { "type": "integer" },
-    "processes": { "type": "array" },
+    "process_count": { "type": "number" },
+    "processes": { "type": "string" },
     "scte35": { "type": "string" },
     "source_ip": { "type": "string" },
-    "source_port": { "type": "integer" },
+    "source_port": { "type": "number" },
     "streams": {
       "type": "object",
       "patternProperties": {
         "^\\d+$": {
           "type": "object",
           "properties": {
-            "bitrate": { "type": "integer" },
-            "bitrate_avg": { "type": "integer" },
-            "bitrate_max": { "type": "integer" },
-            "bitrate_min": { "type": "integer" },
-            "capture_iat": { "type": "integer" },
-            "capture_iat_max": { "type": "integer" },
-            "capture_time": { "type": "integer" },
-            "continuity_counter": { "type": "integer" },
-            "count": { "type": "integer" },
-            "current_error_count": { "type": "integer" },
-            "error_count": { "type": "integer" },
-            "iat": { "type": "integer" },
-            "iat_avg": { "type": "integer" },
-            "iat_max": { "type": "integer" },
-            "iat_min": { "type": "integer" },
+            "bitrate": { "type": "number" },
+            "bitrate_avg": { "type": "number" },
+            "bitrate_max": { "type": "number" },
+            "bitrate_min": { "type": "number" },
+            "capture_iat": { "type": "number" },
+            "capture_iat_max": { "type": "number" },
+            "capture_time": { "type": "number" },
+            "continuity_counter": { "type": "number" },
+            "count": { "type": "number" },
+            "current_error_count": { "type": "number" },
+            "error_count": { "type": "number" },
+            "iat": { "type": "number" },
+            "iat_avg": { "type": "number" },
+            "iat_max": { "type": "number" },
+            "iat_min": { "type": "number" },
             "id": { "type": "string" },
-            "last_arrival_time": { "type": "integer" },
-            "last_sample_time": { "type": "integer" },
-            "packet_count": { "type": "integer" },
-            "packet_len": { "type": "integer" },
-            "packet_start": { "type": "integer" },
-            "pid": { "type": "integer" },
-            "pmt_pid": { "type": "integer" },
-            "program_number": { "type": "integer" },
-            "start_time": { "type": "integer" },
+            "last_arrival_time": { "type": "number" },
+            "last_sample_time": { "type": "number" },
+            "packet_count": { "type": "number" },
+            "packet_len": { "type": "number" },
+            "packet_start": { "type": "number" },
+            "pid": { "type": "number" },
+            "pmt_pid": { "type": "number" },
+            "program_number": { "type": "number" },
+            "start_time": { "type": "number" },
             "stream_type": { "type": "string" },
-            "stream_type_number": { "type": "integer" },
-            "timestamp": { "type": "integer" },
-            "total_bits": { "type": "integer" },
-            "total_bits_sample": { "type": "integer" }
+            "stream_type_number": { "type": "number" },
+            "timestamp": { "type": "number" },
+            "total_bits": { "type": "number" },
+            "total_bits_sample": { "type": "number" }
           },
           "required": [
             "bitrate",
@@ -121,33 +165,46 @@
             "timestamp",
             "total_bits",
             "total_bits_sample"
-          ]
+          ],
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
     },
     "system_name": { "type": "string" },
-    "timestamp": { "type": "integer" },
-    "total_memory": { "type": "integer" },
-    "total_swap": { "type": "integer" },
-    "uptime": { "type": "integer" },
-    "used_memory": { "type": "integer" },
-    "used_swap": { "type": "integer" }
-  },
-  "patternProperties": {
-    "^(eth|lo)\\d*\\.network\\.(errors_on_received|errors_on_transmitted|packets_received|packets_transmitted|received|transmitted)$": {
-      "type": "integer"
-    }
+    "timestamp": { "type": "number" },
+    "total_memory": { "type": "number" },
+    "total_swap": { "type": "number" },
+    "tr101290_cat_errors": { "type": "number" },
+    "tr101290_continuity_counter_errors": { "type": "number" },
+    "tr101290_crc_errors": { "type": "number" },
+    "tr101290_pat_errors": { "type": "number" },
+    "tr101290_pcr_accuracy_errors": { "type": "number" },
+    "tr101290_pcr_discontinuity_indicator_errors": { "type": "number" },
+    "tr101290_pcr_repetition_errors": { "type": "number" },
+    "tr101290_pid_map_errors": { "type": "number" },
+    "tr101290_pmt_errors": { "type": "number" },
+    "tr101290_pts_errors": { "type": "number" },
+    "tr101290_sync_byte_errors": { "type": "number" },
+    "tr101290_transport_error_indicator_errors": { "type": "number" },
+    "tr101290_ts_sync_byte_errors": { "type": "number" },
+    "uptime": { "type": "number" },
+    "used_memory": { "type": "number" },
+    "used_swap": { "type": "number" }
   },
   "required": [
+    "audio_loudness",
+    "base64_image",
     "bitrate_avg_global",
     "boot_time",
+    "captions",
     "cc_errors_global",
     "core_count",
     "cpu_count",
     "cpu_usage",
     "current_cc_errors_global",
     "disk_stats",
+    "network",
     "host_name",
     "iat_avg_global",
     "iat_max_global",
@@ -157,10 +214,12 @@
     "load_avg_fifteen",
     "load_avg_five",
     "load_avg_one",
+    "log_message",
     "os_version",
     "pid_map",
     "process_count",
     "processes",
+    "scte35",
     "source_ip",
     "source_port",
     "streams",
@@ -168,6 +227,19 @@
     "timestamp",
     "total_memory",
     "total_swap",
+    "tr101290_cat_errors",
+    "tr101290_continuity_counter_errors",
+    "tr101290_crc_errors",
+    "tr101290_pat_errors",
+    "tr101290_pcr_accuracy_errors",
+    "tr101290_pcr_discontinuity_indicator_errors",
+    "tr101290_pcr_repetition_errors",
+    "tr101290_pid_map_errors",
+    "tr101290_pmt_errors",
+    "tr101290_pts_errors",
+    "tr101290_sync_byte_errors",
+    "tr101290_transport_error_indicator_errors",
+    "tr101290_ts_sync_byte_errors",
     "uptime",
     "used_memory",
     "used_swap"
