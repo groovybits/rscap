@@ -1,15 +1,15 @@
-Name:           rscap
-Version:        0.5.51
+Name:           rsprobe
+Version:        0.6.0
 Release:        1%{?dist}
-Summary:        RsCap and GStreamer with essential dependencies
+Summary:        MpegTS Stream Analysis Probe with Kafka and GStreamer
 License:        MIT
 URL:            https://github.com/groovybits/rscap
 BuildRequires:  epel-release, centos-release-scl-rh, gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3, libxml2-devel, pango-devel, cairo-devel, zvbi-devel, ladspa-devel, cairo-gobject-devel, cairo-gobject, rh-python38, rh-python38-python-pip
 Requires:       orc, libffi
-Prefix:        /opt/rscap
+Prefix:        /opt/rsprobe
 
 %description
-Capture probe with ZMQ connected monitor for analyzing MpegTS UDP Streams and sending status to Kafka with thumbnails and metadata information.
+Capture probe analyzing MpegTS UDP Streams and sending status to Kafka with thumbnails and metadata information.
 
 # prepare the source code
 %prep
@@ -44,9 +44,6 @@ export PATH=%{_builddir}%{prefix}/bin:$PATH
 export PKG_CONFIG_PATH=%{_builddir}%{prefix}/lib64/pkgconfig:%{_builddir}%{prefix}/lib/pkgconfig:$PKG_CONFIG_PATH
 export LD_LIBRARY_PATH=%{_builddir}%{prefix}/lib64:%{_builddir}%{prefix}/lib:$LD_LIBRARY_PATH
 
-# Set RUSTFLAGS for RPATH
-export RUSTFLAGS="-C link-args=-Wl,-rpath,%{prefix}/lib:%{prefix}/lib64"
-
 # Explicitly use cmake3 for Meson configuration
 echo "[binaries]" > %{_builddir}/meson-native-file.ini
 echo "cmake = 'cmake3'" >> %{_builddir}/meson-native-file.ini
@@ -61,7 +58,7 @@ echo "Buidling and installing GStreamer with essential dependencies..."
 echo "------------------------------------------------------------"
 
 # Download and build glib
-wget https://download.gnome.org/sources/glib/$GLIB_MAJOR_VERSION/glib-$GLIB_VERSION.tar.xz
+wget --no-check-certificate https://download.gnome.org/sources/glib/$GLIB_MAJOR_VERSION/glib-$GLIB_VERSION.tar.xz
 tar xf glib-$GLIB_VERSION.tar.xz
 cd glib-$GLIB_VERSION
 run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
@@ -113,7 +110,7 @@ rm -f nasm-$NASM_VERSION.tar.gz
 echo "---"
 echo "Cloning and compiling libx264..."
 echo "---"
-git clone https://code.videolan.org/videolan/x264.git
+GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"  git clone https://code.videolan.org/videolan/x264.git
 cd x264
 run_with_scl ./configure --prefix=%{_builddir}%{prefix} --enable-shared --enable-static --enable-pic --libdir=%{_builddir}%{prefix}/lib64 --includedir=%{_builddir}%{prefix}/include --extra-ldflags="-L%{_builddir}%{prefix}/lib64"
 run_with_scl make
@@ -126,7 +123,7 @@ rm -rf x264
 echo "---"
 echo "Cloning and compiling x265..."
 echo "---"
-git clone https://github.com/videolan/x265.git
+GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"  git clone https://github.com/videolan/x265.git
 cd x265
 mkdir -p build
 cd build
@@ -236,11 +233,15 @@ export CARGO_HOME=%{_builddir}%{prefix}/cargo
 export CARGO=%{_builddir}%{prefix}/bin/cargo
 export RUSTC=%{_builddir}%{prefix}/bin/rustc
 
-# GStreamer Rust plugins
-run_with_scl cargo install cargo-c --root=%{_builddir}%{prefix}
+# gstreamer rust plugins
+GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/cargo-c.git
+cd cargo-c
+#run_with_scl cargo install cargo-c --root=%{_builddir}%{prefix}
+run_with_scl cargo install --path=. --root=%{_builddir}%{prefix}
+cd ../
 
 rm -rf gst-plugin-rs
-git clone https://github.com/sdroege/gst-plugin-rs.git
+GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"  git clone https://github.com/sdroege/gst-plugin-rs.git
 cd gst-plugin-rs
 git checkout $GST_PLUGINS_RS_VERSION
 
@@ -269,31 +270,32 @@ echo "------------------------------------------------------------"
 echo "GStreamer and essential dependencies installed."
 echo "------------------------------------------------------------"
 
-# Build RsCap
+# Build RsProbe
 echo "------------------------------------------------------------"
-echo "Building RsCap..."
+echo "Building RsProbe..."
 echo "------------------------------------------------------------"
 
-# Clone RsCap repository and checkout the specific tag
-rm -rf rscap
-git clone https://github.com/groovybits/rscap.git
-cd rscap
+# Clone RsProbe repository and checkout the specific tag
+rm -rf rsprobe
+GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/rscap.git rsprobe
+cd rsprobe
 
-## Build RsCap
+# Set RUSTFLAGS for RPATH
+export RUSTFLAGS="-C link-args=-Wl,-rpath,%{prefix}/lib:%{prefix}/lib64"
+
+## Build RsProbe
 git checkout $RSCAP_VERSION
 run_with_scl cargo build --features gst --release
 
-# Copy RsCap binaries to the installation directory
+# Copy RsProbe binaries to the installation directory
 cp target/release/probe %{_builddir}%{prefix}/bin/
-cp target/release/monitor %{_builddir}%{prefix}/bin/
-cp scripts/monitor.sh %{_builddir}%{prefix}/bin
 cp scripts/probe.sh %{_builddir}%{prefix}/bin
 cp scripts/setup_env.sh %{_builddir}%{prefix}/bin
 
 cd ..
 
-# cleanup rscap
-rm -rf rscap
+# cleanup rsprobe
+rm -rf rsprobe
 
 # Remove unnecessary build dependencies
 rm -rf %{_builddir}%{prefix}/cargo
@@ -345,7 +347,7 @@ rm -rf %{_builddir}%{prefix}/lib64/pkgconfig
 rm -rf %{_builddir}%{prefix}/include
 
 echo "------------------------------------------------------------"
-echo "Done building RsCap and all dependencies."
+echo "Done building RsProbe and all dependencies."
 echo "------------------------------------------------------------"
 
 # Installation script
@@ -367,7 +369,7 @@ cp -R %{_builddir}%{prefix}/lib64/* %{buildroot}%{prefix}/lib64/
 rm -rf %{_builddir}%{prefix}
 
 echo "------------------------------------------------------------"
-echo "Finished installing RsCap."
+echo "Finished installing RsProbe."
 echo "------------------------------------------------------------"
 
 # Create the RPM package
@@ -378,13 +380,13 @@ echo "------------------------------------------------------------"
 
 # Post installation script
 %post
-echo "%{prefix}/lib64" > %{_sysconfdir}/ld.so.conf.d/rscap64.conf
+echo "%{prefix}/lib64" > %{_sysconfdir}/ld.so.conf.d/rsprobe64.conf
 /sbin/ldconfig
 
 # Post uninstallation script
 %postun
 if [ $1 -eq 0 ]; then
-    rm -f %{_sysconfdir}/ld.so.conf.d/rscap64.conf
+    rm -f %{_sysconfdir}/ld.so.conf.d/rsprobe64.conf
     /sbin/ldconfig
 fi
 
@@ -394,5 +396,5 @@ rm -rf %{buildroot}
 rm -rf %{_builddir}/*
 
 %changelog
-* Mon Apr 08 2024 Chris Kennedy <chris@rscap.com>
+* Mon Apr 08 2024 Chris Kennedy <chris@rsprobe.example>
 - Initial RPM release

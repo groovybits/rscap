@@ -39,7 +39,7 @@ FFMPEG_VERSION=6.1.1
 LIBZVBI_VERSION=0.2.42
 
 # Define the installation prefix
-PREFIX=/opt/rscap
+PREFIX=/opt/rsprobe
 export PATH=$PREFIX/bin:$PATH
 
 USER=$(whoami)
@@ -155,7 +155,7 @@ if [ "$(uname)" = "Darwin" ]; then
         echo "---"
         echo "Installing libzvbi..."
         echo "---"
-        git clone https://github.com/zapping-vbi/zvbi.git
+        GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/zapping-vbi/zvbi.git
         cd zvbi
         git checkout v$LIBZVBI_VERSION
         run_with_scl sh autogen.sh
@@ -228,7 +228,7 @@ if [ "$OS" = "Linux" ]; then
 
         # Clone the repository
         if [ ! -d "x264" ]; then
-            git clone https://code.videolan.org/videolan/x264.git
+            GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://code.videolan.org/videolan/x264.git
         fi
         cd x264
 
@@ -252,7 +252,7 @@ if [ "$OS" = "Linux" ]; then
 
         # Clone the x265 repository if it doesn't already exist
         if [ ! -d "x265" ]; then
-            git clone https://github.com/videolan/x265.git
+            GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/videolan/x265.git
         fi
         cd x265
 
@@ -420,12 +420,16 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   echo "Installing GStreamer Rust plugins..."
   echo "---"
 
-  # Install cargo-c
-  run_with_scl cargo install cargo-c --root $PREFIX
+  # GStreamer Rust plugins
+  GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/cargo-c.git
+  cd cargo-c
+  #run_with_scl cargo install cargo-c --root=$PREFIX
+  run_with_scl cargo install --path=. --root=$PREFIX
+  cd ../
 
   # Download gst-plugins-rs source code
   if [ ! -f gst-plugin-rs ]; then
-    git clone https://github.com/sdroege/gst-plugin-rs.git
+    GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/sdroege/gst-plugin-rs.git
     cd gst-plugin-rs
     git checkout $GST_PLUGINS_RS_VERSION
     cd ..
@@ -458,16 +462,12 @@ run_with_scl cargo build --features gst --release
 
 # Copy RsCap binaries to the installation directory
 cp -f target/release/probe $PREFIX/bin/
-cp -f target/release/monitor $PREFIX/bin/
-cp -f scripts/monitor.sh $PREFIX/bin/
 cp -f scripts/probe.sh $PREFIX/bin/
 cp -f scripts/setup_env.sh $PREFIX/bin/
 
 ls -altr $PREFIX/bin/probe
-ls -altr $PREFIX/bin/monitor
 
 probe -V
-monitor -V
 
 echo "------------------------------------------------------------"
 echo "GStreamer and essential dependencies installed."
@@ -478,4 +478,3 @@ echo "------------------------------------------------------------"
 echo "Verifying GStreamer installation..."
 echo "------------------------------------------------------------"
 gst-launch-1.0 --version
-
