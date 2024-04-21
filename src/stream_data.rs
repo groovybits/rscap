@@ -4,6 +4,8 @@
  * Data structure for the stream data
 */
 
+use std::fs::OpenOptions;
+//use std::fs::File;
 use crate::current_unix_timestamp_ms;
 use ahash::AHashMap;
 #[cfg(feature = "gst")]
@@ -82,30 +84,6 @@ const CEA608_CONTROL_END_OF_CAPTION: u16 = 0x142F;
 struct Caption {
     text: String,
     style: String,
-}
-
-// Function to extract CEA-608/708 data from MPEG-TS packets
-fn extract_cea608_data(ts_packets: &[u8], pid: u16) -> Vec<u8> {
-    let mut cc_data = Vec::new();
-    let packet_size = 188; // Standard size of MPEG-TS packets
-
-    let mut i = 0;
-    while i < ts_packets.len() {
-        let sync_byte = ts_packets[i];
-        if sync_byte == 0x47 {
-            // Sync byte for MPEG-TS packets
-            let packet_pid = ((ts_packets[i + 1] as u16 & 0x1F) << 8) | ts_packets[i + 2] as u16;
-            if packet_pid == pid {
-                // PID matches the PID for CEA-608/708 data
-                let payload_start = i + 4 + ((ts_packets[i + 3] & 0x20) >> 4) as usize; // Calculate start of payload
-                let payload = &ts_packets[payload_start..i + packet_size];
-                cc_data.extend_from_slice(payload);
-            }
-        }
-        i += packet_size;
-    }
-
-    cc_data
 }
 
 // Function to decode CEA-608 data to text
@@ -210,7 +188,7 @@ fn decode_cea608(data: &[u8]) -> Vec<Caption> {
                 }
                 _ => {
                     // Unhandled control code or invalid data
-                    log::warn!("Unhandled CEA-608 control code or invalid data: {:04X}", cc_data);
+                    log::debug!("Unhandled CEA-608 control code or invalid data: {:04X}", cc_data);
                 }
             }
         }
@@ -219,7 +197,7 @@ fn decode_cea608(data: &[u8]) -> Vec<Caption> {
     }
 
     captions
-}
+    }
 
 #[cfg(feature = "gst")]
 fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
@@ -368,6 +346,20 @@ pub fn pull_images(
         let mut frame_count = 0;
         let mut last_processed_pts = 0;
         let mut filmstrip_images = Vec::new();
+        let save_captions = false;
+
+        // create file if it doesn't exist, else append to it
+        let mut file = if save_captions {
+            let file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .append(true)
+                .open("captions.raw")
+                .expect("Failed to open captions.raw file.");
+            Some(file)
+        } else {
+            None
+        };
 
         while running.load(Ordering::SeqCst) {
             // captions sink
@@ -387,13 +379,12 @@ pub fn pull_images(
                             // decode the VBI caption line 21 data and print it
                             match caption_type {
                                 VideoCaptionType::Cea708Raw => {
-                                    // PID for CEA-608/708 data
-                                    let cc_pid = 0x1FF; // Example PID for CEA-608/708 captions
+                                    // write out to a file cc.raw
+                                    if save_captions {
+                                        file.as_mut().unwrap().write_all(&caption_data).unwrap();
+                                    }
 
-                                    // Extract CEA-608/708 data from the raw MPEG-TS data
-                                    let cea608_data = extract_cea608_data(&caption_data, cc_pid);
-
-                                    let caption = decode_cea608(&cea608_data);
+                                    let caption = decode_cea608(&caption_data);
                                     if caption.len() > 0 {
                                         log::info!("Decoded VBI caption: {:?}", caption);
                                     } else {
