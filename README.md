@@ -4,7 +4,7 @@
 
 ## Overview
 
-This project is an experiment researching Rust and its efficiency at handling high rates of streaming MpegTS and SMPTE2110 for broadcast monitoring usage. The goal is to distribute a PCap-sourced MpegTS/SMPTE2110 multicast network stream and send metrics with image assets and stream metadata to Kafka. The project captures the TS/SMPTE2110 using pcap with filter rules for specifying the stream IP and port, and validates the stream for conformance. If requested, metrics are sent to Kafka for long-term storage.
+This project is an experiment researching Rust and its efficiency at handling high rates of streaming MpegTS for broadcast monitoring usage. The goal is to distribute a PCap-sourced MpegTS multicast network stream and send metrics with image assets and stream metadata to Kafka. The project captures the MpegTS using pcap with filter rules for specifying the stream IP and port, and validates the stream for conformance. If requested, metrics are sent to Kafka for long-term storage.
 
 ![RsProbe](https://storage.googleapis.com/groovybits/images/rscap/rscap.webp)
 
@@ -12,7 +12,7 @@ Gstreamer support is available with the `--features gst` flag (`make build_gst`)
 
 ## The Probe Client
 
-The [src/bin/probe.rs](src/bin/probe.rs) takes MpegTS or SMPTE2110 via Packet Capture and publishes batches of the MpegTS 188 / SMPTE2110 sized byte packets to a ZeroMQ socket it binds with PUSH. The probe has zero copy of the pcap buffers for the life cycle. It analyzes the MpegTS (and someday SMPTE2110 streams, which is a work in progress and needs development and testing to completely optimize the behavior).
+The [src/bin/probe.rs](src/bin/probe.rs) takes MpegTS via Packet Capture and publishes batches of the MpegTS 188 sized byte packets to a ZeroMQ socket it binds with PUSH. The probe has zero copy of the pcap buffers for the life cycle. It analyzes the MpegTS currently, a goal is to also support SMPTE2110 streams with DPDK, which is a work in progress and needs development and testing to completely optimize the behavior.
 
 ## Configuration with Environment Variables
 
@@ -71,11 +71,10 @@ Running VTune [scripts/vtune.sh](scripts/vtune.sh)
 - Audio analysis, capture, sampling showing amplitude graphs and noise violations of various broadcasting regulations.
 - Caption packets and other NAL and SEI data / metadata extraction and sending.
 - (WIP) Add more information header to the stream data metadata like network stats, mediainfo, captions, ancillary data.
-- (WIP) SMPTE 2110 handling reassembling frames and analogous to the MpegTS support.
+- SMPTE 2110 handling reassembling frames and analogous to the MpegTS support.
 - (WIP) PES parsing and analysis of streams.
 - (WIP) FFmpeg libzmq protocol compatibility to allow branching off into libav easily.
 - (WIP) General network analyzer view of network around the streams we know/care about.
-- Improve NAL parsing and various aspects of MpegTS and VANC ancillary data from SMPTE2110.
 - Use [OpenCV img_hash fingerprinting](https://docs.opencv.org/3.4/d4/d93/group__img__hash.html#ga5eeee1e27bc45caffe3b529ab42568e3) to perceptually align and compare video streams frames.
 - OpenAI Whisper speech to text for caption verification and insertion. <https://github.com/openai/whisper>
 - Problem discovery and reporting via LLM/VectorDB analysis detection of anomalies in data.
