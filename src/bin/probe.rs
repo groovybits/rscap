@@ -30,13 +30,13 @@ use rdkafka::client::DefaultClientContext;
 use rdkafka::config::ClientConfig;
 use rdkafka::producer::{FutureProducer, FutureRecord};
 use rsprobe::get_system_stats;
+use rsprobe::stream_data::process_mpegts_packet;
 use rsprobe::stream_data::{
-    identify_video_pid, is_mpegts_or_smpte2110, parse_and_store_pat, process_packet,
-    update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
+    get_pid_map, identify_video_pid, parse_and_store_pat, process_packet, update_pid_map, Codec,
+    PmtInfo, StreamData, Tr101290Errors, PAT_PID,
 };
 #[cfg(feature = "gst")]
 use rsprobe::stream_data::{initialize_pipeline, process_video_packets, pull_images};
-use rsprobe::stream_data::{process_mpegts_packet, process_smpte2110_packet};
 use rsprobe::watch_file::watch_daemon;
 use rsprobe::{current_unix_timestamp_ms, hexdump};
 use serde_json::{json, Value};
@@ -72,6 +72,7 @@ struct StreamGrouping {
 
 fn flatten_streams(
     stream_groupings: &AHashMap<u16, StreamGrouping>,
+    probe_id: String,
 ) -> serde_json::Map<String, Value> {
     let mut flat_structure: serde_json::Map<String, Value> = serde_json::Map::new();
 
@@ -80,7 +81,7 @@ fn flatten_streams(
 
         let prefix = format!("streams.{}", pid);
 
-        flat_structure.insert(format!("{}.id", prefix), json!(stream_data.probe_id));
+        flat_structure.insert(format!("{}.id", prefix), json!(probe_id.clone()));
         flat_structure.insert(
             format!("{}.program_number", prefix),
             json!(stream_data.program_number),
@@ -186,17 +187,9 @@ async fn kafka_produce_message(
     key: String,
     _stream_data_timestamp: i64,
     producer: FutureProducer,
-    admin_client: &AdminClient<DefaultClientContext>,
 ) {
     log::debug!("Service {} sending message", kafka_topic);
     let kafka_topic = kafka_topic.replace(":", "_").replace(".", "_");
-
-    // Metadata fetching is problematic, directly attempt to ensure the topic exists.
-    // This code block tries to create the topic if it doesn't already exist, ignoring errors that indicate existence.
-    let new_topic = NewTopic::new(&kafka_topic, 1, rdkafka::admin::TopicReplication::Fixed(1));
-    let _ = admin_client
-        .create_topics(&[new_topic], &AdminOptions::new())
-        .await;
 
     log::debug!(
         "Forwarding message for topic {} to Kafka server {:?}",
@@ -525,10 +518,6 @@ struct Args {
     #[clap(long, env = "NO_PROGRESS", default_value_t = false)]
     no_progress: bool,
 
-    /// Force smpte2110 mode
-    #[clap(long, env = "SMPT2110", default_value_t = false)]
-    smpte2110: bool,
-
     /// Use promiscuous mode
     #[clap(long, env = "PROMISCUOUS", default_value_t = false)]
     promiscuous: bool,
@@ -553,10 +542,6 @@ struct Args {
     #[clap(long, env = "PCAP_CHANNEL_SIZE", default_value_t = 100000)]
     pcap_channel_size: usize,
 
-    /// Sets the batch size
-    #[clap(long, env = "KAFKA_BATCH_SIZE", default_value_t = 100)]
-    kafka_batch_size: usize,
-
     /// MPSC Channel Size for PCAP
     #[clap(long, env = "KAFKA_CHANNEL_SIZE", default_value_t = 100000)]
     kafka_channel_size: usize,
@@ -576,10 +561,6 @@ struct Args {
     /// Output file for Kafka
     #[clap(long, env = "OUTPUT_FILE", default_value = "")]
     output_file: String,
-
-    /// Debug SMPTE2110
-    #[clap(long, env = "DEBUG_SMPTE2110", default_value_t = false)]
-    debug_smpte2110: bool,
 
     /// Watch File - File we watch for changes to send as the streams.PID.log_line string
     #[clap(long, env = "WATCH_FILE", default_value = "")]
@@ -661,6 +642,10 @@ struct Args {
     /// Kafka sending interval in milliseconds
     #[clap(long, env = "KAFKA_INTERVAL", default_value_t = 1000)]
     kafka_interval: u64,
+
+    /// System Stats Interval in milliseconds
+    #[clap(long, env = "SYSTEM_STATS_INTERVAL", default_value_t = 5000)]
+    system_stats_interval: u64,
 }
 
 // MAIN Function
@@ -694,51 +679,25 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
     let args = Args::parse();
 
-    // Use the parsed arguments directly
-    let mut pcap_batch_size = args.pcap_batch_size;
-    let payload_offset = args.payload_offset;
-    let mut packet_size = args.packet_size;
-    let read_time_out = args.read_time_out;
-    let source_device = args.source_device;
-    let source_ip = args.source_ip.clone();
-    let source_protocol = args.source_protocol;
-    let source_port = args.source_port;
-    let debug_on = args.debug_on;
-    let silent = args.silent;
-    let use_wireless = args.use_wireless;
-    let packet_count = args.packet_count;
-    let no_progress = args.no_progress;
-    let promiscuous = args.promiscuous;
-    let show_tr101290 = args.show_tr101290;
-    let mut buffer_size = args.buffer_size as i64;
-    let mut immediate_mode = args.immediate_mode;
-    let pcap_stats = args.pcap_stats;
-    let mut pcap_channel_size = args.pcap_channel_size;
-    let mut kafka_channel_size = args.kafka_channel_size;
+    // Clone the args for use in the threads
+    let probe_id_clone = args.probe_id.clone();
+    let source_ip_clone = args.source_ip.clone();
+    let source_ip_clone1 = args.source_ip.clone();
+    let source_ip_clone2 = args.source_ip.clone();
+
     #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
     let use_dpdk = args.dpdk;
 
     println!("Starting RsProbe...");
 
-    // SMPTE2110 specific settings
-    if args.smpte2110 {
-        immediate_mode = true; // set immediate mode to true for smpte2110
-        buffer_size = 10_000_000_000; // set pcap buffer size to 10GB for smpte2110
-        pcap_channel_size = 1_000_000; // set pcap channel size for smpte2110
-        kafka_channel_size = 1_000_000; // set kafka channel size for smpte2110
-        packet_size = 1_220; // set packet size to 1220 (body) + 12 (header) for RTP
-        pcap_batch_size = 3; // N x 1220 size packets for pcap read size
-    }
-
-    if silent {
+    if args.silent {
         // set log level to error
         std::env::set_var("RUST_LOG", "error");
     }
 
     // calculate read size based on batch size and packet size
-    let read_size: i32 = (packet_size as i32 * pcap_batch_size as i32) + payload_offset as i32; // pcap read size
-
-    let mut is_mpegts = true; // Default to true, update based on actual packet type
+    let read_size: i32 =
+        (args.packet_size as i32 * args.pcap_batch_size as i32) + args.payload_offset as i32; // pcap read size
 
     // Set Rust log level with --loglevel if it is set
     let loglevel = args.loglevel.to_lowercase();
@@ -767,9 +726,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     let env = Env::default().filter_or("RUST_LOG", loglevel.as_str()); // Default to `info` if `RUST_LOG` is not set
     LogBuilder::from_env(env).init();
 
-    let (ptx, mut prx) = mpsc::channel::<(Arc<Vec<u8>>, u64, u64)>(pcap_channel_size);
-
-    let source_ip_clone = source_ip.clone();
+    let (ptx, mut prx) = mpsc::channel::<(Arc<Vec<u8>>, u64, u64)>(args.pcap_channel_size);
 
     // Spawn a new thread for packet capture
     let capture_task = if cfg!(feature = "dpdk_enabled") && args.dpdk {
@@ -830,15 +787,15 @@ async fn rsprobe(running: Arc<AtomicBool>) {
         tokio::spawn(async move {
             // initialize the pcap
             let (cap, _socket) = init_pcap(
-                &source_device,
-                use_wireless,
-                promiscuous,
-                read_time_out,
+                &args.source_device,
+                args.use_wireless,
+                args.promiscuous,
+                args.read_time_out,
                 read_size,
-                immediate_mode,
-                buffer_size as i64,
-                &source_protocol,
-                source_port,
+                args.immediate_mode,
+                args.buffer_size as i64,
+                &args.source_protocol,
+                args.source_port,
                 &source_ip_clone,
             )
             .expect("Failed to initialize pcap");
@@ -888,7 +845,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                 break;
                             }
                             let current_ts = Instant::now();
-                            if pcap_stats
+                            if args.pcap_stats
                                 && ((current_ts.duration_since(stats_last_sent_ts).as_secs() >= 30)
                                     || count == 1)
                             {
@@ -919,7 +876,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         }
                     }
                 }
-                if debug_on {
+                if args.debug_on {
                     let stats = stream.capture_mut().stats().unwrap();
                     println!(
                         "Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
@@ -939,8 +896,22 @@ async fn rsprobe(running: Arc<AtomicBool>) {
         })
     };
 
+    let mut probe_id = args.probe_id.clone();
+    if probe_id_clone.is_empty() {
+        // construct stream.source_ip and stream.source_port with stream.host
+        let system_stats = get_system_stats();
+        probe_id = format!(
+            "{}:{}:{}",
+            system_stats.host_name, source_ip_clone1, args.source_port
+        );
+    }
+    let probe_id_clone1 = probe_id.clone();
+    let probe_id_clone2 = probe_id.clone();
+
     // Setup channel for passing stream_data for Kafka thread sending the stream data to monitor process
-    let (ktx, mut krx) = mpsc::channel::<Vec<StreamData>>(kafka_channel_size);
+    let (ktx, mut krx) =
+        mpsc::channel::<(Vec<Arc<StreamData>>, Vec<String>, Vec<Vec<u8>>)>(args.kafka_channel_size);
+
     let kafka_broker_clone = args.kafka_broker.clone();
     let kafka_topic_clone = args.kafka_topic.clone();
     let kafka_topic_clone1 = args.kafka_topic.clone();
@@ -954,8 +925,11 @@ async fn rsprobe(running: Arc<AtomicBool>) {
             return;
         }
 
+        // Flatten the processes and insert them into the structure as an array of strings
+        let cpu_threshold = 5.0; // CPU usage threshold (in percentage)
+        let ram_threshold = 100 * 1024 * 1024; // RAM usage threshold (in bytes)
+
         let mut output_file_counter: u32 = 0;
-        let mut last_kafka_send_time = Instant::now();
         let mut last_system_stats = Instant::now();
         let mut dot_last_file_write = Instant::now();
         let mut log_messages = Vec::<String>::new();
@@ -975,15 +949,34 @@ async fn rsprobe(running: Arc<AtomicBool>) {
             .create()
             .expect("Failed to create Kafka producer");
 
+        // This code block tries to create the topic if it doesn't already exist
+        // ignoring errors that indicate existence.
+        let new_topic = NewTopic::new(
+            &args.kafka_topic,
+            1,
+            rdkafka::admin::TopicReplication::Fixed(1),
+        );
+        let _ = admin_client
+            .create_topics(&[new_topic], &AdminOptions::new())
+            .await;
+
+        // prime the system stats for the first time
         let mut system_stats = get_system_stats();
         while running_kafka.load(Ordering::SeqCst) {
-            while let Some(mut batch) = krx.recv().await {
+            while let Some((mut batch, mut logs, mut images)) = krx.recv().await {
+                if logs.len() > 0 {
+                    for log in logs.iter() {
+                        log_messages.push(log.clone());
+                        log::info!("Got Log Message: {}", log);
+                    }
+                    logs.clear();
+                }
                 // Process and send messages
                 for stream_data in batch.iter() {
-                    let mut force_send_message = false;
                     let mut base64_image = String::new();
 
-                    if stream_data.packet_len > 0 && stream_data.has_image > 0 {
+                    if images.len() > 0 {
+                        let image = images.pop().unwrap();
                         let output_file_incremental =
                             format!("{}_{:08}.jpg", output_file_without_jpg, output_file_counter);
 
@@ -996,64 +989,60 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         };
                         log::info!(
                             "Kafka Sender: [{}] Jpeg image received: {} size {} pts saved to {}",
-                            stream_data.probe_id,
-                            stream_data.packet_len,
-                            stream_data.image_pts,
+                            probe_id_clone1.clone(),
+                            image.len(),
+                            stream_data.capture_time,
                             output_file_incremental
                         );
 
                         // Write to file if output_file is provided
                         if let Some(file) = output_file_mut.as_mut() {
-                            if !no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
+                            if !args.no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
                                 dot_last_file_write = Instant::now();
                                 print!("*");
                                 // flush stdout
                                 std::io::stdout().flush().unwrap();
                             }
-                            file.write_all(&stream_data.packet).unwrap();
+                            file.write_all(&image).unwrap();
                         }
 
                         // Encode the JPEG image as Base64
-                        base64_image =
-                            general_purpose::STANDARD.encode(&stream_data.packet.as_ref());
+                        base64_image = general_purpose::STANDARD.encode::<&[u8]>(&image);
+
+                        // clear the image buffer
+                        images.clear();
                     }
 
-                    let mut probe_id = stream_data.probe_id.clone();
-                    if probe_id.is_empty() {
-                        // construct stream.source_ip and stream.source_port with stream.host
-                        let system_stats = get_system_stats();
-                        probe_id = format!(
-                            "{}:{}:{}",
-                            system_stats.host_name, args.source_ip, args.source_port
-                        );
-                    }
                     let pid = stream_data.pid;
                     {
                         let mut probe_data_map = PROBE_DATA.write().unwrap();
-                        if let Some(probe_data) = probe_data_map.get_mut(&probe_id) {
+                        if let Some(probe_data) = probe_data_map.get_mut(&probe_id_clone2.clone()) {
                             let stream_groupings = &mut probe_data.stream_groupings;
                             if let Some(grouping) = stream_groupings.get_mut(&pid) {
                                 // Update the existing StreamData instance in the grouping
                                 let last_stream_data =
                                     grouping.stream_data_list.last_mut().unwrap();
-                                *last_stream_data = stream_data.clone();
+                                *last_stream_data = Arc::try_unwrap(stream_data.clone())
+                                    .unwrap_or_else(|stream_data| (*stream_data).clone());
                             } else {
                                 let new_grouping = StreamGrouping {
-                                    stream_data_list: vec![stream_data.clone()],
+                                    stream_data_list: vec![Arc::try_unwrap(stream_data.clone())
+                                        .unwrap_or_else(|stream_data| (*stream_data).clone())],
                                 };
                                 stream_groupings.insert(pid, new_grouping);
                             }
                         } else {
                             let mut new_stream_groupings = AHashMap::new();
                             let new_grouping = StreamGrouping {
-                                stream_data_list: vec![stream_data.clone()],
+                                stream_data_list: vec![Arc::try_unwrap(stream_data.clone())
+                                    .unwrap_or_else(|stream_data| (*stream_data).clone())],
                             };
                             new_stream_groupings.insert(pid, new_grouping);
                             let new_probe_data = ProbeData {
                                 stream_groupings: new_stream_groupings,
                                 global_data: serde_json::Map::new(),
                             };
-                            probe_data_map.insert(probe_id.clone(), new_probe_data);
+                            probe_data_map.insert(probe_id_clone2.clone(), new_probe_data);
                         }
                     }
 
@@ -1061,290 +1050,262 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                     let mut averaged_probe_data: serde_json::Map<String, serde_json::Value> =
                         serde_json::Map::new();
 
-                    // Check if it's time to send data to Kafka based on the interval
-                    if !args.kafka_broker.is_empty() && args.kafka_broker != "" {
-                        // Acquire write access to PROBE_DATA
+                    // Acquire write access to PROBE_DATA and Send to Kafka
+                    {
+                        let mut probe_data_map = PROBE_DATA.write().unwrap();
+                        if last_system_stats.elapsed().as_millis()
+                            >= args.system_stats_interval as u128
                         {
-                            let mut probe_data_map = PROBE_DATA.write().unwrap();
-                            if last_system_stats.elapsed().as_millis() >= 1000 as u128 {
-                                last_system_stats = Instant::now();
-                                system_stats = get_system_stats();
+                            last_system_stats = Instant::now();
+                            system_stats = get_system_stats();
+                        }
+
+                        // Process each probe's data
+                        for (_probe_id, probe_data) in probe_data_map.iter_mut() {
+                            let stream_groupings = &probe_data.stream_groupings;
+                            let mut flattened_data =
+                                flatten_streams(&stream_groupings, probe_id_clone2.clone());
+
+                            // Initialize variables to accumulate global averages
+                            let mut total_bitrate_avg: u64 = 0;
+                            let mut total_iat_avg: u64 = 0;
+                            let mut total_iat_max: u64 = 0;
+                            let mut total_cc_errors: u64 = 0;
+                            let mut total_cc_errors_current: u64 = 0;
+                            let mut stream_count: u64 = 0;
+                            let mut source_ip: String = String::new();
+                            let mut source_port: u32 = 0;
+                            let mut image_pts: u64 = 0;
+                            let mut captions: String = String::new();
+                            let mut pid_map: String = String::new();
+                            let mut scte35: String = String::new();
+                            let mut audio_loudness: String = String::new();
+
+                            // Process each stream to accumulate averages
+                            for (_, grouping) in stream_groupings.iter() {
+                                for stream_data in &grouping.stream_data_list {
+                                    total_bitrate_avg += stream_data.bitrate_avg as u64;
+                                    total_iat_avg += stream_data.capture_iat;
+                                    total_iat_max += stream_data.capture_iat_max;
+                                    total_cc_errors += stream_data.error_count as u64;
+                                    total_cc_errors_current +=
+                                        stream_data.current_error_count as u64;
+                                    source_port = stream_data.source_port as u32;
+                                    source_ip = stream_data.source_ip.clone();
+                                    if stream_data.has_image > 0 && stream_data.image_pts > 0 {
+                                        image_pts = stream_data.image_pts;
+                                    }
+                                    if stream_data.captions != "" {
+                                        // concatenate captions
+                                        captions = format!("{}{}", captions, stream_data.captions);
+                                    }
+                                    if stream_data.pid_map != "" {
+                                        // concatenate pid_map
+                                        pid_map = format!("{}{}", pid_map, stream_data.pid_map);
+                                    }
+                                    if stream_data.scte35 != "" {
+                                        // concatenate scte35
+                                        scte35 = format!("{}{}", scte35, stream_data.scte35);
+                                    }
+                                    if stream_data.audio_loudness != "" {
+                                        // concatenate audio_loudness
+                                        audio_loudness = format!(
+                                            "{}{}",
+                                            audio_loudness, stream_data.audio_loudness
+                                        );
+                                    }
+                                    stream_count += 1;
+                                }
                             }
 
-                            // Process each probe's data
-                            for (_probe_id, probe_data) in probe_data_map.iter_mut() {
-                                let stream_groupings = &probe_data.stream_groupings;
-                                let mut flattened_data = flatten_streams(&stream_groupings);
+                            // Continuity Counter errors
+                            let global_cc_errors = total_cc_errors;
+                            let global_cc_errors_current = total_cc_errors_current;
 
-                                // Initialize variables to accumulate global averages
-                                let mut total_bitrate_avg: u64 = 0;
-                                let mut total_iat_avg: u64 = 0;
-                                let mut total_iat_max: u64 = 0;
-                                let mut total_cc_errors: u64 = 0;
-                                let mut total_cc_errors_current: u64 = 0;
-                                let mut stream_count: u64 = 0;
-                                let mut source_ip: String = String::new();
-                                let mut source_port: u32 = 0;
-                                let mut image_pts: u64 = 0;
-                                let mut captions: String = String::new();
-                                let mut pid_map: String = String::new();
-                                let mut scte35: String = String::new();
-                                let mut audio_loudness: String = String::new();
+                            // avg IAT
+                            let global_iat_avg = if stream_count > 0 {
+                                total_iat_avg as f64 / stream_count as f64
+                            } else {
+                                0.0
+                            };
 
-                                // Process each stream to accumulate averages
-                                for (_, grouping) in stream_groupings.iter() {
-                                    for stream_data in &grouping.stream_data_list {
-                                        total_bitrate_avg += stream_data.bitrate_avg as u64;
-                                        total_iat_avg += stream_data.capture_iat;
-                                        total_iat_max += stream_data.capture_iat_max;
-                                        total_cc_errors += stream_data.error_count as u64;
-                                        total_cc_errors_current +=
-                                            stream_data.current_error_count as u64;
-                                        source_port = stream_data.source_port as u32;
-                                        source_ip = stream_data.source_ip.clone();
-                                        if stream_data.has_image > 0 && stream_data.image_pts > 0 {
-                                            image_pts = stream_data.image_pts;
-                                        }
-                                        if stream_data.log_message != "" {
-                                            log::info!(
-                                                "Got Log Message: {}",
-                                                stream_data.log_message
-                                            );
-                                            log_messages.push(stream_data.log_message.clone());
-                                        }
-                                        if stream_data.captions != "" {
-                                            // concatenate captions
-                                            captions =
-                                                format!("{}{}", captions, stream_data.captions);
-                                        }
-                                        if stream_data.pid_map != "" {
-                                            // concatenate pid_map
-                                            pid_map = format!("{}{}", pid_map, stream_data.pid_map);
-                                        }
-                                        if stream_data.scte35 != "" {
-                                            // concatenate scte35
-                                            scte35 = format!("{}{}", scte35, stream_data.scte35);
-                                        }
-                                        if stream_data.audio_loudness != "" {
-                                            // concatenate audio_loudness
-                                            audio_loudness = format!(
-                                                "{}{}",
-                                                audio_loudness, stream_data.audio_loudness
-                                            );
-                                        }
-                                        stream_count += 1;
-                                    }
-                                }
+                            // max IAT
+                            let global_iat_max = if stream_count > 0 {
+                                total_iat_max as f64 / stream_count as f64
+                            } else {
+                                0.0
+                            };
 
-                                // Continuity Counter errors
-                                let global_cc_errors = total_cc_errors;
-                                let global_cc_errors_current = total_cc_errors_current;
+                            // Calculate global averages
+                            let global_bitrate_avg = if stream_count > 0 {
+                                total_bitrate_avg
+                            } else {
+                                0
+                            };
+                            let current_timestamp = current_unix_timestamp_ms().unwrap_or(0);
 
-                                // avg IAT
-                                let global_iat_avg = if stream_count > 0 {
-                                    total_iat_avg as f64 / stream_count as f64
-                                } else {
-                                    0.0
-                                };
+                            // Directly insert global statistics and timestamp into the flattened_data map
+                            flattened_data.insert(
+                                "bitrate_avg_global".to_string(),
+                                serde_json::json!(global_bitrate_avg),
+                            );
+                            flattened_data.insert(
+                                "iat_avg_global".to_string(),
+                                serde_json::json!(global_iat_avg),
+                            );
+                            flattened_data.insert(
+                                "iat_max_global".to_string(),
+                                serde_json::json!(global_iat_max),
+                            );
+                            flattened_data.insert(
+                                "cc_errors_global".to_string(),
+                                serde_json::json!(global_cc_errors),
+                            );
+                            flattened_data.insert(
+                                "current_cc_errors_global".to_string(),
+                                serde_json::json!(global_cc_errors_current),
+                            );
+                            flattened_data.insert(
+                                "timestamp".to_string(),
+                                serde_json::json!(current_timestamp),
+                            );
+                            flattened_data
+                                .insert("source_ip".to_string(), serde_json::json!(source_ip));
+                            flattened_data
+                                .insert("source_port".to_string(), serde_json::json!(source_port));
 
-                                // max IAT
-                                let global_iat_max = if stream_count > 0 {
-                                    total_iat_max as f64 / stream_count as f64
-                                } else {
-                                    0.0
-                                };
+                            flattened_data
+                                .insert("captions".to_string(), serde_json::json!(captions));
 
-                                // Calculate global averages
-                                let global_bitrate_avg = if stream_count > 0 {
-                                    total_bitrate_avg
-                                } else {
-                                    0
-                                };
-                                let current_timestamp = current_unix_timestamp_ms().unwrap_or(0);
+                            // Insert the base64_image field into the flattened_data map
+                            let base64_image_tag = if !base64_image.is_empty() {
+                                log::debug!("Got Image: {} bytes", base64_image.len());
 
-                                // Directly insert global statistics and timestamp into the flattened_data map
+                                format!("data:image/jpeg;base64,{}", base64_image)
+                            } else {
+                                "".to_string()
+                            };
+                            flattened_data
+                                .insert("image_pts".to_string(), serde_json::json!(image_pts));
+                            flattened_data.insert(
+                                "base64_image".to_string(),
+                                serde_json::json!(base64_image_tag),
+                            );
+
+                            // Check if we have a log_message in log_messages Vector, if so add it to the flattened_data map
+                            if log_messages.len() > 0 {
+                                // remove one log message from the log_messages array
+                                let log_message = log_messages.pop().unwrap();
                                 flattened_data.insert(
-                                    "bitrate_avg_global".to_string(),
-                                    serde_json::json!(global_bitrate_avg),
+                                    "log_message".to_string(),
+                                    serde_json::json!(log_message),
                                 );
-                                flattened_data.insert(
-                                    "iat_avg_global".to_string(),
-                                    serde_json::json!(global_iat_avg),
-                                );
-                                flattened_data.insert(
-                                    "iat_max_global".to_string(),
-                                    serde_json::json!(global_iat_max),
-                                );
-                                flattened_data.insert(
-                                    "cc_errors_global".to_string(),
-                                    serde_json::json!(global_cc_errors),
-                                );
-                                flattened_data.insert(
-                                    "current_cc_errors_global".to_string(),
-                                    serde_json::json!(global_cc_errors_current),
-                                );
-                                flattened_data.insert(
-                                    "timestamp".to_string(),
-                                    serde_json::json!(current_timestamp),
-                                );
+                            } else {
                                 flattened_data
-                                    .insert("source_ip".to_string(), serde_json::json!(source_ip));
-                                flattened_data.insert(
-                                    "source_port".to_string(),
-                                    serde_json::json!(source_port),
-                                );
+                                    .insert("log_message".to_string(), serde_json::json!(""));
+                            }
 
-                                if captions != "" {
-                                    force_send_message = true;
-                                }
-                                flattened_data
-                                    .insert("captions".to_string(), serde_json::json!(captions));
+                            flattened_data
+                                .insert("id".to_string(), serde_json::json!(probe_id_clone2));
+                            flattened_data
+                                .insert("pid_map".to_string(), serde_json::json!(pid_map));
+                            flattened_data.insert("scte35".to_string(), serde_json::json!(scte35));
+                            flattened_data.insert(
+                                "audio_loudness".to_string(),
+                                serde_json::json!(audio_loudness),
+                            );
 
-                                // Insert the base64_image field into the flattened_data map
-                                let base64_image_tag = if !base64_image.is_empty() {
-                                    log::debug!("Got Image: {} bytes", base64_image.len());
+                            // Add system stats fields to the flattened structure
+                            flattened_data
+                                .insert(format!("total_memory"), json!(system_stats.total_memory));
+                            flattened_data
+                                .insert(format!("used_memory"), json!(system_stats.used_memory));
+                            flattened_data
+                                .insert(format!("total_swap"), json!(system_stats.total_swap));
+                            flattened_data
+                                .insert(format!("used_swap"), json!(system_stats.used_swap));
+                            flattened_data
+                                .insert(format!("cpu_usage"), json!(system_stats.cpu_usage));
+                            flattened_data
+                                .insert(format!("cpu_count"), json!(system_stats.cpu_count));
+                            flattened_data
+                                .insert(format!("core_count"), json!(system_stats.core_count));
+                            flattened_data
+                                .insert(format!("boot_time"), json!(system_stats.boot_time));
+                            flattened_data
+                                .insert(format!("load_avg_one"), json!(system_stats.load_avg.one));
+                            flattened_data.insert(
+                                format!("load_avg_five"),
+                                json!(system_stats.load_avg.five),
+                            );
+                            flattened_data.insert(
+                                format!("load_avg_fifteen"),
+                                json!(system_stats.load_avg.fifteen),
+                            );
+                            flattened_data
+                                .insert(format!("host_name"), json!(system_stats.host_name));
+                            flattened_data.insert(
+                                format!("kernel_version"),
+                                json!(system_stats.kernel_version),
+                            );
+                            flattened_data
+                                .insert(format!("os_version"), json!(system_stats.os_version));
 
-                                    force_send_message = true;
-                                    format!("data:image/jpeg;base64,{}", base64_image)
-                                } else {
-                                    "".to_string()
-                                };
-                                flattened_data
-                                    .insert("image_pts".to_string(), serde_json::json!(image_pts));
-                                flattened_data.insert(
-                                    "base64_image".to_string(),
-                                    serde_json::json!(base64_image_tag),
-                                );
+                            flattened_data.insert(
+                                format!("process_count"),
+                                json!(system_stats.process_count),
+                            );
+                            flattened_data.insert(format!("uptime"), json!(system_stats.uptime));
+                            flattened_data
+                                .insert(format!("system_name"), json!(system_stats.system_name));
 
-                                // Check if we have a log_message in log_messages Vector, if so add it to the flattened_data map
-                                if !log_messages.is_empty() {
-                                    force_send_message = true;
-                                    // remove one log message from the log_messages array
-                                    let log_message = log_messages.pop().unwrap();
-                                    flattened_data.insert(
-                                        "log_message".to_string(),
-                                        serde_json::json!(log_message),
-                                    );
-                                } else {
-                                    flattened_data
-                                        .insert("log_message".to_string(), serde_json::json!(""));
-                                }
-
-                                flattened_data
-                                    .insert("id".to_string(), serde_json::json!(probe_id));
-                                flattened_data
-                                    .insert("pid_map".to_string(), serde_json::json!(pid_map));
-                                flattened_data
-                                    .insert("scte35".to_string(), serde_json::json!(scte35));
+                            // Flatten the network stats and insert them into the structure
+                            for network in &system_stats.network_stats {
                                 flattened_data.insert(
-                                    "audio_loudness".to_string(),
-                                    serde_json::json!(audio_loudness),
-                                );
-
-                                // Add system stats fields to the flattened structure
-                                flattened_data.insert(
-                                    format!("total_memory"),
-                                    json!(system_stats.total_memory),
-                                );
-                                flattened_data.insert(
-                                    format!("used_memory"),
-                                    json!(system_stats.used_memory),
-                                );
-                                flattened_data
-                                    .insert(format!("total_swap"), json!(system_stats.total_swap));
-                                flattened_data
-                                    .insert(format!("used_swap"), json!(system_stats.used_swap));
-                                flattened_data
-                                    .insert(format!("cpu_usage"), json!(system_stats.cpu_usage));
-                                flattened_data
-                                    .insert(format!("cpu_count"), json!(system_stats.cpu_count));
-                                flattened_data
-                                    .insert(format!("core_count"), json!(system_stats.core_count));
-                                flattened_data
-                                    .insert(format!("boot_time"), json!(system_stats.boot_time));
-                                flattened_data.insert(
-                                    format!("load_avg_one"),
-                                    json!(system_stats.load_avg.one),
+                                    format!("{}.network.received", network.name),
+                                    json!(network.received),
                                 );
                                 flattened_data.insert(
-                                    format!("load_avg_five"),
-                                    json!(system_stats.load_avg.five),
+                                    format!("{}.network.transmitted", network.name),
+                                    json!(network.transmitted),
                                 );
                                 flattened_data.insert(
-                                    format!("load_avg_fifteen"),
-                                    json!(system_stats.load_avg.fifteen),
+                                    format!("{}.network.packets_received", network.name),
+                                    json!(network.packets_received),
                                 );
+                                flattened_data.insert(
+                                    format!("{}.network.packets_transmitted", network.name),
+                                    json!(network.packets_transmitted),
+                                );
+                                flattened_data.insert(
+                                    format!("{}.network.errors_on_received", network.name),
+                                    json!(network.errors_on_received),
+                                );
+                                flattened_data.insert(
+                                    format!("{}.network.errors_on_transmitted", network.name),
+                                    json!(network.errors_on_transmitted),
+                                );
+                            }
+
+                            // Flatten the disk stats and insert them into the structure
+                            for (i, disk) in system_stats.disk_stats.iter().enumerate() {
                                 flattened_data
-                                    .insert(format!("host_name"), json!(system_stats.host_name));
+                                    .insert(format!("disk_stats.{}.name", i), json!(disk.name));
                                 flattened_data.insert(
-                                    format!("kernel_version"),
-                                    json!(system_stats.kernel_version),
+                                    format!("disk_stats.{}.total_space", i),
+                                    json!(disk.total_space),
                                 );
-                                flattened_data
-                                    .insert(format!("os_version"), json!(system_stats.os_version));
-
                                 flattened_data.insert(
-                                    format!("process_count"),
-                                    json!(system_stats.process_count),
+                                    format!("disk_stats.{}.available_space", i),
+                                    json!(disk.available_space),
                                 );
-                                flattened_data
-                                    .insert(format!("uptime"), json!(system_stats.uptime));
                                 flattened_data.insert(
-                                    format!("system_name"),
-                                    json!(system_stats.system_name),
+                                    format!("disk_stats.{}.is_removable", i),
+                                    json!(disk.is_removable),
                                 );
+                            }
 
-                                // Flatten the network stats and insert them into the structure
-                                for network in &system_stats.network_stats {
-                                    flattened_data.insert(
-                                        format!("{}.network.received", network.name),
-                                        json!(network.received),
-                                    );
-                                    flattened_data.insert(
-                                        format!("{}.network.transmitted", network.name),
-                                        json!(network.transmitted),
-                                    );
-                                    flattened_data.insert(
-                                        format!("{}.network.packets_received", network.name),
-                                        json!(network.packets_received),
-                                    );
-                                    flattened_data.insert(
-                                        format!("{}.network.packets_transmitted", network.name),
-                                        json!(network.packets_transmitted),
-                                    );
-                                    flattened_data.insert(
-                                        format!("{}.network.errors_on_received", network.name),
-                                        json!(network.errors_on_received),
-                                    );
-                                    flattened_data.insert(
-                                        format!("{}.network.errors_on_transmitted", network.name),
-                                        json!(network.errors_on_transmitted),
-                                    );
-                                }
-
-                                // Flatten the disk stats and insert them into the structure
-                                for (i, disk) in system_stats.disk_stats.iter().enumerate() {
-                                    flattened_data
-                                        .insert(format!("disk_stats.{}.name", i), json!(disk.name));
-                                    flattened_data.insert(
-                                        format!("disk_stats.{}.total_space", i),
-                                        json!(disk.total_space),
-                                    );
-                                    flattened_data.insert(
-                                        format!("disk_stats.{}.available_space", i),
-                                        json!(disk.available_space),
-                                    );
-                                    flattened_data.insert(
-                                        format!("disk_stats.{}.is_removable", i),
-                                        json!(disk.is_removable),
-                                    );
-                                }
-
-                                // Flatten the processes and insert them into the structure as an array of strings
-                                let cpu_threshold = 5.0; // CPU usage threshold (in percentage)
-                                let ram_threshold = 100 * 1024 * 1024; // RAM usage threshold (in bytes)
-
-                                let processes: Vec<String> = system_stats
+                            let processes: Vec<String> = system_stats
                                     .processes
                                     .iter()
                                     .filter(|process| {
@@ -1358,52 +1319,41 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                     })
                                     .collect();
 
-                                flattened_data.insert(format!("processes"), json!(processes));
+                            flattened_data.insert(format!("processes"), json!(processes));
 
-                                // Merge the probe-specific flattened data with the global data
-                                flattened_data.extend(probe_data.global_data.clone());
+                            // Merge the probe-specific flattened data with the global data
+                            flattened_data.extend(probe_data.global_data.clone());
 
-                                // Store the flattened data in the averaged_probe_data map
-                                averaged_probe_data.insert(
-                                    probe_id.clone(),
-                                    serde_json::Value::Object(flattened_data),
-                                );
+                            // Store the flattened data in the averaged_probe_data map
+                            averaged_probe_data.insert(
+                                probe_id_clone2.clone(),
+                                serde_json::Value::Object(flattened_data),
+                            );
 
-                                // Clear the global data after processing
-                                probe_data.global_data.clear();
-                            }
+                            // Clear the global data after processing
+                            probe_data.global_data.clear();
                         }
+                    }
 
-                        // Check if it's time to send data to Kafka based on the interval or if force_send_message is true
-                        if force_send_message
-                            || last_kafka_send_time.elapsed().as_millis()
-                                >= args.kafka_interval as u128
-                        {
-                            for (_probe_id, probe_data) in averaged_probe_data.iter() {
-                                let json_data = serde_json::to_value(probe_data)
-                                    .expect("Failed to serialize probe data for Kafka");
+                    for (_probe_id, probe_data) in averaged_probe_data.iter() {
+                        let json_data = serde_json::to_value(probe_data)
+                            .expect("Failed to serialize probe data for Kafka");
 
-                                let ser_data = serde_json::to_vec(&json_data)
-                                    .expect("Failed to serialize json data for Kafka");
+                        let ser_data = serde_json::to_vec(&json_data)
+                            .expect("Failed to serialize json data for Kafka");
 
-                                // Produce the message to Kafka
-                                let future = kafka_produce_message(
-                                    ser_data,
-                                    kafka_broker_clone1.clone(),
-                                    kafka_topic_clone1.clone(),
-                                    args.kafka_timeout.clone(),
-                                    args.kafka_key.clone(),
-                                    current_unix_timestamp_ms().unwrap_or(0) as i64,
-                                    producer.clone(),
-                                    &admin_client,
-                                );
+                        // Produce the message to Kafka
+                        let future = kafka_produce_message(
+                            ser_data,
+                            kafka_broker_clone1.clone(),
+                            kafka_topic_clone1.clone(),
+                            args.kafka_timeout.clone(),
+                            args.kafka_key.clone(),
+                            current_unix_timestamp_ms().unwrap_or(0) as i64,
+                            producer.clone(),
+                        );
 
-                                future.await;
-                            }
-
-                            // Update last send time
-                            last_kafka_send_time = Instant::now();
-                        }
+                        future.await;
                     }
                 }
                 batch.clear();
@@ -1520,81 +1470,55 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
     let mut video_stream_type = 0;
 
-    let probe_id_clone = args.probe_id.clone();
-    let source_ip_clone_batch = source_ip.clone();
-
     let ktx_clone1 = ktx.clone();
     let ktx_clone2 = ktx.clone();
 
-    info!(
-        "RsProbe: Starting up with Probe ID: {}",
-        args.probe_id.clone()
-    );
+    info!("RsProbe: Starting up with Probe ID: {}", probe_id.clone());
 
     let mut dot_last_sent_ts = Instant::now();
     let mut x_last_sent_ts = Instant::now();
-    let mut batch = Vec::new();
+
+    // vector of images and logs
+    let mut images = Vec::<Vec<u8>>::new();
+    let mut logs = Vec::<String>::new();
+
+    let mut last_kafka_send_time = Instant::now();
 
     loop {
         match prx.try_recv() {
             Ok((packet, timestamp, iat)) => {
-                if packet_count > 0 && packets_captured > packet_count {
+                if args.packet_count > 0 && packets_captured > args.packet_count {
                     println!(
-                        "\nPacket count limit reached {}, signaling termination...",
-                        packet_count
+                        "\nPacket count limit reached {}/{}, signaling termination...",
+                        packets_captured, args.packet_count
                     );
                     running.store(false, Ordering::SeqCst);
                     break;
                 }
                 packets_captured += 1;
 
-                if !no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
+                if !args.no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
                     dot_last_sent_ts = Instant::now();
                     print!(".");
                     // Flush stdout to ensure the progress dots are printed
                     io::stdout().flush().unwrap();
                 }
 
-                // Check if chunk is MPEG-TS or SMPTE 2110
-                let chunk_type = is_mpegts_or_smpte2110(&packet[payload_offset..]);
-                if chunk_type != 1 {
-                    if chunk_type == 0 {
-                        hexdump(&packet, 0, packet.len());
-                        error!("Not MPEG-TS or SMPTE 2110");
-                    }
-                    is_mpegts = false;
-                }
-
-                let chunks = if is_mpegts {
-                    process_mpegts_packet(
-                        payload_offset,
-                        packet,
-                        packet_size,
-                        start_time,
-                        timestamp,
-                        iat,
-                        source_ip.clone(),
-                        args.source_port,
-                        args.probe_id.clone(),
-                    )
-                } else {
-                    process_smpte2110_packet(
-                        payload_offset,
-                        packet,
-                        packet_size,
-                        start_time,
-                        args.debug_smpte2110,
-                        timestamp,
-                        iat,
-                        source_ip.clone(),
-                        args.source_port,
-                        args.probe_id.clone(),
-                    )
-                };
+                let chunks = process_mpegts_packet(
+                    args.payload_offset,
+                    packet,
+                    args.packet_size,
+                    start_time,
+                    timestamp,
+                    iat,
+                    source_ip_clone2.clone(),
+                    args.source_port,
+                    probe_id.clone(),
+                );
 
                 for mut stream_data in chunks {
                     // Process the chunk
-                    if debug_on {
+                    if args.debug_on {
                         hexdump(
                             &stream_data.packet,
                             stream_data.packet_start,
@@ -1605,64 +1529,62 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                     let packet_chunk = &stream_data.packet[stream_data.packet_start
                         ..stream_data.packet_start + stream_data.packet_len];
 
-                    if is_mpegts {
-                        let pid = stream_data.pid;
-                        // Handle PAT and PMT packets
-                        match pid {
-                            PAT_PID => {
-                                debug!("ProcessPacket: PAT packet detected with PID {}", pid);
-                                pmt_info = parse_and_store_pat(&packet_chunk);
-                                // Print TR 101 290 errors
-                                if show_tr101290 {
-                                    info!("STATUS::TR101290:ERRORS: {}", tr101290_errors);
-                                }
+                    let pid = stream_data.pid;
+                    // Handle PAT and PMT packets
+                    match pid {
+                        PAT_PID => {
+                            debug!("ProcessPacket: PAT packet detected with PID {}", pid);
+                            pmt_info = parse_and_store_pat(&packet_chunk);
+                            // Print TR 101 290 errors
+                            if args.show_tr101290 {
+                                info!("STATUS::TR101290:ERRORS: {}", tr101290_errors);
                             }
-                            _ => {
-                                // Check if this is a PMT packet
-                                if pid == pmt_info.pid {
-                                    debug!("ProcessPacket: PMT packet detected with PID {}", pid);
-                                    // Update PID_MAP with new stream types
-                                    update_pid_map(
-                                        &packet_chunk,
-                                        &pmt_info.packet,
-                                        stream_data.capture_time,
-                                        stream_data.capture_iat,
-                                        source_ip_clone_batch.clone(),
-                                        args.source_port,
-                                        probe_id_clone.clone(),
-                                    );
-                                    // Identify the video PID (if not already identified)
-                                    if let Some((new_pid, new_codec)) =
-                                        identify_video_pid(&packet_chunk)
+                        }
+                        _ => {
+                            // Check if this is a PMT packet
+                            if pid == pmt_info.pid {
+                                debug!("ProcessPacket: PMT packet detected with PID {}", pid);
+                                // Update PID_MAP with new stream types
+                                update_pid_map(
+                                    &packet_chunk,
+                                    &pmt_info.packet,
+                                    stream_data.capture_time,
+                                    stream_data.capture_iat,
+                                    source_ip_clone2.clone(),
+                                    args.source_port,
+                                    probe_id_clone.clone(),
+                                );
+                                // Identify the video PID (if not already identified)
+                                if let Some((new_pid, new_codec)) =
+                                    identify_video_pid(&packet_chunk)
+                                {
+                                    if stream_data.stream_type_number > 0
+                                        && video_pid.map_or(true, |vp| vp != new_pid)
                                     {
-                                        if stream_data.stream_type_number > 0
-                                            && video_pid.map_or(true, |vp| vp != new_pid)
-                                        {
-                                            video_pid = Some(new_pid);
-                                            let old_stream_type = video_stream_type;
-                                            video_stream_type = stream_data.stream_type_number;
-                                            info!(
-                                                "STATUS::VIDEO_PID:CHANGE: to {}/{}/{} from {}/{}/{}",
-                                                new_pid,
-                                                new_codec.clone(),
-                                                video_stream_type,
-                                                video_pid.unwrap(),
-                                                video_codec.unwrap(),
-                                                old_stream_type
-                                            );
-                                            video_codec = Some(new_codec.clone());
-                                            // Reset video frame as the video stream has changed
-                                            current_video_frame.clear();
-                                        } else if video_codec != Some(new_codec.clone()) {
-                                            info!(
-                                                "STATUS::VIDEO_CODEC:CHANGE: to {} from {}",
-                                                new_codec,
-                                                video_codec.unwrap()
-                                            );
-                                            video_codec = Some(new_codec);
-                                            // Reset video frame as the codec has changed
-                                            current_video_frame.clear();
-                                        }
+                                        video_pid = Some(new_pid);
+                                        let old_stream_type = video_stream_type;
+                                        video_stream_type = stream_data.stream_type_number;
+                                        info!(
+                                            "STATUS::VIDEO_PID:CHANGE: to {}/{}/{} from {}/{}/{}",
+                                            new_pid,
+                                            new_codec.clone(),
+                                            video_stream_type,
+                                            video_pid.unwrap(),
+                                            video_codec.unwrap(),
+                                            old_stream_type
+                                        );
+                                        video_codec = Some(new_codec.clone());
+                                        // Reset video frame as the video stream has changed
+                                        current_video_frame.clear();
+                                    } else if video_codec != Some(new_codec.clone()) {
+                                        info!(
+                                            "STATUS::VIDEO_CODEC:CHANGE: to {} from {}",
+                                            new_codec,
+                                            video_codec.unwrap()
+                                        );
+                                        video_codec = Some(new_codec);
+                                        // Reset video frame as the codec has changed
+                                        current_video_frame.clear();
                                     }
                                 }
                             }
@@ -1689,99 +1611,98 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                     process_packet(
                         &mut stream_data,
                         &mut tr101290_errors,
-                        is_mpegts,
                         pmt_info.pid,
                         probe_id_clone.clone(),
                     );
 
-                    // If MpegTS, Check if this is a video PID and if so parse NALS and decode video
-                    if is_mpegts {
-                        // Process video packets
+                    // Check if this is a video PID and if so parse NALS and decode video
+                    // Process video packets
+                    #[cfg(feature = "gst")]
+                    if args.extract_images {
                         #[cfg(feature = "gst")]
-                        if args.extract_images {
-                            #[cfg(feature = "gst")]
-                            let video_packet = Arc::new(
-                                stream_data.packet[stream_data.packet_start
-                                    ..stream_data.packet_start + stream_data.packet_len]
-                                    .to_vec(),
-                            );
+                        let video_packet = Arc::new(
+                            stream_data.packet[stream_data.packet_start
+                                ..stream_data.packet_start + stream_data.packet_len]
+                                .to_vec(),
+                        );
 
-                            // Send the video packet to the processing task
-                            if let Err(_) = video_packet_sender
-                                .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
-                            {
-                                // If the channel is full, drop the packet
-                                log::warn!("Video packet channel is full. Dropping packet.");
-                            }
-
-                            // Receive and process images
-                            #[cfg(feature = "gst")]
-                            if let Ok((image_data, pts)) = image_receiver.try_recv() {
-                                // attach image to the stream_data.packet arc, clearing the current arc value
-                                stream_data.packet = Arc::new(image_data.clone());
-                                stream_data.has_image = image_data.len() as u8;
-                                stream_data.packet_start = 0;
-                                stream_data.packet_len = image_data.len();
-                                stream_data.image_pts = pts;
-
-                                // Process the received image data
-                                debug!(
-                                    "Probe: Received a jpeg image with size: {} bytes",
-                                    image_data.len()
-                                );
-                            } else {
-                                // zero out the packet data
-                                stream_data.packet_start = 0;
-                                stream_data.packet_len = 0;
-                                stream_data.packet = Arc::new(Vec::new());
-                            }
+                        // Send the video packet to the processing task
+                        if let Err(_) = video_packet_sender
+                            .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
+                        {
+                            // If the channel is full, drop the packet
+                            log::warn!("Video packet channel is full. Dropping packet.");
                         }
-                    } else {
-                        // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
+
+                        // Receive and process images
+                        #[cfg(feature = "gst")]
+                        if let Ok((image_data, pts)) = image_receiver.try_recv() {
+                            debug!(
+                                "[{}] Received a jpeg image with size: {} bytes",
+                                pts,
+                                image_data.len()
+                            );
+                            // Process the received image data
+                            images.push(image_data);
+                        }
                     }
 
                     // Watch file
                     if args.watch_file != "" {
                         if let Ok(line) = watch_file_receiver.try_recv() {
                             info!("WatchFile Received line: {}", line);
-                            // attach to stream_data.log_message
-                            stream_data.log_message = line.clone();
+                            // push line into logs vector
+                            logs.push(line.clone());
                         }
                     }
 
-                    if !args.extract_images && stream_data.packet_len > 0 {
-                        // release the packet Arc so it can be reused
-                        stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
-                        stream_data.packet_len = 0;
-                        stream_data.packet_start = 0;
-                    }
-
-                    // Add the processed stream_data to the batch
-                    batch.push(stream_data);
+                    // release the packet Arc so it can be reused
+                    stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
+                    stream_data.packet_len = 0;
+                    stream_data.packet_start = 0;
 
                     // Check if the batch size is reached or the batch timeout has elapsed
                     if kafka_broker_clone2.is_empty() || kafka_topic_clone2.is_empty() {
                         // If Kafka is not enabled, print the batch to stdout
-                        if batch.len() >= args.kafka_batch_size {
-                            // Print the batch to stdout
-                            for stream_data in &batch {
-                                log::info!("{:?}", stream_data);
-                            }
-                            batch = Vec::new(); // Reset the batch
+                        // Print the batch to stdout
+                        log::debug!("Stream data: {:?}", stream_data);
+                        images = Vec::new(); // Reset the images
+                        logs = Vec::new(); // Reset the logs
+                    } else if last_kafka_send_time.elapsed().as_millis()
+                        >= args.kafka_interval as u128
+                    {
+                        // get pid map and push each pid stream_data into the batch
+                        let pid_map = get_pid_map();
+                        // get all the pids and push each into the batch
+                        let mut batch = Vec::new();
+                        for (pid, pid_stream_data) in pid_map.iter() {
+                            debug!(
+                                "Got PID: {} stream type: {}",
+                                pid, pid_stream_data.stream_type
+                            );
+                            // Add the processed stream_data to the batch
+                            batch.push(Arc::clone(&pid_stream_data));
                         }
-                    } else if batch.len() >= args.kafka_batch_size {
+
                         // Send the batch to the Kafka thread
-                        if ktx_clone1.send(batch).await.is_err() {
+                        if ktx_clone1
+                            .send((batch.clone(), logs.clone(), images.clone()))
+                            .await
+                            .is_err()
+                        {
                             // If the channel is full, drop the batch and log a warning
                             log::warn!("Batch channel is full. Dropping batch.");
                         }
-                        batch = Vec::new(); // Reset the batch
+                        images = Vec::new(); // Reset the images
+                        logs = Vec::new(); // Reset the logs
+                                           // Update last send time
+                        last_kafka_send_time = Instant::now();
                     }
                 }
             }
             Err(TryRecvError::Empty) => {
                 // No packets received, print 'X' to indicate
-                if !no_progress && x_last_sent_ts.elapsed().as_secs() >= 1 {
+                if !args.no_progress && x_last_sent_ts.elapsed().as_secs() >= 1 {
                     x_last_sent_ts = Instant::now();
                     print!("X");
                     // Flush stdout to ensure the progress dots are printed
@@ -1818,7 +1739,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     println!("\nWaiting for threads to finish...");
 
     // Send Kafka stop signal
-    let _ = ktx_clone2.try_send(Vec::new());
+    let _ = ktx_clone2.try_send((Vec::new(), Vec::new(), Vec::new()));
     drop(ktx_clone2);
 
     // Wait for the kafka thread to finish

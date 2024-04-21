@@ -948,16 +948,13 @@ pub fn parse_pmt(packet: &[u8]) -> Pmt {
 pub fn process_packet(
     stream_data_packet: &mut StreamData,
     errors: &mut Tr101290Errors,
-    is_mpegts: bool,
     pmt_pid: u16,
     probe_id: String,
 ) {
     let packet: &[u8] = &stream_data_packet.packet[stream_data_packet.packet_start
         ..stream_data_packet.packet_start + stream_data_packet.packet_len];
-    if is_mpegts {
-        tr101290_p1_check(packet, errors);
-        tr101290_p2_check(packet, errors);
-    }
+    tr101290_p1_check(packet, errors);
+    tr101290_p2_check(packet, errors);
 
     let pid = stream_data_packet.pid;
 
@@ -972,13 +969,13 @@ pub fn process_packet(
             // Existing StreamData instance found, update it
             let mut stream_data = Arc::clone(stream_data_arc);
             Arc::make_mut(&mut stream_data).update_capture_time(stream_data_packet.capture_time);
-            Arc::make_mut(&mut stream_data).update_stats(packet.len());
             Arc::make_mut(&mut stream_data)
                 .update_stream_type_number(stream_data_packet.stream_type_number);
-            if stream_data.pid != 0x1FFF && is_mpegts {
+            if stream_data.pid != 0x1FFF {
                 Arc::make_mut(&mut stream_data)
                     .set_continuity_counter(stream_data_packet.continuity_counter);
             }
+            Arc::make_mut(&mut stream_data).update_stats(packet.len());
 
             if stream_data_packet.timestamp != 0 {
                 Arc::make_mut(&mut stream_data).timestamp = stream_data_packet.timestamp;
@@ -1046,11 +1043,23 @@ pub fn process_packet(
                     stream_data_packet.source_port,
                     probe_id.clone(),
                 ));
-                Arc::make_mut(&mut stream_data).update_stats(packet.len());
                 Arc::make_mut(&mut stream_data).update_capture_iat(stream_data_packet.capture_iat);
+                // update continuity counter
+                if stream_data_packet.pid != 0x1FFF {
+                    Arc::make_mut(&mut stream_data)
+                        .set_continuity_counter(stream_data_packet.continuity_counter);
+                }
 
-                // print out each field of structure
-                info!("STATUS::PACKET:ADD[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
+                info!(
+                    "[{}] Adding PID: {} [{}][{}][{}] StreamType: [{}] {}",
+                    stream_data.program_number,
+                    stream_data.pid,
+                    stream_data.capture_time,
+                    stream_data.capture_iat,
+                    stream_data.continuity_counter,
+                    stream_data.stream_type_number,
+                    stream_data.stream_type
+                );
 
                 pid_map.insert(pid, stream_data);
             }
@@ -1162,21 +1171,32 @@ pub fn update_pid_map(
                     Arc::make_mut(&mut stream_data).update_capture_iat(capture_iat);
 
                     // print out each field of structure
-                    info!("STATUS::STREAM:CREATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
+                    info!("STATUS::STREAM:CREATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}",
+                        stream_data.program_number, stream_data.pid, stream_data.stream_type,
+                        stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min,
+                        stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min,
+                        stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter,
+                        stream_data.timestamp, 0);
 
                     pid_map.insert(stream_pid, stream_data);
                 } else {
                     // get the stream data so we can update it
                     let stream_data_arc = pid_map.get_mut(&stream_pid).unwrap();
                     let mut stream_data = Arc::clone(stream_data_arc);
+                    let stream_len = stream_data.packet_len;
 
                     // update the stream type
                     Arc::make_mut(&mut stream_data).update_stream_type(stream_type.to_string());
                     Arc::make_mut(&mut stream_data)
                         .update_stream_type_number(pmt_entry.stream_type);
+                    Arc::make_mut(&mut stream_data).update_stats(stream_len);
 
                     // print out each field of structure
-                    debug!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
+                    debug!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}",
+                        stream_data.program_number, stream_data.pid, stream_data.stream_type,
+                        stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg,
+                        stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg,
+                        stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
 
                     // write the stream_data back to the pid_map with modified values
                     pid_map.insert(stream_pid, stream_data);
@@ -1200,6 +1220,12 @@ pub fn determine_stream_type(pid: u16) -> String {
         .get(&pid)
         .map(|stream_data| stream_data.stream_type.clone())
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+pub fn get_pid_map() -> AHashMap<u16, Arc<StreamData>> {
+    let pid_map = PID_MAP.read().unwrap();
+    // clone the pid_map so we can return it
+    pid_map.clone()
 }
 
 pub fn determine_stream_type_number(pid: u16) -> u8 {
@@ -1242,24 +1268,6 @@ pub fn identify_video_pid(pmt_packet: &[u8]) -> Option<(u16, Codec)> {
         };
         codec.map(|c| (entry.stream_pid, c))
     })
-}
-
-// Check if the packet is MPEG-TS or SMPTE 2110
-pub fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
-    // Check for MPEG-TS (starts with 0x47 sync byte)
-    if packet.starts_with(&[0x47]) {
-        return 1;
-    }
-
-    // Basic check for RTP (which SMPTE ST 2110 uses)
-    // This checks if the first byte is 0x80 or 0x81
-    // This might need more robust checks based on requirements
-    if packet.len() > 12 && (packet[0] == 0x80 || packet[0] == 0x81) {
-        // TODO: Check payload type or other RTP header fields here if necessary
-        return 2; // Assuming it's SMPTE ST 2110 for now
-    }
-
-    0 // Not MPEG-TS or SMPTE 2110
 }
 
 // ## RFC 4175 SMPTE2110 header functions ##

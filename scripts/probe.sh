@@ -55,9 +55,6 @@ $PROBE_BIN -V
 
 #VALGRIND="valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --log-file=valgrind.log "
 
-#    --output-file $OUTPUT_FILE \#
-#    --pcap-stats \
-
 CPU_BIND=0
 MEM_BIND=0
 # NUMACTL="numactl --cpubind=$CPU_BIND --membind=$MEM_BIND"
@@ -69,8 +66,10 @@ sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     $VALGRIND $NUMACTL $PROBE_BIN \
     $EXTRACT_IMAGES_ARG \
     --source-device $SOURCE_DEVICE \
+    --pcap-stats \
     --source-ip $SOURCE_IP \
     --source-port $SOURCE_PORT \
     --kafka-topic "rsprobe" \
+    --output-file $OUTPUT_FILE \
     --kafka-broker $KAFKA_BROKER \
     $@
