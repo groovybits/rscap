@@ -7,6 +7,8 @@
 use crate::current_unix_timestamp_ms;
 use ahash::AHashMap;
 #[cfg(feature = "gst")]
+use gstreamer_video::VideoCaptionType;
+#[cfg(feature = "gst")]
 use gst_app::{AppSink, AppSrc};
 #[cfg(feature = "gst")]
 use gstreamer as gst;
@@ -48,6 +50,174 @@ lazy_static! {
     static ref IAT_CAPTURE_WINDOW: Mutex<VecDeque<u64>> =
         Mutex::new(VecDeque::with_capacity(IAT_CAPTURE_WINDOW_SIZE));
     static ref IAT_CAPTURE_PEAK: Mutex<u64> = Mutex::new(0);
+}
+
+// CEA-608 character set mapping
+const CEA608_CHAR_MAP: &[&str] = &[
+    " ", "!", "\"", "#", "$", "%", "&", "'", "(", ")", "á", "+", ",", "-", ".", "/",
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ":", ";", "<", "=", ">", "?",
+    "@", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O",
+    "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "[", "é", "]", "í", "ó",
+    "ú", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o",
+    "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "ç", "÷", "Ñ", "ñ", "■",
+];
+
+// CEA-608 control codes
+const CEA608_CONTROL_RESUME_CAPTION_LOADING: u16 = 0x1420;
+const CEA608_CONTROL_BACKSPACE: u16 = 0x1421;
+const CEA608_CONTROL_DELETE_TO_END_OF_ROW: u16 = 0x1424;
+const CEA608_CONTROL_ROLL_UP_2: u16 = 0x1425;
+const CEA608_CONTROL_ROLL_UP_3: u16 = 0x1426;
+const CEA608_CONTROL_ROLL_UP_4: u16 = 0x1427;
+const CEA608_CONTROL_RESUME_DIRECT_CAPTIONING: u16 = 0x1429;
+const CEA608_CONTROL_TEXT_RESTART: u16 = 0x142A;
+const CEA608_CONTROL_TEXT_RESUME_TEXT_DISPLAY: u16 = 0x142B;
+const CEA608_CONTROL_ERASE_DISPLAYED_MEMORY: u16 = 0x142C;
+const CEA608_CONTROL_CARRIAGE_RETURN: u16 = 0x142D;
+const CEA608_CONTROL_ERASE_NON_DISPLAYED_MEMORY: u16 = 0x142E;
+const CEA608_CONTROL_END_OF_CAPTION: u16 = 0x142F;
+
+// Struct representing a CEA-608 caption
+#[derive(Debug, Clone)]
+struct Caption {
+    text: String,
+    style: String,
+}
+
+// Function to extract CEA-608/708 data from MPEG-TS packets
+fn extract_cea608_data(ts_packets: &[u8], pid: u16) -> Vec<u8> {
+    let mut cc_data = Vec::new();
+    let packet_size = 188; // Standard size of MPEG-TS packets
+
+    let mut i = 0;
+    while i < ts_packets.len() {
+        let sync_byte = ts_packets[i];
+        if sync_byte == 0x47 {
+            // Sync byte for MPEG-TS packets
+            let packet_pid = ((ts_packets[i + 1] as u16 & 0x1F) << 8) | ts_packets[i + 2] as u16;
+            if packet_pid == pid {
+                // PID matches the PID for CEA-608/708 data
+                let payload_start = i + 4 + ((ts_packets[i + 3] & 0x20) >> 4) as usize; // Calculate start of payload
+                let payload = &ts_packets[payload_start..i + packet_size];
+                cc_data.extend_from_slice(payload);
+            }
+        }
+        i += packet_size;
+    }
+
+    cc_data
+}
+
+// Function to decode CEA-608 data to text
+fn decode_cea608(data: &[u8]) -> Vec<Caption> {
+    let mut captions = Vec::new();
+    let mut current_caption = Caption {
+        text: String::new(),
+        style: String::new(),
+    };
+
+    let mut i = 0;
+    while i + 1 < data.len() {
+        let b1 = data[i] as u16;
+        let b2 = data[i + 1] as u16;
+        let cc_data = (b1 << 8) | b2;
+
+        if cc_data >= 0x0100 && cc_data <= 0x017F {
+            // Basic North American character set
+            let c1 = (cc_data & 0x007F) as usize;
+            if c1 < CEA608_CHAR_MAP.len() {
+                current_caption.text.push_str(CEA608_CHAR_MAP[c1]);
+            }
+        } else if cc_data >= 0x1120 && cc_data <= 0x112F {
+            // Special North American character set
+            let c1 = (cc_data & 0x000F) as usize;
+            if c1 < CEA608_CHAR_MAP.len() {
+                current_caption.text.push_str(CEA608_CHAR_MAP[c1 + 0x60]);
+            }
+        } else if cc_data >= 0x1220 && cc_data <= 0x122F {
+            // Extended Western European character set
+            let c1 = (cc_data & 0x000F) as usize;
+            if c1 < CEA608_CHAR_MAP.len() {
+                current_caption.text.push_str(CEA608_CHAR_MAP[c1 + 0x70]);
+            }
+        } else if cc_data >= 0x1320 && cc_data <= 0x132F {
+            // Extended Western European character set
+            let c1 = (cc_data & 0x000F) as usize;
+            if c1 < CEA608_CHAR_MAP.len() {
+                current_caption.text.push_str(CEA608_CHAR_MAP[c1 + 0x90]);
+            }
+        } else {
+            match cc_data {
+                CEA608_CONTROL_RESUME_CAPTION_LOADING => {
+                    // Resume caption loading
+                    // No specific action needed
+                }
+                CEA608_CONTROL_BACKSPACE => {
+                    // Backspace
+                    current_caption.text.pop();
+                }
+                CEA608_CONTROL_DELETE_TO_END_OF_ROW => {
+                    // Delete to end of row
+                    current_caption.text.clear();
+                }
+                CEA608_CONTROL_ROLL_UP_2 => {
+                    // Roll-up captions with 2 rows
+                    // TODO: Implement roll-up caption handling
+                }
+                CEA608_CONTROL_ROLL_UP_3 => {
+                    // Roll-up captions with 3 rows
+                    // TODO: Implement roll-up caption handling
+                }
+                CEA608_CONTROL_ROLL_UP_4 => {
+                    // Roll-up captions with 4 rows
+                    // TODO: Implement roll-up caption handling
+                }
+                CEA608_CONTROL_RESUME_DIRECT_CAPTIONING => {
+                    // Resume direct captioning
+                    // No specific action needed
+                }
+                CEA608_CONTROL_TEXT_RESTART => {
+                    // Text restart
+                    captions.clear();
+                    current_caption.text.clear();
+                }
+                CEA608_CONTROL_TEXT_RESUME_TEXT_DISPLAY => {
+                    // Resume text display
+                    // No specific action needed
+                }
+                CEA608_CONTROL_ERASE_DISPLAYED_MEMORY => {
+                    // Erase displayed memory
+                    captions.clear();
+                }
+                CEA608_CONTROL_CARRIAGE_RETURN => {
+                    // Carriage return
+                    if !current_caption.text.is_empty() {
+                        captions.push(current_caption.clone());
+                        current_caption.text.clear();
+                    }
+                }
+                CEA608_CONTROL_ERASE_NON_DISPLAYED_MEMORY => {
+                    // Erase non-displayed memory
+                    // TODO: Implement non-displayed memory handling
+                }
+                CEA608_CONTROL_END_OF_CAPTION => {
+                    // End of caption
+                    if !current_caption.text.is_empty() {
+                        captions.push(current_caption.clone());
+                        current_caption.text.clear();
+                    }
+                }
+                _ => {
+                    // Unhandled control code or invalid data
+                    log::warn!("Unhandled CEA-608 control code or invalid data: {:04X}", cc_data);
+                }
+            }
+        }
+
+        i += 2;
+    }
+
+    captions
 }
 
 #[cfg(feature = "gst")]
@@ -206,11 +376,31 @@ pub fn pull_images(
                     if let Some(meta) = buffer.meta::<VideoCaptionMeta>() {
                         let caption_type = meta.caption_type();
                         let caption_data = meta.data();
-                        log::info!(
-                            "Received video packet with caption type {:?} and data {:?}",
+                        log::debug!(
+                            "Received video packet with caption type [{:?}] and data [{:?}]",
                             caption_type,
                             caption_data
                         );
+                        // decode the VBI caption line 21 data and print it
+                        match caption_type {
+                            VideoCaptionType::Cea708Raw => {
+                                // PID for CEA-608/708 data
+                                let cc_pid = 0x1FF; // Example PID for CEA-608/708 captions
+
+                                // Extract CEA-608/708 data from the raw MPEG-TS data
+                                let cea608_data = extract_cea608_data(&caption_data, cc_pid);
+
+                                let caption = decode_cea608(&cea608_data);
+                                if caption.len() > 0 {
+                                    log::info!("Decoded VBI caption: {:?}", caption);
+                                } else {
+                                    log::debug!("No caption data found in {:?}", caption_data);
+                                }
+                            }
+                            _ => {
+                                log::warn!("Unsupported caption type: {:?}", caption_type);
+                            }
+                        }
                     }
                 }
             }

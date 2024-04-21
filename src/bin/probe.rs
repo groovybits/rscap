@@ -678,6 +678,10 @@ struct Args {
     /// System Stats Interval in milliseconds
     #[clap(long, env = "SYSTEM_STATS_INTERVAL", default_value_t = 5000)]
     system_stats_interval: u64,
+
+    /// Dump Packets - Dump packets to the console in hex
+    #[clap(long, env = "DUMP_PACKETS", default_value_t = false)]
+    dump_packets: bool,
 }
 
 // MAIN Function
@@ -1657,7 +1661,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         program_number.expect("Failed to get program number");
 
                     // Process the chunk
-                    if args.debug_on {
+                    if args.dump_packets {
                         hexdump(
                             &stream_data.packet,
                             stream_data.packet_start,
