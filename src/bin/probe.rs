@@ -1740,7 +1740,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         let old_stream_type = video_stream_type;
                         video_stream_type = stream_data.stream_type_number;
                         info!(
-                            "STATUS::VIDEO_STREAM:FOUND: to {}/{} from {}/{}",
+                            "Found Video PID/Stream Type {}/{} changed from previous {}/{}.",
                             video_pid.unwrap(),
                             video_stream_type,
                             video_pid.unwrap(),

@@ -1253,13 +1253,11 @@ pub fn update_pid_map(
                     Arc::make_mut(&mut stream_data).update_stats(pmt_packet.len());
                     Arc::make_mut(&mut stream_data).update_capture_iat(capture_iat);
 
-                    // print out each field of structure
-                    info!("STATUS::STREAM:CREATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}",
-                        stream_data.program_number, stream_data.pid, stream_data.stream_type,
-                        stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min,
-                        stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min,
-                        stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter,
-                        stream_data.timestamp, 0);
+                    // nicer shorter basic start of capture information, not stats or errors
+                    info!("[{}] update_pid_map Create Stream: [{}] pid {} stream_type {}/{} continuity {}",
+                        stream_data.capture_time, stream_data.program_number,
+                        stream_data.pid, stream_data.stream_type, stream_data.stream_type_number,
+                        stream_data.continuity_counter);
 
                     pid_map.insert(stream_pid, stream_data);
                 } else {
@@ -1275,12 +1273,10 @@ pub fn update_pid_map(
                     Arc::make_mut(&mut stream_data).update_stats(stream_len);
                     Arc::make_mut(&mut stream_data).update_capture_iat(capture_iat);
 
-                    // print out each field of structure
-                    debug!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}",
-                        stream_data.program_number, stream_data.pid, stream_data.stream_type,
-                        stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg,
-                        stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg,
-                        stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
+                    debug!("[{}] update_pid_map Update Stream: [{}] pid {} stream_type {}/{} continuity {}",
+                        stream_data.capture_time, stream_data.program_number,
+                        stream_data.pid, stream_data.stream_type, stream_data.stream_type_number,
+                        stream_data.continuity_counter);
 
                     // write the stream_data back to the pid_map with modified values
                     pid_map.insert(stream_pid, stream_data);
