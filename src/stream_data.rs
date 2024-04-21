@@ -960,9 +960,6 @@ pub fn process_packet(
 
     let mut pid_map = PID_MAP.write().unwrap();
 
-    // TODO: high debug level output, may need a flag specific to this dump
-    debug!("PID Map Contents: {:#?}", pid_map);
-
     // Check if the PID map already has an entry for this PID
     match pid_map.get_mut(&pid) {
         Some(stream_data_arc) => {

@@ -39,6 +39,7 @@ use rsprobe::stream_data::{
 use rsprobe::stream_data::{initialize_pipeline, process_video_packets, pull_images};
 use rsprobe::watch_file::watch_daemon;
 use rsprobe::{current_unix_timestamp_ms, hexdump};
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::fs::File;
 use std::sync::mpsc::channel;
@@ -909,8 +910,12 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     let probe_id_clone2 = probe_id.clone();
 
     // Setup channel for passing stream_data for Kafka thread sending the stream data to monitor process
-    let (ktx, mut krx) =
-        mpsc::channel::<(Vec<Arc<StreamData>>, Vec<String>, Vec<Vec<u8>>)>(args.kafka_channel_size);
+    let (ktx, mut krx) = mpsc::channel::<(
+        Vec<Arc<StreamData>>,
+        Vec<String>,
+        Vec<Vec<u8>>,
+        AHashMap<u16, Arc<StreamData>>,
+    )>(args.kafka_channel_size);
 
     let kafka_broker_clone = args.kafka_broker.clone();
     let kafka_topic_clone = args.kafka_topic.clone();
@@ -963,7 +968,27 @@ async fn rsprobe(running: Arc<AtomicBool>) {
         // prime the system stats for the first time
         let mut system_stats = get_system_stats();
         while running_kafka.load(Ordering::SeqCst) {
-            while let Some((mut batch, mut logs, mut images)) = krx.recv().await {
+            while let Some((mut batch, mut logs, mut images, pid_map)) = krx.recv().await {
+                // TODO: high debug level output, may need a flag specific to this dump
+                debug!("Kafka received PID Map: {:#?}", pid_map);
+
+                // create a single array structure for all the pids and stream_type_names and numbers to represent
+                // the mpegts stream as an mpegts analyzer would see it
+                #[derive(Serialize)]
+                struct PidStreamType {
+                    pid: u16,
+                    stream_type: String,
+                    stream_type_number: u8,
+                }
+                let mut pid_stream_types = Vec::<PidStreamType>::new();
+                for (pid, stream_data) in pid_map.iter() {
+                    pid_stream_types.push(PidStreamType {
+                        pid: *pid,
+                        stream_type: stream_data.stream_type.clone(),
+                        stream_type_number: stream_data.stream_type_number,
+                    });
+                }
+
                 if logs.len() > 0 {
                     for log in logs.iter() {
                         log_messages.push(log.clone());
@@ -971,6 +996,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                     }
                     logs.clear();
                 }
+
                 // Process and send messages
                 for stream_data in batch.iter() {
                     let mut base64_image = String::new();
@@ -1077,7 +1103,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             let mut source_port: u32 = 0;
                             let mut image_pts: u64 = 0;
                             let mut captions: String = String::new();
-                            let mut pid_map: String = String::new();
                             let mut scte35: String = String::new();
                             let mut audio_loudness: String = String::new();
 
@@ -1098,10 +1123,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                     if stream_data.captions != "" {
                                         // concatenate captions
                                         captions = format!("{}{}", captions, stream_data.captions);
-                                    }
-                                    if stream_data.pid_map != "" {
-                                        // concatenate pid_map
-                                        pid_map = format!("{}{}", pid_map, stream_data.pid_map);
                                     }
                                     if stream_data.scte35 != "" {
                                         // concatenate scte35
@@ -1208,7 +1229,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             flattened_data
                                 .insert("id".to_string(), serde_json::json!(probe_id_clone2));
                             flattened_data
-                                .insert("pid_map".to_string(), serde_json::json!(pid_map));
+                                .insert("pid_map".to_string(), serde_json::json!(pid_stream_types));
                             flattened_data.insert("scte35".to_string(), serde_json::json!(scte35));
                             flattened_data.insert(
                                 "audio_loudness".to_string(),
@@ -1673,6 +1694,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                     {
                         // get pid map and push each pid stream_data into the batch
                         let pid_map = get_pid_map();
+
                         // get all the pids and push each into the batch
                         let mut batch = Vec::new();
                         for (pid, pid_stream_data) in pid_map.iter() {
@@ -1686,7 +1708,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
                         // Send the batch to the Kafka thread
                         if ktx_clone1
-                            .send((batch.clone(), logs.clone(), images.clone()))
+                            .send((batch.clone(), logs.clone(), images.clone(), pid_map.clone()))
                             .await
                             .is_err()
                         {
@@ -1739,7 +1761,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     println!("\nWaiting for threads to finish...");
 
     // Send Kafka stop signal
-    let _ = ktx_clone2.try_send((Vec::new(), Vec::new(), Vec::new()));
+    let _ = ktx_clone2.try_send((Vec::new(), Vec::new(), Vec::new(), AHashMap::new()));
     drop(ktx_clone2);
 
     // Wait for the kafka thread to finish
