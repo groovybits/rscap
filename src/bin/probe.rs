@@ -71,6 +71,15 @@ struct StreamGrouping {
     stream_data_list: Vec<StreamData>,
 }
 
+#[derive(Serialize)]
+struct PidStreamType {
+    pid: u16,
+    stream_type: String,
+    stream_type_number: u8,
+    media_type: String, // audio, video, data
+    ccerrors: u32,
+}
+
 fn flatten_streams(
     stream_groupings: &AHashMap<u16, StreamGrouping>,
     probe_id: String,
@@ -915,6 +924,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
         Vec<String>,
         Vec<Vec<u8>>,
         AHashMap<u16, Arc<StreamData>>,
+        Tr101290Errors,
     )>(args.kafka_channel_size);
 
     let kafka_broker_clone = args.kafka_broker.clone();
@@ -968,24 +978,50 @@ async fn rsprobe(running: Arc<AtomicBool>) {
         // prime the system stats for the first time
         let mut system_stats = get_system_stats();
         while running_kafka.load(Ordering::SeqCst) {
-            while let Some((mut batch, mut logs, mut images, pid_map)) = krx.recv().await {
-                // TODO: high debug level output, may need a flag specific to this dump
+            while let Some((mut batch, mut logs, mut images, pid_map, tr101290)) = krx.recv().await
+            {
                 debug!("Kafka received PID Map: {:#?}", pid_map);
+                debug!("Kafka TR101290 Errors: {:#?}", tr101290);
 
                 // create a single array structure for all the pids and stream_type_names and numbers to represent
                 // the mpegts stream as an mpegts analyzer would see it
-                #[derive(Serialize)]
-                struct PidStreamType {
-                    pid: u16,
-                    stream_type: String,
-                    stream_type_number: u8,
-                }
                 let mut pid_stream_types = Vec::<PidStreamType>::new();
                 for (pid, stream_data) in pid_map.iter() {
+                    // use stream_type_number to determine the media type of audio, video padding, text or data
+                    let media_type = match stream_data.stream_type_number {
+                        0x00 => "padding",
+                        0x01 => "video",
+                        0x02 => "video",
+                        0x03 => "audio",
+                        0x04 => "audio",
+                        0x0F => "audio",
+                        0x10 => "video",
+                        0x11 => "audio",
+                        0x1A => "text",
+                        0x1B => "video",
+                        0x1C => "text",
+                        0x1D => "video",
+                        0x1E => "video",
+                        0x1F => "video",
+                        0x20 => "video",
+                        0x21 => "video",
+                        0x22 => "video",
+                        0x25 => "video",
+                        0x26 => "video",
+                        0x27 => "video",
+                        0x28 => "video",
+                        0x29 => "video",
+                        0x86 => "scte35",
+                        0xFF => "padding",
+                        _ => "data",
+                    };
+
                     pid_stream_types.push(PidStreamType {
                         pid: *pid,
                         stream_type: stream_data.stream_type.clone(),
                         stream_type_number: stream_data.stream_type_number,
+                        ccerrors: stream_data.error_count,
+                        media_type: media_type.to_string(),
                     });
                 }
 
@@ -1230,6 +1266,49 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                 .insert("id".to_string(), serde_json::json!(probe_id_clone2));
                             flattened_data
                                 .insert("pid_map".to_string(), serde_json::json!(pid_stream_types));
+                            flattened_data
+                                .insert("tr101290_cat_errors".to_string(), serde_json::json!(0));
+                            flattened_data.insert(
+                                "tr101290_continuity_counter_errors".to_string(),
+                                serde_json::json!(0),
+                            );
+                            flattened_data
+                                .insert("tr101290_crc_errors".to_string(), serde_json::json!(0));
+                            flattened_data
+                                .insert("tr101290_pat_errors".to_string(), serde_json::json!(0));
+                            flattened_data.insert(
+                                "tr101290_pcr_accuracy_errors".to_string(),
+                                serde_json::json!(0),
+                            );
+                            flattened_data.insert(
+                                "tr101290_pcr_discontinuity_indicator_errors".to_string(),
+                                serde_json::json!(0),
+                            );
+                            flattened_data.insert(
+                                "tr101290_pcr_repetition_errors".to_string(),
+                                serde_json::json!(0),
+                            );
+                            flattened_data.insert(
+                                "tr101290_pid_map_errors".to_string(),
+                                serde_json::json!(0),
+                            );
+                            flattened_data
+                                .insert("tr101290_pmt_errors".to_string(), serde_json::json!(0));
+                            flattened_data
+                                .insert("tr101290_pts_errors".to_string(), serde_json::json!(0));
+                            flattened_data.insert(
+                                "tr101290_sync_byte_errors".to_string(),
+                                serde_json::json!(0),
+                            );
+                            flattened_data.insert(
+                                "tr101290_transport_error_indicator_errors".to_string(),
+                                serde_json::json!(0),
+                            );
+                            flattened_data.insert(
+                                "tr101290_ts_sync_byte_errors".to_string(),
+                                serde_json::json!(0),
+                            );
+
                             flattened_data.insert("scte35".to_string(), serde_json::json!(scte35));
                             flattened_data.insert(
                                 "audio_loudness".to_string(),
@@ -1488,6 +1567,8 @@ async fn rsprobe(running: Arc<AtomicBool>) {
         pid: 0xFFFF,
         packet: Vec::new(),
     };
+    let mut pmt_pid: Option<u16> = Some(0xFFFF);
+    let mut program_number: Option<u16> = Some(0xFFFF);
 
     let mut video_stream_type = 0;
 
@@ -1538,6 +1619,10 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                 );
 
                 for mut stream_data in chunks {
+                    stream_data.pmt_pid = pmt_pid.expect("Failed to get PMT PID");
+                    stream_data.program_number =
+                        program_number.expect("Failed to get program number");
+
                     // Process the chunk
                     if args.debug_on {
                         hexdump(
@@ -1556,17 +1641,17 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         PAT_PID => {
                             debug!("ProcessPacket: PAT packet detected with PID {}", pid);
                             pmt_info = parse_and_store_pat(&packet_chunk);
-                            // Print TR 101 290 errors
-                            if args.show_tr101290 {
-                                info!("STATUS::TR101290:ERRORS: {}", tr101290_errors);
-                            }
                         }
                         _ => {
                             // Check if this is a PMT packet
                             if pid == pmt_info.pid {
-                                debug!("ProcessPacket: PMT packet detected with PID {}", pid);
+                                if pmt_pid == Some(0xFFFF) {
+                                    debug!("ProcessPacket: PMT packet detected with PID {}", pid);
+                                    stream_data.pmt_pid = pid;
+                                    pmt_pid = Some(pid);
+                                }
                                 // Update PID_MAP with new stream types
-                                update_pid_map(
+                                let program_number_result = update_pid_map(
                                     &packet_chunk,
                                     &pmt_info.packet,
                                     stream_data.capture_time,
@@ -1575,6 +1660,8 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                     args.source_port,
                                     probe_id_clone.clone(),
                                 );
+                                program_number = Some(program_number_result);
+
                                 // Identify the video PID (if not already identified)
                                 if let Some((new_pid, new_codec)) =
                                     identify_video_pid(&packet_chunk)
@@ -1708,7 +1795,13 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
                         // Send the batch to the Kafka thread
                         if ktx_clone1
-                            .send((batch.clone(), logs.clone(), images.clone(), pid_map.clone()))
+                            .send((
+                                batch.clone(),
+                                logs.clone(),
+                                images.clone(),
+                                pid_map.clone(),
+                                tr101290_errors.clone(),
+                            ))
                             .await
                             .is_err()
                         {
@@ -1761,7 +1854,13 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     println!("\nWaiting for threads to finish...");
 
     // Send Kafka stop signal
-    let _ = ktx_clone2.try_send((Vec::new(), Vec::new(), Vec::new(), AHashMap::new()));
+    let _ = ktx_clone2.try_send((
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        AHashMap::new(),
+        Tr101290Errors::new(),
+    ));
     drop(ktx_clone2);
 
     // Wait for the kafka thread to finish

@@ -725,6 +725,7 @@ impl StreamData {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
 pub struct Tr101290Errors {
     // p1 errors
     pub ts_sync_byte_errors: u32,
@@ -850,9 +851,12 @@ pub fn parse_and_store_pat(packet: &[u8]) -> PmtInfo {
     };
     pmt_info.packet = packet.to_vec();
 
-    // Assuming there's only one program for simplicity, update PMT PID
-    if let Some(first_entry) = pat_entries.first() {
-        pmt_info.pid = first_entry.pmt_pid;
+    // loook for the program that is non zero and below 0x1FFF
+    for entry in pat_entries {
+        if entry.pmt_pid != 0 && entry.pmt_pid < 0x1FFF {
+            pmt_info.pid = entry.pmt_pid;
+            break;
+        }
     }
     pmt_info
 }
@@ -978,6 +982,12 @@ pub fn process_packet(
                 Arc::make_mut(&mut stream_data).timestamp = stream_data_packet.timestamp;
             }
 
+            // update the pmt_pid from the stream_data_packet to stream_data
+            Arc::make_mut(&mut stream_data).pmt_pid = pmt_pid;
+
+            // update the program_number from the stream_data_packet to stream_data
+            Arc::make_mut(&mut stream_data).program_number = stream_data_packet.program_number;
+
             // calculate uptime using the arrival time as SystemTime and start_time as u64
             //let uptime = stream_data.capture_time - stream_data.start_time;
 
@@ -1073,8 +1083,9 @@ pub fn update_pid_map(
     source_ip: String,
     source_port: i32,
     probe_id: String,
-) {
+) -> u16 {
     let mut pid_map = PID_MAP.write().unwrap();
+    let mut program_number_result = 0;
 
     // Process the stored PAT packet to find program numbers and corresponding PMT PIDs
     let program_pids = last_pat_packet
@@ -1091,6 +1102,7 @@ pub fn update_pid_map(
             "UpdatePIDmap: Processing Program Number: {}, PMT PID: {}",
             program_number, pmt_pid
         );
+        program_number_result = program_number;
 
         // Ensure the current PMT packet matches the PMT PID from the PAT
         if extract_pid(pmt_packet) == pmt_pid {
@@ -1203,6 +1215,7 @@ pub fn update_pid_map(
             error!("UpdatePIDmap: Skipping PMT PID: {} as it does not match with current PMT packet PID", pmt_pid);
         }
     }
+    program_number_result
 }
 
 pub fn determine_stream_type(pid: u16) -> String {
