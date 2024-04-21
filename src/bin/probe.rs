@@ -1362,27 +1362,27 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             // Flatten the network stats and insert them into the structure
                             for network in &system_stats.network_stats {
                                 flattened_data.insert(
-                                    format!("{}.network.received", network.name),
+                                    format!("network.{}.received", network.name),
                                     json!(network.received),
                                 );
                                 flattened_data.insert(
-                                    format!("{}.network.transmitted", network.name),
+                                    format!("network.{}.transmitted", network.name),
                                     json!(network.transmitted),
                                 );
                                 flattened_data.insert(
-                                    format!("{}.network.packets_received", network.name),
+                                    format!("network.{}.packets_received", network.name),
                                     json!(network.packets_received),
                                 );
                                 flattened_data.insert(
-                                    format!("{}.network.packets_transmitted", network.name),
+                                    format!("network.{}.packets_transmitted", network.name),
                                     json!(network.packets_transmitted),
                                 );
                                 flattened_data.insert(
-                                    format!("{}.network.errors_on_received", network.name),
+                                    format!("network.{}.errors_on_received", network.name),
                                     json!(network.errors_on_received),
                                 );
                                 flattened_data.insert(
-                                    format!("{}.network.errors_on_transmitted", network.name),
+                                    format!("network.{}.errors_on_transmitted", network.name),
                                     json!(network.errors_on_transmitted),
                                 );
                             }
