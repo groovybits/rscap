@@ -1706,7 +1706,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                         let old_stream_type = video_stream_type;
                                         video_stream_type = stream_data.stream_type_number;
                                         info!(
-                                            "STATUS::VIDEO_PID:CHANGE: to {}/{}/{} from {}/{}/{}",
+                                            "Found Video PID and Codec {}/{}/{} changed from {}/{}/{}.",
                                             new_pid,
                                             new_codec.clone(),
                                             video_stream_type,
@@ -1719,9 +1719,13 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                         current_video_frame.clear();
                                     } else if video_codec != Some(new_codec.clone()) {
                                         info!(
-                                            "STATUS::VIDEO_CODEC:CHANGE: to {} from {}",
+                                            "[{}][{}] Video Codec Detected: [{}] changed from previous value [{}] stream type {}/{}.",
+                                            stream_data.capture_time,
+                                            stream_data.program_number,
                                             new_codec,
-                                            video_codec.unwrap()
+                                            video_codec.unwrap(),
+                                            stream_data.stream_type_number,
+                                            stream_data.stream_type
                                         );
                                         video_codec = Some(new_codec);
                                         // Reset video frame as the codec has changed

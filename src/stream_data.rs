@@ -1065,8 +1065,8 @@ pub fn process_packet(
             Arc::make_mut(&mut stream_data).program_number = stream_data_packet.program_number;
 
             // print out each field of structure
-            debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {} packet_offset: {}, packet_len: {}",
-                stream_data.pid, stream_data.pid, stream_data.stream_type,
+            debug!("Modify PID: process_packet [{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {} packet_offset: {}, packet_len: {}",
+                stream_data.program_number, stream_data.pid, stream_data.stream_type,
                 stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min,
                 stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min,
                 stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter,
