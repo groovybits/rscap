@@ -39,7 +39,7 @@ use tokio::sync::mpsc;
 #[cfg(feature = "gst")]
 use tokio::time::Duration;
 
-const IAT_CAPTURE_WINDOW_SIZE: usize = 1000;
+const IAT_CAPTURE_WINDOW_SIZE: usize = 100;
 
 lazy_static! {
     static ref PID_MAP: RwLock<AHashMap<u16, Arc<StreamData>>> = RwLock::new(AHashMap::new());
@@ -972,11 +972,12 @@ pub fn process_packet(
             Arc::make_mut(&mut stream_data).update_capture_time(stream_data_packet.capture_time);
             Arc::make_mut(&mut stream_data)
                 .update_stream_type_number(stream_data_packet.stream_type_number);
+            Arc::make_mut(&mut stream_data).update_stats(packet.len());
+            Arc::make_mut(&mut stream_data).update_capture_iat(stream_data_packet.capture_iat);
             if stream_data.pid != 0x1FFF {
                 Arc::make_mut(&mut stream_data)
                     .set_continuity_counter(stream_data_packet.continuity_counter);
             }
-            Arc::make_mut(&mut stream_data).update_stats(packet.len());
 
             if stream_data_packet.timestamp != 0 {
                 Arc::make_mut(&mut stream_data).timestamp = stream_data_packet.timestamp;
@@ -987,9 +988,6 @@ pub fn process_packet(
 
             // update the program_number from the stream_data_packet to stream_data
             Arc::make_mut(&mut stream_data).program_number = stream_data_packet.program_number;
-
-            // calculate uptime using the arrival time as SystemTime and start_time as u64
-            //let uptime = stream_data.capture_time - stream_data.start_time;
 
             // print out each field of structure
             debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {} packet_offset: {}, packet_len: {}",
@@ -1050,6 +1048,7 @@ pub fn process_packet(
                     stream_data_packet.source_port,
                     probe_id.clone(),
                 ));
+                Arc::make_mut(&mut stream_data).update_stats(packet.len());
                 Arc::make_mut(&mut stream_data).update_capture_iat(stream_data_packet.capture_iat);
                 // update continuity counter
                 if stream_data_packet.pid != 0x1FFF {
@@ -1199,6 +1198,7 @@ pub fn update_pid_map(
                     Arc::make_mut(&mut stream_data)
                         .update_stream_type_number(pmt_entry.stream_type);
                     Arc::make_mut(&mut stream_data).update_stats(stream_len);
+                    Arc::make_mut(&mut stream_data).update_capture_iat(capture_iat);
 
                     // print out each field of structure
                     debug!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}",
