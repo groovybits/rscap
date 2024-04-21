@@ -1,5 +1,5 @@
 /*
- * rscap: probe.rs - Rust Stream Capture with pcap, output serialized stats to ZeroMQ
+ * rsprobe: probe.rs - MpegTS Stream Analysis Probe with Kafka and GStreamer
  *
  * Written in 2024 by Chris Kennedy (C)
  *
@@ -7,9 +7,8 @@
  *
  */
 
-use async_zmq;
-use capnp;
-use capnp::message::{Builder, HeapAllocator};
+use ahash::AHashMap;
+use base64::{engine::general_purpose, Engine as _};
 #[cfg(feature = "dpdk_enabled")]
 use capsule::config::{load_config, DPDKConfig};
 #[cfg(feature = "dpdk_enabled")]
@@ -17,28 +16,40 @@ use capsule::dpdk;
 #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
 use capsule::prelude::*;
 use clap::Parser;
+use env_logger::{Builder as LogBuilder, Env};
 use futures::stream::StreamExt;
 #[cfg(feature = "gst")]
 use gstreamer as gst;
 #[cfg(feature = "gst")]
 use gstreamer::prelude::*;
+use lazy_static::lazy_static;
 use log::{debug, error, info};
 use pcap::{Active, Capture, Device, PacketCodec};
-use rscap::stream_data::{
-    identify_video_pid, is_mpegts_or_smpte2110, parse_and_store_pat, process_packet,
-    update_pid_map, Codec, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
+use rdkafka::admin::{AdminClient, AdminOptions, NewTopic};
+use rdkafka::client::DefaultClientContext;
+use rdkafka::config::ClientConfig;
+use rdkafka::error::KafkaError;
+use rdkafka::producer::{FutureProducer, FutureRecord};
+use rdkafka::types::RDKafkaErrorCode;
+use rsprobe::get_system_stats;
+use rsprobe::stream_data::process_mpegts_packet;
+use rsprobe::stream_data::{
+    get_pid_map, identify_video_pid, parse_and_store_pat, process_packet, update_pid_map, Codec,
+    PmtInfo, StreamData, Tr101290Errors, PAT_PID,
 };
 #[cfg(feature = "gst")]
-use rscap::stream_data::{initialize_pipeline, process_video_packets, pull_images};
-use rscap::watch_file::watch_daemon;
-use rscap::{current_unix_timestamp_ms, hexdump};
+use rsprobe::stream_data::{initialize_pipeline, process_video_packets, pull_images};
+use rsprobe::watch_file::watch_daemon;
+use rsprobe::{current_unix_timestamp_ms, hexdump};
+use serde::Serialize;
+use serde_json::{json, Value};
+use std::fs::File;
 use std::sync::mpsc::channel;
+use std::sync::RwLock;
 use std::thread;
 use std::{
     error::Error as StdError,
-    fmt,
-    fs::File,
-    io,
+    fmt, io,
     io::Write,
     net::{IpAddr, Ipv4Addr, UdpSocket},
     sync::atomic::{AtomicBool, Ordering},
@@ -47,12 +58,138 @@ use std::{
 };
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{self};
-use zmq::PUSH;
-// Include the generated paths for the Cap'n Proto schema
-include!("../stream_data_capnp.rs");
-//use rscap::videodecoder::VideoProcessor;
-use env_logger::{Builder as LogBuilder, Env};
-use rscap::stream_data::{process_mpegts_packet, process_smpte2110_packet};
+use tokio::time::Duration;
+
+lazy_static! {
+    static ref PROBE_DATA: RwLock<AHashMap<String, ProbeData>> = RwLock::new(AHashMap::new());
+}
+
+struct ProbeData {
+    stream_groupings: AHashMap<u16, StreamGrouping>,
+    global_data: serde_json::Map<String, Value>,
+}
+
+struct StreamGrouping {
+    stream_data_list: Vec<StreamData>,
+}
+
+#[derive(Serialize)]
+struct PidStreamType {
+    pid: u16,
+    stream_type: String,
+    stream_type_number: u8,
+    media_type: String, // audio, video, data
+    ccerrors: u32,
+}
+
+fn flatten_streams(
+    stream_groupings: &AHashMap<u16, StreamGrouping>,
+    probe_id: String,
+) -> serde_json::Map<String, Value> {
+    let mut flat_structure: serde_json::Map<String, Value> = serde_json::Map::new();
+
+    for (pid, grouping) in stream_groupings.iter() {
+        let stream_data = grouping.stream_data_list.last().unwrap(); // Assuming last item is representative
+
+        let prefix = format!("streams.{}", pid);
+
+        flat_structure.insert(format!("{}.id", prefix), json!(probe_id.clone()));
+        flat_structure.insert(
+            format!("{}.program_number", prefix),
+            json!(stream_data.program_number),
+        );
+        flat_structure.insert(format!("{}.pid", prefix), json!(stream_data.pid));
+        flat_structure.insert(format!("{}.pmt_pid", prefix), json!(stream_data.pmt_pid));
+        flat_structure.insert(
+            format!("{}.stream_type", prefix),
+            json!(stream_data.stream_type),
+        );
+        flat_structure.insert(
+            format!("{}.capture_time", prefix),
+            json!(stream_data.capture_time),
+        );
+        flat_structure.insert(
+            format!("{}.capture_iat", prefix),
+            json!(stream_data.capture_iat),
+        );
+        flat_structure.insert(
+            format!("{}.capture_iat_max", prefix),
+            json!(stream_data.capture_iat_max),
+        );
+        flat_structure.insert(format!("{}.iat", prefix), json!(stream_data.iat));
+        flat_structure.insert(format!("{}.iat_max", prefix), json!(stream_data.iat_max));
+        flat_structure.insert(format!("{}.iat_min", prefix), json!(stream_data.iat_min));
+        flat_structure.insert(format!("{}.iat_avg", prefix), json!(stream_data.iat_avg));
+        flat_structure.insert(
+            format!("{}.packet_count", prefix),
+            json!(grouping.stream_data_list.len()),
+        );
+        flat_structure.insert(
+            format!("{}.continuity_counter", prefix),
+            json!(stream_data.continuity_counter),
+        );
+        flat_structure.insert(
+            format!("{}.timestamp", prefix),
+            json!(stream_data.timestamp),
+        );
+        flat_structure.insert(format!("{}.bitrate", prefix), json!(stream_data.bitrate));
+        flat_structure.insert(
+            format!("{}.bitrate_max", prefix),
+            json!(stream_data.bitrate_max),
+        );
+        flat_structure.insert(
+            format!("{}.bitrate_min", prefix),
+            json!(stream_data.bitrate_min),
+        );
+        flat_structure.insert(
+            format!("{}.bitrate_avg", prefix),
+            json!(stream_data.bitrate_avg),
+        );
+        flat_structure.insert(
+            format!("{}.error_count", prefix),
+            json!(stream_data.error_count),
+        );
+        flat_structure.insert(
+            format!("{}.current_error_count", prefix),
+            json!(stream_data.current_error_count),
+        );
+        flat_structure.insert(
+            format!("{}.last_arrival_time", prefix),
+            json!(stream_data.last_arrival_time),
+        );
+        flat_structure.insert(
+            format!("{}.last_sample_time", prefix),
+            json!(stream_data.last_sample_time),
+        );
+        flat_structure.insert(
+            format!("{}.start_time", prefix),
+            json!(stream_data.start_time),
+        );
+        flat_structure.insert(
+            format!("{}.total_bits", prefix),
+            json!(stream_data.total_bits),
+        );
+        flat_structure.insert(
+            format!("{}.total_bits_sample", prefix),
+            json!(stream_data.total_bits_sample),
+        );
+        flat_structure.insert(format!("{}.count", prefix), json!(stream_data.count));
+        flat_structure.insert(
+            format!("{}.packet_start", prefix),
+            json!(stream_data.packet_start),
+        );
+        flat_structure.insert(
+            format!("{}.packet_len", prefix),
+            json!(stream_data.packet_len),
+        );
+        flat_structure.insert(
+            format!("{}.stream_type_number", prefix),
+            json!(stream_data.stream_type_number),
+        );
+    }
+
+    flat_structure
+}
 
 // Define your custom PacketCodec
 pub struct BoxCodec;
@@ -69,83 +206,6 @@ impl PacketCodec for BoxCodec {
             );
         (packet.data.into(), timestamp)
     }
-}
-
-// convert stream data sructure to capnp message
-fn stream_data_to_capnp(stream_data: &StreamData) -> capnp::Result<Builder<HeapAllocator>> {
-    let mut message = Builder::new_default();
-    {
-        let mut stream_data_msg = message.init_root::<stream_data_capnp::Builder>();
-
-        stream_data_msg.set_pid(stream_data.pid);
-        stream_data_msg.set_pmt_pid(stream_data.pmt_pid);
-        stream_data_msg.set_program_number(stream_data.program_number);
-
-        // Correct way to convert a String to ::capnp::text::Reader<'_>
-        stream_data_msg.set_stream_type(stream_data.stream_type.as_str().into());
-        stream_data_msg.set_stream_type_number(stream_data.stream_type_number);
-
-        stream_data_msg.set_continuity_counter(stream_data.continuity_counter);
-        stream_data_msg.set_timestamp(stream_data.timestamp);
-        stream_data_msg.set_bitrate(stream_data.bitrate);
-        stream_data_msg.set_bitrate_max(stream_data.bitrate_max);
-        stream_data_msg.set_bitrate_min(stream_data.bitrate_min);
-        stream_data_msg.set_bitrate_avg(stream_data.bitrate_avg);
-        stream_data_msg.set_iat(stream_data.iat);
-        stream_data_msg.set_iat_max(stream_data.iat_max);
-        stream_data_msg.set_iat_min(stream_data.iat_min);
-        stream_data_msg.set_iat_avg(stream_data.iat_avg);
-        stream_data_msg.set_error_count(stream_data.error_count);
-        stream_data_msg.set_current_error_count(stream_data.current_error_count);
-        stream_data_msg.set_last_arrival_time(stream_data.last_arrival_time);
-        stream_data_msg.set_capture_time(stream_data.capture_time);
-        stream_data_msg.set_capture_iat(stream_data.capture_iat);
-        stream_data_msg.set_last_sample_time(stream_data.last_sample_time);
-        stream_data_msg.set_start_time(stream_data.start_time);
-        stream_data_msg.set_total_bits(stream_data.total_bits);
-        stream_data_msg.set_count(stream_data.count);
-        stream_data_msg.set_rtp_timestamp(stream_data.rtp_timestamp);
-        stream_data_msg.set_rtp_payload_type(stream_data.rtp_payload_type);
-
-        stream_data_msg
-            .set_rtp_payload_type_name(stream_data.rtp_payload_type_name.as_str().into());
-
-        stream_data_msg.set_rtp_line_number(stream_data.rtp_line_number);
-        stream_data_msg.set_rtp_line_offset(stream_data.rtp_line_offset);
-        stream_data_msg.set_rtp_line_length(stream_data.rtp_line_length);
-        stream_data_msg.set_rtp_field_id(stream_data.rtp_field_id);
-        stream_data_msg.set_rtp_line_continuation(stream_data.rtp_line_continuation);
-        stream_data_msg.set_rtp_extended_sequence_number(stream_data.rtp_extended_sequence_number);
-        stream_data_msg.set_source_ip(stream_data.source_ip.as_str().into());
-        stream_data_msg.set_source_port(stream_data.source_port as u32);
-
-        // System stats fields
-        stream_data_msg.set_total_memory(stream_data.total_memory);
-        stream_data_msg.set_used_memory(stream_data.used_memory);
-        stream_data_msg.set_total_swap(stream_data.total_swap);
-        stream_data_msg.set_used_swap(stream_data.used_swap);
-        stream_data_msg.set_cpu_usage(stream_data.cpu_usage);
-        stream_data_msg.set_cpu_count(stream_data.cpu_count as u32);
-        stream_data_msg.set_core_count(stream_data.core_count as u32);
-        stream_data_msg.set_boot_time(stream_data.boot_time);
-        stream_data_msg.set_load_avg_one(stream_data.load_avg_one);
-        stream_data_msg.set_load_avg_five(stream_data.load_avg_five);
-        stream_data_msg.set_load_avg_fifteen(stream_data.load_avg_fifteen);
-        stream_data_msg.set_host_name(stream_data.host_name.as_str().into());
-        stream_data_msg.set_kernel_version(stream_data.kernel_version.as_str().into());
-        stream_data_msg.set_os_version(stream_data.os_version.as_str().into());
-        stream_data_msg.set_has_image(stream_data.has_image);
-        stream_data_msg.set_image_pts(stream_data.image_pts);
-        stream_data_msg.set_captions(stream_data.captions.as_str().into());
-        stream_data_msg.set_capture_iat_max(stream_data.capture_iat_max);
-        stream_data_msg.set_log_message(stream_data.log_message.as_str().into());
-        stream_data_msg.set_probe_id(stream_data.probe_id.as_str().into());
-        stream_data_msg.set_pid_map(stream_data.pid_map.as_str().into());
-        stream_data_msg.set_scte35(stream_data.scte35.as_str().into());
-        stream_data_msg.set_audio_loudness(stream_data.audio_loudness.as_str().into());
-    }
-
-    Ok(message)
 }
 
 // Define a custom error for when the target device is not found
@@ -371,12 +431,67 @@ fn init_pcap(
     Ok((cap, socket))
 }
 
-/// RScap Probe Configuration
+async fn create_kafka_producer(kafka_config: &ClientConfig) -> FutureProducer {
+    kafka_config
+        .create()
+        .expect("Failed to create Kafka producer")
+}
+
+async fn send_to_kafka(
+    producer: &FutureProducer,
+    topic: &str,
+    key: &str,
+    payload: &str,
+    timeout: Duration,
+    retry_attempts: usize,
+    retry_delay: Duration,
+) -> Result<(), KafkaError> {
+    let mut attempt = 0;
+    loop {
+        let record = FutureRecord::to(topic).payload(payload).key(key);
+
+        match producer.send(record, timeout).await {
+            Ok((partition, offset)) => {
+                log::debug!(
+                    "Message sent successfully to topic: {}, partition: {}, offset: {}",
+                    topic,
+                    partition,
+                    offset
+                );
+                return Ok(());
+            }
+            Err((KafkaError::MessageProduction(RDKafkaErrorCode::QueueFull), _)) => {
+                attempt += 1;
+                if attempt >= retry_attempts {
+                    log::error!(
+                        "Failed to send message after {} retries. Giving up.",
+                        attempt
+                    );
+                    return Err(KafkaError::MessageProduction(RDKafkaErrorCode::QueueFull));
+                } else {
+                    log::warn!(
+                        "Queue is full. Retrying in {} ms... (attempt {}/{})",
+                        retry_delay.as_millis(),
+                        attempt,
+                        retry_attempts
+                    );
+                    tokio::time::sleep(retry_delay).await;
+                }
+            }
+            Err((err, _)) => {
+                log::error!("Failed to send message: {:?}", err);
+                return Err(err);
+            }
+        }
+    }
+}
+
+/// RsProbe Configuration
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.5.51",
-    about = "RsCap Probe for ZeroMQ output of MPEG-TS and SMPTE 2110 streams from pcap."
+    version = "0.6.1",
+    about = "MpegTS Stream Analysis Probe with Kafka and GStreamer"
 )]
 struct Args {
     /// probe ID - ID for the probe to send with the messages
@@ -384,8 +499,8 @@ struct Args {
     probe_id: String,
 
     /// Sets the batch size
-    #[clap(long, env = "BATCH_SIZE", default_value_t = 7)]
-    batch_size: usize,
+    #[clap(long, env = "PCAP_BATCH_SIZE", default_value_t = 7)]
+    pcap_batch_size: usize,
 
     /// Sets the payload offset
     #[clap(long, env = "PAYLOAD_OFFSET", default_value_t = 42)]
@@ -398,14 +513,6 @@ struct Args {
     /// Sets the read timeout
     #[clap(long, env = "READ_TIME_OUT", default_value_t = 300_000)]
     read_time_out: i32,
-
-    /// Sets the target port
-    #[clap(long, env = "TARGET_PORT", default_value_t = 5_556)]
-    target_port: i32,
-
-    /// Sets the target IP
-    #[clap(long, env = "TARGET_IP", default_value = "127.0.0.1")]
-    target_ip: String,
 
     /// Sets the source device
     #[clap(long, env = "SOURCE_DEVICE", default_value = "")]
@@ -435,14 +542,6 @@ struct Args {
     #[clap(long, env = "USE_WIRELESS", default_value_t = false)]
     use_wireless: bool,
 
-    /// Sets if Raw Stream should be sent
-    #[clap(long, env = "SEND_RAW_STREAM", default_value_t = false)]
-    send_raw_stream: bool,
-
-    /// Send Null Packets
-    #[clap(long, env = "SEND_NULL_PACKETS", default_value_t = false)]
-    send_null_packets: bool,
-
     /// number of packets to capture
     #[clap(long, env = "PACKET_COUNT", default_value_t = 0)]
     packet_count: u64,
@@ -450,14 +549,6 @@ struct Args {
     /// Turn off progress output dots
     #[clap(long, env = "NO_PROGRESS", default_value_t = false)]
     no_progress: bool,
-
-    /// Turn off ZeroMQ send
-    #[clap(long, env = "NO_ZMQ", default_value_t = false)]
-    no_zmq: bool,
-
-    /// Force smpte2110 mode
-    #[clap(long, env = "SMPT2110", default_value_t = false)]
-    smpte2110: bool,
 
     /// Use promiscuous mode
     #[clap(long, env = "PROMISCUOUS", default_value_t = false)]
@@ -484,8 +575,8 @@ struct Args {
     pcap_channel_size: usize,
 
     /// MPSC Channel Size for PCAP
-    #[clap(long, env = "ZMQ_CHANNEL_SIZE", default_value_t = 100000)]
-    zmq_channel_size: usize,
+    #[clap(long, env = "KAFKA_CHANNEL_SIZE", default_value_t = 100000)]
+    kafka_channel_size: usize,
 
     /// DPDK enable
     #[clap(long, env = "DPDK", default_value_t = false)]
@@ -499,21 +590,9 @@ struct Args {
     #[clap(long, env = "IPC_PATH")]
     ipc_path: Option<String>,
 
-    /// Output file for ZeroMQ
+    /// Output file for Kafka
     #[clap(long, env = "OUTPUT_FILE", default_value = "")]
     output_file: String,
-
-    /// Turn off the ZMQ thread
-    #[clap(long, env = "NO_ZMQ_THREAD", default_value_t = false)]
-    no_zmq_thread: bool,
-
-    /// ZMQ Batch size
-    #[clap(long, env = "ZMQ_BATCH_SIZE", default_value_t = 100)]
-    zmq_batch_size: usize,
-
-    /// Debug SMPTE2110
-    #[clap(long, env = "DEBUG_SMPTE2110", default_value_t = false)]
-    debug_smpte2110: bool,
 
     /// Watch File - File we watch for changes to send as the streams.PID.log_line string
     #[clap(long, env = "WATCH_FILE", default_value = "")]
@@ -565,7 +644,7 @@ struct Args {
     image_framerate: String,
 
     /// image_frame_increment - Increment the frame number by this amount for jpeg image strip, 0 matches filmstrip-length
-    #[clap(long, env = "IMAGE_FRAME_INCREMENT", default_value_t = 1)]
+    #[clap(long, env = "IMAGE_FRAME_INCREMENT", default_value_t = 0)]
     image_frame_increment: u8,
 
     /// Image buffer size - Size of the buffer for the images from gstreamer
@@ -576,9 +655,29 @@ struct Args {
     #[clap(long, env = "VIDEO_BUFFER_SIZE", default_value_t = 100000)]
     video_buffer_size: usize,
 
-    /// Chunk Buffer size = Size of the buffer for the chunked packet bundles to the main processing thread
-    #[clap(long, env = "CHUNK_BUFFER_SIZE", default_value_t = 100000)]
-    chunk_buffer_size: usize,
+    /// Kafka Broker
+    #[clap(long, env = "KAFKA_BROKER", default_value = "")]
+    kafka_broker: String,
+
+    /// Kafka Topic
+    #[clap(long, env = "KAFKA_TOPIC", default_value = "")]
+    kafka_topic: String,
+
+    /// Kafka timeout to drop packets
+    #[clap(long, env = "KAFKA_TIMEOUT", default_value_t = 100)]
+    kafka_timeout: u64,
+
+    /// Kafka Key
+    #[clap(long, env = "KAFKA_KEY", default_value = "")]
+    kafka_key: String,
+
+    /// Kafka sending interval in milliseconds
+    #[clap(long, env = "KAFKA_INTERVAL", default_value_t = 1000)]
+    kafka_interval: u64,
+
+    /// System Stats Interval in milliseconds
+    #[clap(long, env = "SYSTEM_STATS_INTERVAL", default_value_t = 5000)]
+    system_stats_interval: u64,
 }
 
 // MAIN Function
@@ -592,16 +691,16 @@ async fn main() {
             println!("\nCtrl-C received, shutting down");
             running.store(false, Ordering::SeqCst);
         }
-        _ = rscap(running.clone()) => {
-            println!("\nRsCap exited");
+        _ = rsprobe(running.clone()) => {
+            println!("\nRsProbe exited");
         }
     }
 }
 
-// RsCap Function
-async fn rscap(running: Arc<AtomicBool>) {
+// RsProbeFunction
+async fn rsprobe(running: Arc<AtomicBool>) {
     let running_capture = running.clone();
-    let running_zmq = running.clone();
+    let running_kafka = running.clone();
     #[cfg(feature = "gst")]
     let running_gstreamer_process = running.clone();
     #[cfg(feature = "gst")]
@@ -612,56 +711,25 @@ async fn rscap(running: Arc<AtomicBool>) {
 
     let args = Args::parse();
 
-    // Use the parsed arguments directly
-    let mut batch_size = args.batch_size;
-    let payload_offset = args.payload_offset;
-    let mut packet_size = args.packet_size;
-    let read_time_out = args.read_time_out;
-    let target_port = args.target_port;
-    let target_ip = args.target_ip;
-    let source_device = args.source_device;
-    let source_ip = args.source_ip.clone();
-    let source_protocol = args.source_protocol;
-    let source_port = args.source_port;
-    let debug_on = args.debug_on;
-    let silent = args.silent;
-    let use_wireless = args.use_wireless;
-    let packet_count = args.packet_count;
-    let no_progress = args.no_progress;
-    let no_zmq = args.no_zmq;
-    let promiscuous = args.promiscuous;
-    let show_tr101290 = args.show_tr101290;
-    let mut buffer_size = args.buffer_size as i64;
-    let mut immediate_mode = args.immediate_mode;
-    let pcap_stats = args.pcap_stats;
-    let mut pcap_channel_size = args.pcap_channel_size;
-    let mut zmq_channel_size = args.zmq_channel_size;
+    // Clone the args for use in the threads
+    let probe_id_clone = args.probe_id.clone();
+    let source_ip_clone = args.source_ip.clone();
+    let source_ip_clone1 = args.source_ip.clone();
+    let source_ip_clone2 = args.source_ip.clone();
+
     #[cfg(all(feature = "dpdk_enabled", target_os = "linux"))]
     let use_dpdk = args.dpdk;
-    let mut zmq_batch_size = args.zmq_batch_size;
 
-    println!("Starting RsCap Probe...");
+    println!("Starting RsProbe...");
 
-    // SMPTE2110 specific settings
-    if args.smpte2110 {
-        immediate_mode = true; // set immediate mode to true for smpte2110
-        buffer_size = 10_000_000_000; // set pcap buffer size to 10GB for smpte2110
-        pcap_channel_size = 1_000_000; // set pcap channel size for smpte2110
-        zmq_channel_size = 1_000_000; // set zmq channel size for smpte2110
-        packet_size = 1_220; // set packet size to 1220 (body) + 12 (header) for RTP
-        batch_size = 3; // N x 1220 size packets for pcap read size
-        zmq_batch_size = 1080; // N x packets for how many packets to send to ZMQ per batch
-    }
-
-    if silent {
+    if args.silent {
         // set log level to error
         std::env::set_var("RUST_LOG", "error");
     }
 
     // calculate read size based on batch size and packet size
-    let read_size: i32 = (packet_size as i32 * batch_size as i32) + payload_offset as i32; // pcap read size
-
-    let mut is_mpegts = true; // Default to true, update based on actual packet type
+    let read_size: i32 =
+        (args.packet_size as i32 * args.pcap_batch_size as i32) + args.payload_offset as i32; // pcap read size
 
     // Set Rust log level with --loglevel if it is set
     let loglevel = args.loglevel.to_lowercase();
@@ -690,9 +758,7 @@ async fn rscap(running: Arc<AtomicBool>) {
     let env = Env::default().filter_or("RUST_LOG", loglevel.as_str()); // Default to `info` if `RUST_LOG` is not set
     LogBuilder::from_env(env).init();
 
-    let (ptx, mut prx) = mpsc::channel::<(Arc<Vec<u8>>, u64, u64)>(pcap_channel_size);
-
-    let source_ip_clone = source_ip.clone();
+    let (ptx, mut prx) = mpsc::channel::<(Arc<Vec<u8>>, u64, u64)>(args.pcap_channel_size);
 
     // Spawn a new thread for packet capture
     let capture_task = if cfg!(feature = "dpdk_enabled") && args.dpdk {
@@ -753,15 +819,15 @@ async fn rscap(running: Arc<AtomicBool>) {
         tokio::spawn(async move {
             // initialize the pcap
             let (cap, _socket) = init_pcap(
-                &source_device,
-                use_wireless,
-                promiscuous,
-                read_time_out,
+                &args.source_device,
+                args.use_wireless,
+                args.promiscuous,
+                args.read_time_out,
                 read_size,
-                immediate_mode,
-                buffer_size as i64,
-                &source_protocol,
-                source_port,
+                args.immediate_mode,
+                args.buffer_size as i64,
+                &args.source_protocol,
+                args.source_port,
                 &source_ip_clone,
             )
             .expect("Failed to initialize pcap");
@@ -811,7 +877,7 @@ async fn rscap(running: Arc<AtomicBool>) {
                                 break;
                             }
                             let current_ts = Instant::now();
-                            if pcap_stats
+                            if args.pcap_stats
                                 && ((current_ts.duration_since(stats_last_sent_ts).as_secs() >= 30)
                                     || count == 1)
                             {
@@ -842,7 +908,7 @@ async fn rscap(running: Arc<AtomicBool>) {
                         }
                     }
                 }
-                if debug_on {
+                if args.debug_on {
                     let stats = stream.capture_mut().stats().unwrap();
                     println!(
                         "Current stats: Received: {}, Dropped: {}, Interface Dropped: {}",
@@ -862,74 +928,561 @@ async fn rscap(running: Arc<AtomicBool>) {
         })
     };
 
-    // Setup channel for passing stream_data for ZMQ thread sending the stream data to monitor process
-    let (tx, mut rx) = mpsc::channel::<Vec<StreamData>>(zmq_channel_size);
+    let mut probe_id = args.probe_id.clone();
+    if probe_id_clone.is_empty() {
+        // construct stream.source_ip and stream.source_port with stream.host
+        let system_stats = get_system_stats();
+        probe_id = format!(
+            "{}:{}:{}",
+            system_stats.host_name, source_ip_clone1, args.source_port
+        );
+    }
+    let probe_id_clone1 = probe_id.clone();
+    let probe_id_clone2 = probe_id.clone();
 
-    // Spawn a new thread for ZeroMQ communication
-    let zmq_thread = tokio::spawn(async move {
-        let context = async_zmq::Context::new();
-        let publisher = context.socket(PUSH).unwrap();
-        // Determine the connection endpoint (IPC if provided, otherwise TCP)
-        let endpoint = if let Some(ipc_path_copy) = args.ipc_path {
-            format!("ipc://{}", ipc_path_copy)
-        } else {
-            format!("tcp://{}:{}", target_ip, target_port)
-        };
-        info!("ZeroMQ publisher startup {}", endpoint);
+    // Setup channel for passing stream_data for Kafka thread sending the stream data to monitor process
+    let (ktx, mut krx) = mpsc::channel::<(
+        Vec<Arc<StreamData>>,
+        Vec<String>,
+        Vec<Vec<u8>>,
+        AHashMap<u16, Arc<StreamData>>,
+        Tr101290Errors,
+    )>(args.kafka_channel_size);
 
-        publisher.connect(&endpoint).unwrap();
+    let kafka_broker_clone = args.kafka_broker.clone();
+    let kafka_topic_clone = args.kafka_topic.clone();
+    let kafka_topic_clone1 = args.kafka_topic.clone();
+    let kafka_topic_clone2 = args.kafka_topic.clone();
+    let kafka_broker_clone2 = args.kafka_broker.clone();
 
-        // Initialize an Option<File> to None
-        let mut file = if !args.output_file.is_empty() {
-            Some(File::create(&args.output_file).unwrap())
-        } else {
-            None
-        };
+    let kafka_thread = tokio::spawn(async move {
+        // exit thread if kafka_broker is not set
+        if kafka_broker_clone.is_empty() || kafka_topic_clone.is_empty() {
+            return;
+        }
 
-        let mut dot_last_sent_ts = Instant::now();
+        // Flatten the processes and insert them into the structure as an array of strings
+        let cpu_threshold = 5.0; // CPU usage threshold (in percentage)
+        let ram_threshold = 100 * 1024 * 1024; // RAM usage threshold (in bytes)
 
-        while running_zmq.load(Ordering::SeqCst) {
-            while let Ok(mut batch) = rx.try_recv() {
-                // Process and send messages
-                for stream_data in batch.iter() {
-                    // Serialize StreamData to Cap'n Proto message
-                    let capnp_message = stream_data_to_capnp(stream_data)
-                        .expect("Failed to convert to Cap'n Proto message");
-                    let mut serialized_data = Vec::new();
-                    capnp::serialize::write_message(&mut serialized_data, &capnp_message)
-                        .expect("Failed to serialize Cap'n Proto message");
+        let mut output_file_counter: u32 = 0;
+        let mut last_system_stats = Instant::now();
+        let mut dot_last_file_write = Instant::now();
+        let mut log_messages = Vec::<String>::new();
+        let output_file_without_jpg = args.output_file.replace(".jpg", "");
 
-                    // Create ZeroMQ message from serialized Cap'n Proto data
-                    let capnp_msg = zmq::Message::from(serialized_data);
+        info!("Kafka publisher startup {}", args.kafka_broker);
+        let mut kafka_conf = ClientConfig::new();
+        kafka_conf.set("bootstrap.servers", &args.kafka_broker);
+        kafka_conf.set("client.id", "rsprobe");
+        kafka_conf.set("queue.buffering.max.messages", "10000");
+        kafka_conf.set("batch.num.messages", "1000");
+        kafka_conf.set("queue.buffering.max.ms", "500");
 
-                    // Send the Cap'n Proto message
-                    if !no_zmq {
-                        publisher.send(capnp_msg, zmq::SNDMORE).unwrap();
-                    }
+        let admin_client: AdminClient<DefaultClientContext> =
+            kafka_conf.create().expect("Failed to create admin client");
 
-                    let packet_slice = &stream_data.packet[stream_data.packet_start
-                        ..stream_data.packet_start + stream_data.packet_len];
-                    let packet_msg = if stream_data.packet_len > 0
-                        && (args.send_raw_stream || args.extract_images)
-                    {
-                        // Write to file if output_file is provided
-                        if let Some(file) = file.as_mut() {
-                            if !no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
-                                dot_last_sent_ts = Instant::now();
-                                print!("*");
-                                // Flush stdout to ensure the progress dots are printed
-                                io::stdout().flush().unwrap();
-                            }
-                            file.write_all(&packet_slice).unwrap();
-                        }
-                        zmq::Message::from(packet_slice)
-                    } else {
-                        zmq::Message::from(Vec::new())
+        // This code block tries to create the topic if it doesn't already exist
+        // ignoring errors that indicate existence.
+        let new_topic = NewTopic::new(
+            &args.kafka_topic,
+            1,
+            rdkafka::admin::TopicReplication::Fixed(1),
+        );
+        let _ = admin_client
+            .create_topics(&[new_topic], &AdminOptions::new())
+            .await;
+
+        // prime the system stats for the first time
+        let mut system_stats = get_system_stats();
+        while running_kafka.load(Ordering::SeqCst) {
+            while let Some((mut batch, mut logs, mut images, pid_map, tr101290)) = krx.recv().await
+            {
+                debug!("Kafka received PID Map: {:#?}", pid_map);
+                debug!("Kafka TR101290 Errors: {:#?}", tr101290);
+
+                // create a single array structure for all the pids and stream_type_names and numbers to represent
+                // the mpegts stream as an mpegts analyzer would see it
+                let mut pid_stream_types = Vec::<PidStreamType>::new();
+                for (pid, stream_data) in pid_map.iter() {
+                    // use stream_type_number to determine the media type of audio, video padding, text or data
+                    let media_type = match stream_data.stream_type_number {
+                        0x00 => "padding",
+                        0x01 => "video",
+                        0x02 => "video",
+                        0x03 => "audio",
+                        0x04 => "audio",
+                        0x0F => "audio",
+                        0x10 => "video",
+                        0x11 => "audio",
+                        0x1A => "text",
+                        0x1B => "video",
+                        0x1C => "text",
+                        0x1D => "video",
+                        0x1E => "video",
+                        0x1F => "video",
+                        0x20 => "video",
+                        0x21 => "video",
+                        0x22 => "video",
+                        0x25 => "video",
+                        0x26 => "video",
+                        0x27 => "video",
+                        0x28 => "video",
+                        0x29 => "video",
+                        0x86 => "scte35",
+                        0xFF => "padding",
+                        _ => "data",
                     };
 
-                    // Send the raw packet
-                    if !no_zmq {
-                        publisher.send(packet_msg, 0).unwrap();
+                    pid_stream_types.push(PidStreamType {
+                        pid: *pid,
+                        stream_type: stream_data.stream_type.clone(),
+                        stream_type_number: stream_data.stream_type_number,
+                        ccerrors: stream_data.error_count,
+                        media_type: media_type.to_string(),
+                    });
+                }
+
+                if logs.len() > 0 {
+                    for log in logs.iter() {
+                        log_messages.push(log.clone());
+                        log::info!("Got Log Message: {}", log);
+                    }
+                    logs.clear();
+                }
+
+                // Process and send messages
+                for stream_data in batch.iter() {
+                    let mut base64_image = String::new();
+
+                    if images.len() > 0 {
+                        let image = images.pop().unwrap();
+                        let output_file_incremental =
+                            format!("{}_{:08}.jpg", output_file_without_jpg, output_file_counter);
+
+                        output_file_counter += 1;
+
+                        let mut output_file_mut = if !args.output_file.is_empty() {
+                            Some(File::create(&output_file_incremental).unwrap())
+                        } else {
+                            None
+                        };
+                        log::info!(
+                            "Kafka Sender: [{}] Jpeg image received: {} size {} pts saved to {}",
+                            probe_id_clone1.clone(),
+                            image.len(),
+                            stream_data.capture_time,
+                            output_file_incremental
+                        );
+
+                        // Write to file if output_file is provided
+                        if let Some(file) = output_file_mut.as_mut() {
+                            if !args.no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
+                                dot_last_file_write = Instant::now();
+                                print!("*");
+                                // flush stdout
+                                std::io::stdout().flush().unwrap();
+                            }
+                            file.write_all(&image).unwrap();
+                        }
+
+                        // Encode the JPEG image as Base64
+                        base64_image = general_purpose::STANDARD.encode::<&[u8]>(&image);
+
+                        // clear the image buffer
+                        images.clear();
+                    }
+
+                    let pid = stream_data.pid;
+                    {
+                        let mut probe_data_map = PROBE_DATA.write().unwrap();
+                        if let Some(probe_data) = probe_data_map.get_mut(&probe_id_clone2.clone()) {
+                            let stream_groupings = &mut probe_data.stream_groupings;
+                            if let Some(grouping) = stream_groupings.get_mut(&pid) {
+                                // Update the existing StreamData instance in the grouping
+                                let last_stream_data =
+                                    grouping.stream_data_list.last_mut().unwrap();
+                                *last_stream_data = Arc::try_unwrap(stream_data.clone())
+                                    .unwrap_or_else(|stream_data| (*stream_data).clone());
+                            } else {
+                                let new_grouping = StreamGrouping {
+                                    stream_data_list: vec![Arc::try_unwrap(stream_data.clone())
+                                        .unwrap_or_else(|stream_data| (*stream_data).clone())],
+                                };
+                                stream_groupings.insert(pid, new_grouping);
+                            }
+                        } else {
+                            let mut new_stream_groupings = AHashMap::new();
+                            let new_grouping = StreamGrouping {
+                                stream_data_list: vec![Arc::try_unwrap(stream_data.clone())
+                                    .unwrap_or_else(|stream_data| (*stream_data).clone())],
+                            };
+                            new_stream_groupings.insert(pid, new_grouping);
+                            let new_probe_data = ProbeData {
+                                stream_groupings: new_stream_groupings,
+                                global_data: serde_json::Map::new(),
+                            };
+                            probe_data_map.insert(probe_id_clone2.clone(), new_probe_data);
+                        }
+                    }
+
+                    // Create a new map to store the averaged probe data
+                    let mut averaged_probe_data: serde_json::Map<String, serde_json::Value> =
+                        serde_json::Map::new();
+
+                    // Acquire write access to PROBE_DATA and Send to Kafka
+                    {
+                        let mut probe_data_map = PROBE_DATA.write().unwrap();
+                        if last_system_stats.elapsed().as_millis()
+                            >= args.system_stats_interval as u128
+                        {
+                            last_system_stats = Instant::now();
+                            system_stats = get_system_stats();
+                        }
+
+                        // Process each probe's data
+                        for (_probe_id, probe_data) in probe_data_map.iter_mut() {
+                            let stream_groupings = &probe_data.stream_groupings;
+                            let mut flattened_data =
+                                flatten_streams(&stream_groupings, probe_id_clone2.clone());
+
+                            // Initialize variables to accumulate global averages
+                            let mut total_bitrate_avg: u64 = 0;
+                            let mut total_iat_avg: u64 = 0;
+                            let mut total_iat_max: u64 = 0;
+                            let mut total_cc_errors: u64 = 0;
+                            let mut total_cc_errors_current: u64 = 0;
+                            let mut stream_count: u64 = 0;
+                            let mut source_ip: String = String::new();
+                            let mut source_port: u32 = 0;
+                            let mut image_pts: u64 = 0;
+                            let mut captions: String = String::new();
+                            let mut scte35: String = String::new();
+                            let mut audio_loudness: String = String::new();
+
+                            // Process each stream to accumulate averages
+                            for (_, grouping) in stream_groupings.iter() {
+                                for stream_data in &grouping.stream_data_list {
+                                    total_bitrate_avg += stream_data.bitrate_avg as u64;
+                                    total_iat_avg += stream_data.capture_iat;
+                                    total_iat_max += stream_data.capture_iat_max;
+                                    total_cc_errors += stream_data.error_count as u64;
+                                    total_cc_errors_current +=
+                                        stream_data.current_error_count as u64;
+                                    source_port = stream_data.source_port as u32;
+                                    source_ip = stream_data.source_ip.clone();
+                                    if stream_data.has_image > 0 && stream_data.image_pts > 0 {
+                                        image_pts = stream_data.image_pts;
+                                    }
+                                    if stream_data.captions != "" {
+                                        // concatenate captions
+                                        captions = format!("{}{}", captions, stream_data.captions);
+                                    }
+                                    if stream_data.scte35 != "" {
+                                        // concatenate scte35
+                                        scte35 = format!("{}{}", scte35, stream_data.scte35);
+                                    }
+                                    if stream_data.audio_loudness != "" {
+                                        // concatenate audio_loudness
+                                        audio_loudness = format!(
+                                            "{}{}",
+                                            audio_loudness, stream_data.audio_loudness
+                                        );
+                                    }
+                                    stream_count += 1;
+                                }
+                            }
+
+                            // Continuity Counter errors
+                            let global_cc_errors = total_cc_errors;
+                            let global_cc_errors_current = total_cc_errors_current;
+
+                            // avg IAT
+                            let global_iat_avg = if stream_count > 0 {
+                                total_iat_avg as f64 / stream_count as f64
+                            } else {
+                                0.0
+                            };
+
+                            // max IAT
+                            let global_iat_max = if stream_count > 0 {
+                                total_iat_max as f64 / stream_count as f64
+                            } else {
+                                0.0
+                            };
+
+                            // Calculate global averages
+                            let global_bitrate_avg = if stream_count > 0 {
+                                total_bitrate_avg
+                            } else {
+                                0
+                            };
+                            let current_timestamp = current_unix_timestamp_ms().unwrap_or(0);
+
+                            // Directly insert global statistics and timestamp into the flattened_data map
+                            flattened_data.insert(
+                                "bitrate_avg_global".to_string(),
+                                serde_json::json!(global_bitrate_avg),
+                            );
+                            flattened_data.insert(
+                                "iat_avg_global".to_string(),
+                                serde_json::json!(global_iat_avg),
+                            );
+                            flattened_data.insert(
+                                "iat_max_global".to_string(),
+                                serde_json::json!(global_iat_max),
+                            );
+                            flattened_data.insert(
+                                "cc_errors_global".to_string(),
+                                serde_json::json!(global_cc_errors),
+                            );
+                            flattened_data.insert(
+                                "current_cc_errors_global".to_string(),
+                                serde_json::json!(global_cc_errors_current),
+                            );
+                            flattened_data.insert(
+                                "timestamp".to_string(),
+                                serde_json::json!(current_timestamp),
+                            );
+                            flattened_data
+                                .insert("source_ip".to_string(), serde_json::json!(source_ip));
+                            flattened_data
+                                .insert("source_port".to_string(), serde_json::json!(source_port));
+
+                            flattened_data
+                                .insert("captions".to_string(), serde_json::json!(captions));
+
+                            // Insert the base64_image field into the flattened_data map
+                            let base64_image_tag = if !base64_image.is_empty() {
+                                log::debug!("Got Image: {} bytes", base64_image.len());
+
+                                format!("data:image/jpeg;base64,{}", base64_image)
+                            } else {
+                                "".to_string()
+                            };
+                            flattened_data
+                                .insert("image_pts".to_string(), serde_json::json!(image_pts));
+                            flattened_data.insert(
+                                "base64_image".to_string(),
+                                serde_json::json!(base64_image_tag),
+                            );
+
+                            // Check if we have a log_message in log_messages Vector, if so add it to the flattened_data map
+                            if log_messages.len() > 0 {
+                                // remove one log message from the log_messages array
+                                let log_message = log_messages.pop().unwrap();
+                                flattened_data.insert(
+                                    "log_message".to_string(),
+                                    serde_json::json!(log_message),
+                                );
+                            } else {
+                                flattened_data
+                                    .insert("log_message".to_string(), serde_json::json!(""));
+                            }
+
+                            flattened_data
+                                .insert("id".to_string(), serde_json::json!(probe_id_clone2));
+                            flattened_data
+                                .insert("pid_map".to_string(), serde_json::json!(pid_stream_types));
+                            flattened_data
+                                .insert("tr101290_cat_errors".to_string(), serde_json::json!(0));
+                            flattened_data.insert(
+                                "tr101290_continuity_counter_errors".to_string(),
+                                serde_json::json!(0),
+                            );
+                            flattened_data
+                                .insert("tr101290_crc_errors".to_string(), serde_json::json!(0));
+                            flattened_data
+                                .insert("tr101290_pat_errors".to_string(), serde_json::json!(0));
+                            flattened_data.insert(
+                                "tr101290_pcr_accuracy_errors".to_string(),
+                                serde_json::json!(0),
+                            );
+                            flattened_data.insert(
+                                "tr101290_pcr_discontinuity_indicator_errors".to_string(),
+                                serde_json::json!(0),
+                            );
+                            flattened_data.insert(
+                                "tr101290_pcr_repetition_errors".to_string(),
+                                serde_json::json!(0),
+                            );
+                            flattened_data.insert(
+                                "tr101290_pid_map_errors".to_string(),
+                                serde_json::json!(0),
+                            );
+                            flattened_data
+                                .insert("tr101290_pmt_errors".to_string(), serde_json::json!(0));
+                            flattened_data
+                                .insert("tr101290_pts_errors".to_string(), serde_json::json!(0));
+                            flattened_data.insert(
+                                "tr101290_sync_byte_errors".to_string(),
+                                serde_json::json!(0),
+                            );
+                            flattened_data.insert(
+                                "tr101290_transport_error_indicator_errors".to_string(),
+                                serde_json::json!(0),
+                            );
+                            flattened_data.insert(
+                                "tr101290_ts_sync_byte_errors".to_string(),
+                                serde_json::json!(0),
+                            );
+
+                            flattened_data.insert("scte35".to_string(), serde_json::json!(scte35));
+                            flattened_data.insert(
+                                "audio_loudness".to_string(),
+                                serde_json::json!(audio_loudness),
+                            );
+
+                            // Add system stats fields to the flattened structure
+                            flattened_data
+                                .insert(format!("total_memory"), json!(system_stats.total_memory));
+                            flattened_data
+                                .insert(format!("used_memory"), json!(system_stats.used_memory));
+                            flattened_data
+                                .insert(format!("total_swap"), json!(system_stats.total_swap));
+                            flattened_data
+                                .insert(format!("used_swap"), json!(system_stats.used_swap));
+                            flattened_data
+                                .insert(format!("cpu_usage"), json!(system_stats.cpu_usage));
+                            flattened_data
+                                .insert(format!("cpu_count"), json!(system_stats.cpu_count));
+                            flattened_data
+                                .insert(format!("core_count"), json!(system_stats.core_count));
+                            flattened_data
+                                .insert(format!("boot_time"), json!(system_stats.boot_time));
+                            flattened_data
+                                .insert(format!("load_avg_one"), json!(system_stats.load_avg.one));
+                            flattened_data.insert(
+                                format!("load_avg_five"),
+                                json!(system_stats.load_avg.five),
+                            );
+                            flattened_data.insert(
+                                format!("load_avg_fifteen"),
+                                json!(system_stats.load_avg.fifteen),
+                            );
+                            flattened_data
+                                .insert(format!("host_name"), json!(system_stats.host_name));
+                            flattened_data.insert(
+                                format!("kernel_version"),
+                                json!(system_stats.kernel_version),
+                            );
+                            flattened_data
+                                .insert(format!("os_version"), json!(system_stats.os_version));
+
+                            flattened_data.insert(
+                                format!("process_count"),
+                                json!(system_stats.process_count),
+                            );
+                            flattened_data.insert(format!("uptime"), json!(system_stats.uptime));
+                            flattened_data
+                                .insert(format!("system_name"), json!(system_stats.system_name));
+
+                            // Flatten the network stats and insert them into the structure
+                            for network in &system_stats.network_stats {
+                                flattened_data.insert(
+                                    format!("network.{}.received", network.name),
+                                    json!(network.received),
+                                );
+                                flattened_data.insert(
+                                    format!("network.{}.transmitted", network.name),
+                                    json!(network.transmitted),
+                                );
+                                flattened_data.insert(
+                                    format!("network.{}.packets_received", network.name),
+                                    json!(network.packets_received),
+                                );
+                                flattened_data.insert(
+                                    format!("network.{}.packets_transmitted", network.name),
+                                    json!(network.packets_transmitted),
+                                );
+                                flattened_data.insert(
+                                    format!("network.{}.errors_on_received", network.name),
+                                    json!(network.errors_on_received),
+                                );
+                                flattened_data.insert(
+                                    format!("network.{}.errors_on_transmitted", network.name),
+                                    json!(network.errors_on_transmitted),
+                                );
+                            }
+
+                            // Flatten the disk stats and insert them into the structure
+                            for (i, disk) in system_stats.disk_stats.iter().enumerate() {
+                                flattened_data
+                                    .insert(format!("disk_stats.{}.name", i), json!(disk.name));
+                                flattened_data.insert(
+                                    format!("disk_stats.{}.total_space", i),
+                                    json!(disk.total_space),
+                                );
+                                flattened_data.insert(
+                                    format!("disk_stats.{}.available_space", i),
+                                    json!(disk.available_space),
+                                );
+                                flattened_data.insert(
+                                    format!("disk_stats.{}.is_removable", i),
+                                    json!(disk.is_removable),
+                                );
+                            }
+
+                            let processes: Vec<String> = system_stats
+                                    .processes
+                                    .iter()
+                                    .filter(|process| {
+                                        process.cpu_usage > cpu_threshold || process.memory > ram_threshold
+                                    })
+                                    .map(|process| {
+                                        format!(
+                                            "{{\"name\":\"{}\",\"pid\":{},\"cpu_usage\":{},\"memory\":{},\"virtual_memory\":{},\"start_time\":{}}}",
+                                            process.name, process.pid, process.cpu_usage, process.memory, process.virtual_memory, process.start_time
+                                        )
+                                    })
+                                    .collect();
+
+                            flattened_data.insert(format!("processes"), json!(processes));
+
+                            // Merge the probe-specific flattened data with the global data
+                            flattened_data.extend(probe_data.global_data.clone());
+
+                            // Store the flattened data in the averaged_probe_data map
+                            averaged_probe_data.insert(
+                                probe_id_clone2.clone(),
+                                serde_json::Value::Object(flattened_data),
+                            );
+
+                            // Clear the global data after processing
+                            probe_data.global_data.clear();
+                        }
+                    }
+
+                    // Inside the loop
+                    for (_probe_id, probe_data) in averaged_probe_data.iter() {
+                        let json_data = serde_json::to_string(probe_data)
+                            .expect("Failed to serialize probe data for Kafka");
+
+                        // Clone the values before moving them into the async block
+                        let kafka_conf_clone = kafka_conf.clone();
+                        let kafka_topic_clone = kafka_topic_clone1.clone();
+                        let kafka_key_clone = args.kafka_key.clone();
+
+                        tokio::spawn(async move {
+                            let producer_local = create_kafka_producer(&kafka_conf_clone).await;
+                            let timeout = Duration::from_secs(30);
+                            let retry_attempts = 3;
+                            let retry_delay = Duration::from_millis(100);
+
+                            if let Err(e) = send_to_kafka(
+                                &producer_local,
+                                &kafka_topic_clone,
+                                &kafka_key_clone,
+                                &json_data,
+                                timeout,
+                                retry_attempts,
+                                retry_delay,
+                            )
+                            .await
+                            {
+                                log::error!("Failed to send message to Kafka: {:?}", e);
+                            }
+                        });
                     }
                 }
                 batch.clear();
@@ -945,55 +1498,74 @@ async fn rscap(running: Arc<AtomicBool>) {
     #[cfg(feature = "gst")]
     let (image_sender, mut image_receiver) = mpsc::channel(args.image_buffer_size);
 
+    // Initialize GStreamer
+    #[cfg(feature = "gst")]
+    gstreamer::init().expect("Failed to initialize GStreamer");
+
     // Initialize the pipeline
     #[cfg(feature = "gst")]
-    let (pipeline, appsrc, appsink, captionssink, audiosink) = match initialize_pipeline(
-        &args.input_codec,
-        args.image_height,
-        args.gst_queue_buffers,
-        !args.scale_images_after_gstreamer,
-        &args.image_framerate,
-    ) {
-        Ok((pipeline, appsrc, appsink, captionssink, audiosink)) => {
-            (pipeline, appsrc, appsink, captionssink, audiosink)
+    let (pipeline, appsrc, appsink, captionssink, audiosink) = if args.extract_images {
+        match initialize_pipeline(
+            &args.input_codec,
+            args.image_height,
+            args.gst_queue_buffers,
+            !args.scale_images_after_gstreamer,
+            &args.image_framerate,
+        ) {
+            Ok((pipeline, appsrc, appsink, captionssink, audiosink)) =>
+                (pipeline, appsrc, appsink, captionssink, audiosink),
+            Err(err) => {
+                eprintln!("Failed to initialize the pipeline: {}", err);
+                return;
+            }
         }
-        Err(err) => {
-            eprintln!("Failed to initialize the pipeline: {}", err);
-            return;
-        }
+    } else {
+        (
+            gstreamer::Pipeline::new(),
+            gstreamer_app::AppSrc::builder().build(),
+            gstreamer_app::AppSink::builder().build(),
+            gstreamer_app::AppSink::builder().build(),
+            gstreamer_app::AppSink::builder().build(),
+        )
     };
 
     // Start the pipeline
     #[cfg(feature = "gst")]
-    match pipeline.set_state(gst::State::Playing) {
-        Ok(_) => (),
-        Err(err) => {
-            eprintln!("Failed to set the pipeline state to Playing: {}", err);
-            return;
+    if args.extract_images {
+        match pipeline.set_state(gst::State::Playing) {
+            Ok(_) => (),
+            Err(err) => {
+                eprintln!("Failed to set the pipeline state to Playing: {}", err);
+                return;
+            }
         }
     }
 
     // Spawn separate tasks for processing video packets and pulling images
     #[cfg(feature = "gst")]
-    process_video_packets(
-        appsrc,
-        video_packet_receiver,
-        running_gstreamer_process.clone(),
-    );
+    if args.extract_images {
+        process_video_packets(
+            appsrc,
+            video_packet_receiver,
+            running_gstreamer_process.clone(),
+        );
+    }
     #[cfg(feature = "gst")]
-    pull_images(
-        appsink,
-        captionssink,
-        audiosink,
-        image_sender,
-        args.save_images,
-        args.image_sample_rate_ns,
-        args.image_height,
-        args.filmstrip_length,
-        args.jpeg_quality,
-        args.image_frame_increment,
-        running_gstreamer_pull,
-    );
+    if args.extract_images {
+        pull_images(
+            appsink,
+            captionssink,
+            audiosink,
+            image_sender,
+            args.save_images,
+            args.image_sample_rate_ns,
+            args.image_height,
+            args.filmstrip_length,
+            args.jpeg_quality,
+            args.image_frame_increment,
+            running_gstreamer_pull,
+        );
+    }
 
     // Watch file thread and sender/receiver for log file input
     let (watch_file_sender, watch_file_receiver) = channel();
@@ -1028,72 +1600,108 @@ async fn rscap(running: Arc<AtomicBool>) {
         pid: 0xFFFF,
         packet: Vec::new(),
     };
+    let mut pmt_pid: Option<u16> = Some(0xFFFF);
+    let mut program_number: Option<u16> = Some(0xFFFF);
 
     let mut video_stream_type = 0;
 
-    let (chunk_sender, mut chunk_receiver) =
-        tokio::sync::mpsc::channel::<Vec<StreamData>>(args.chunk_buffer_size);
-    let probe_id_clone = args.probe_id.clone();
-    let source_ip_clone_batch = source_ip.clone();
+    let ktx_clone1 = ktx.clone();
+    let ktx_clone2 = ktx.clone();
 
-    let tx_clone = tx.clone();
-    let tx_clone2 = tx.clone();
+    info!("RsProbe: Starting up with Probe ID: {}", probe_id.clone());
 
-    // Create a separate thread for processing chunks
-    tokio::spawn(async move {
-        let mut batch = Vec::new();
-        let batch_size = zmq_batch_size.clone(); // Adjust the batch size as needed
-        let batch_timeout = tokio::time::Duration::from_millis(1); // Adjust the batch timeout as needed
-        let mut last_batch_time = tokio::time::Instant::now();
+    let mut dot_last_sent_ts = Instant::now();
+    let mut x_last_sent_ts = Instant::now();
 
-        while let Some(stream_data_chunk) = chunk_receiver.recv().await {
-            for mut stream_data in stream_data_chunk {
-                // Process the chunk
-                if debug_on {
-                    hexdump(
-                        &stream_data.packet,
-                        stream_data.packet_start,
-                        stream_data.packet_len,
+    // vector of images and logs
+    let mut images = Vec::<Vec<u8>>::new();
+    let mut logs = Vec::<String>::new();
+
+    let mut last_kafka_send_time = Instant::now();
+
+    loop {
+        match prx.try_recv() {
+            Ok((packet, timestamp, iat)) => {
+                if args.packet_count > 0 && packets_captured > args.packet_count {
+                    println!(
+                        "\nPacket count limit reached {}/{}, signaling termination...",
+                        packets_captured, args.packet_count
                     );
+                    running.store(false, Ordering::SeqCst);
+                    break;
+                }
+                packets_captured += 1;
+
+                if !args.no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
+                    dot_last_sent_ts = Instant::now();
+                    print!(".");
+                    // Flush stdout to ensure the progress dots are printed
+                    io::stdout().flush().unwrap();
                 }
 
-                // Extract the necessary slice for PID extraction and parsing
-                let packet_chunk = &stream_data.packet
-                    [stream_data.packet_start..stream_data.packet_start + stream_data.packet_len];
+                let chunks = process_mpegts_packet(
+                    args.payload_offset,
+                    packet,
+                    args.packet_size,
+                    start_time,
+                    timestamp,
+                    iat,
+                    source_ip_clone2.clone(),
+                    args.source_port,
+                    probe_id.clone(),
+                );
 
-                let mut pid: u16 = 0xFFFF;
+                for mut stream_data in chunks {
+                    stream_data.pmt_pid = pmt_pid.expect("Failed to get PMT PID");
+                    stream_data.program_number =
+                        program_number.expect("Failed to get program number");
 
-                if is_mpegts {
-                    pid = stream_data.pid;
+                    // Process the chunk
+                    if args.debug_on {
+                        hexdump(
+                            &stream_data.packet,
+                            stream_data.packet_start,
+                            stream_data.packet_len,
+                        );
+                    }
+                    // Extract the necessary slice for PID extraction and parsing
+                    let packet_chunk = &stream_data.packet[stream_data.packet_start
+                        ..stream_data.packet_start + stream_data.packet_len];
+
+                    let pid = stream_data.pid;
                     // Handle PAT and PMT packets
                     match pid {
                         PAT_PID => {
                             debug!("ProcessPacket: PAT packet detected with PID {}", pid);
                             pmt_info = parse_and_store_pat(&packet_chunk);
-                            // Print TR 101 290 errors
-                            if show_tr101290 {
-                                info!("STATUS::TR101290:ERRORS: {}", tr101290_errors);
-                            }
                         }
                         _ => {
                             // Check if this is a PMT packet
                             if pid == pmt_info.pid {
-                                debug!("ProcessPacket: PMT packet detected with PID {}", pid);
+                                if pmt_pid == Some(0xFFFF) {
+                                    debug!("ProcessPacket: PMT packet detected with PID {}", pid);
+                                    stream_data.pmt_pid = pid;
+                                    pmt_pid = Some(pid);
+                                }
                                 // Update PID_MAP with new stream types
-                                update_pid_map(
+                                let program_number_result = update_pid_map(
                                     &packet_chunk,
                                     &pmt_info.packet,
                                     stream_data.capture_time,
                                     stream_data.capture_iat,
-                                    source_ip_clone_batch.clone(),
+                                    source_ip_clone2.clone(),
                                     args.source_port,
                                     probe_id_clone.clone(),
                                 );
+                                program_number = Some(program_number_result);
+
                                 // Identify the video PID (if not already identified)
                                 if let Some((new_pid, new_codec)) =
                                     identify_video_pid(&packet_chunk)
                                 {
-                                    if video_pid.map_or(true, |vp| vp != new_pid) {
+                                    if stream_data.stream_type_number > 0
+                                        && video_pid.map_or(true, |vp| vp != new_pid)
+                                    {
                                         video_pid = Some(new_pid);
                                         let old_stream_type = video_stream_type;
                                         video_stream_type = stream_data.stream_type_number;
@@ -1123,208 +1731,126 @@ async fn rscap(running: Arc<AtomicBool>) {
                             }
                         }
                     }
-                }
 
-                if video_pid < Some(0x1FFF)
-                    && video_pid > Some(0)
-                    && stream_data.pid == video_pid.unwrap()
-                    && video_stream_type != stream_data.stream_type_number
-                {
-                    let old_stream_type = video_stream_type;
-                    video_stream_type = stream_data.stream_type_number;
-                    info!(
-                        "STATUS::VIDEO_STREAM:FOUND: to {}/{} from {}/{}",
-                        video_pid.unwrap(),
-                        video_stream_type,
-                        video_pid.unwrap(),
-                        old_stream_type
+                    if video_pid < Some(0x1FFF)
+                        && video_pid > Some(0)
+                        && stream_data.pid == video_pid.unwrap()
+                        && video_stream_type != stream_data.stream_type_number
+                    {
+                        let old_stream_type = video_stream_type;
+                        video_stream_type = stream_data.stream_type_number;
+                        info!(
+                            "STATUS::VIDEO_STREAM:FOUND: to {}/{} from {}/{}",
+                            video_pid.unwrap(),
+                            video_stream_type,
+                            video_pid.unwrap(),
+                            old_stream_type
+                        );
+                    }
+
+                    // Check for TR 101 290 errors
+                    process_packet(
+                        &mut stream_data,
+                        &mut tr101290_errors,
+                        pmt_info.pid,
+                        probe_id_clone.clone(),
                     );
-                }
 
-                // Check for TR 101 290 errors
-                process_packet(
-                    &mut stream_data,
-                    &mut tr101290_errors,
-                    is_mpegts,
-                    pmt_info.pid,
-                    probe_id_clone.clone(),
-                );
-
-                // If MpegTS, Check if this is a video PID and if so parse NALS and decode video
-                if is_mpegts {
+                    // Check if this is a video PID and if so parse NALS and decode video
                     // Process video packets
                     #[cfg(feature = "gst")]
                     if args.extract_images {
                         #[cfg(feature = "gst")]
-                        if video_stream_type > 0 {
-                            let video_packet = Arc::new(
-                                stream_data.packet[stream_data.packet_start
-                                    ..stream_data.packet_start + stream_data.packet_len]
-                                    .to_vec(),
-                            );
+                        let video_packet = Arc::new(
+                            stream_data.packet[stream_data.packet_start
+                                ..stream_data.packet_start + stream_data.packet_len]
+                                .to_vec(),
+                        );
 
-                            // Send the video packet to the processing task
-                            if let Err(_) = video_packet_sender
-                                .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
-                            {
-                                // If the channel is full, drop the packet
-                                log::warn!("Video packet channel is full. Dropping packet.");
-                            }
+                        // Send the video packet to the processing task
+                        if let Err(_) = video_packet_sender
+                            .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
+                        {
+                            // If the channel is full, drop the packet
+                            log::warn!("Video packet channel is full. Dropping packet.");
                         }
 
                         // Receive and process images
                         #[cfg(feature = "gst")]
                         if let Ok((image_data, pts)) = image_receiver.try_recv() {
-                            // attach image to the stream_data.packet arc, clearing the current arc value
-                            stream_data.packet = Arc::new(image_data.clone());
-                            stream_data.has_image = image_data.len() as u8;
-                            stream_data.packet_start = 0;
-                            stream_data.packet_len = image_data.len();
-                            stream_data.image_pts = pts;
-
-                            // Process the received image data
                             debug!(
-                                "Probe: Received a jpeg image with size: {} bytes",
+                                "[{}] Received a jpeg image with size: {} bytes",
+                                pts,
                                 image_data.len()
                             );
-                        } else {
-                            // zero out the packet data
-                            stream_data.packet_start = 0;
-                            stream_data.packet_len = 0;
-                            stream_data.packet = Arc::new(Vec::new());
+                            // Process the received image data
+                            images.push(image_data);
                         }
                     }
-                } else {
-                    // TODO:  Add SMPTE 2110 handling for line to frame conversion and other processing and analysis
-                }
 
-                // Watch file
-                if args.watch_file != "" {
-                    if let Ok(line) = watch_file_receiver.try_recv() {
-                        info!("WatchFile Received line: {}", line);
-                        // attach to stream_data.log_message
-                        stream_data.log_message = line.clone();
+                    // Watch file
+                    if args.watch_file != "" {
+                        if let Ok(line) = watch_file_receiver.try_recv() {
+                            info!("WatchFile Received line: {}", line);
+                            // push line into logs vector
+                            logs.push(line.clone());
+                        }
                     }
-                }
 
-                if !args.extract_images && !args.send_raw_stream && stream_data.packet_len > 0 {
                     // release the packet Arc so it can be reused
                     stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
                     stream_data.packet_len = 0;
                     stream_data.packet_start = 0;
-                    if !args.send_null_packets {
-                        if pid == 0x1FFF && is_mpegts {
-                            continue;
+
+                    // Check if the batch size is reached or the batch timeout has elapsed
+                    if kafka_broker_clone2.is_empty() || kafka_topic_clone2.is_empty() {
+                        // If Kafka is not enabled, print the batch to stdout
+                        // Print the batch to stdout
+                        log::debug!("Stream data: {:?}", stream_data);
+                        images = Vec::new(); // Reset the images
+                        logs = Vec::new(); // Reset the logs
+                    } else if last_kafka_send_time.elapsed().as_millis()
+                        >= args.kafka_interval as u128
+                    {
+                        // get pid map and push each pid stream_data into the batch
+                        let pid_map = get_pid_map();
+
+                        // get all the pids and push each into the batch
+                        let mut batch = Vec::new();
+                        for (pid, pid_stream_data) in pid_map.iter() {
+                            debug!(
+                                "Got PID: {} stream type: {}",
+                                pid, pid_stream_data.stream_type
+                            );
+                            // Add the processed stream_data to the batch
+                            batch.push(Arc::clone(&pid_stream_data));
                         }
-                    }
-                } else if !args.extract_images && args.send_raw_stream {
-                    // Skip null packets
-                    if !args.send_null_packets {
-                        if pid == 0x1FFF && is_mpegts {
-                            // clear the Arc so it can be reused
-                            stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
-                            continue;
+
+                        // Send the batch to the Kafka thread
+                        if ktx_clone1
+                            .send((
+                                batch.clone(),
+                                logs.clone(),
+                                images.clone(),
+                                pid_map.clone(),
+                                tr101290_errors.clone(),
+                            ))
+                            .await
+                            .is_err()
+                        {
+                            // If the channel is full, drop the batch and log a warning
+                            log::warn!("Batch channel is full. Dropping batch.");
                         }
+                        images = Vec::new(); // Reset the images
+                        logs = Vec::new(); // Reset the logs
+                                           // Update last send time
+                        last_kafka_send_time = Instant::now();
                     }
-                }
-
-                // Add the processed stream_data to the batch
-                batch.push(stream_data);
-
-                // Check if the batch size is reached or the batch timeout has elapsed
-                if batch.len() >= batch_size || last_batch_time.elapsed() >= batch_timeout {
-                    // Send the batch to the ZMQ thread
-                    if tx_clone.try_send(batch).is_err() {
-                        // If the channel is full, drop the batch
-                        info!("Batch channel is full. Dropping batch.");
-                    }
-                    batch = Vec::new(); // Reset the batch
-                    last_batch_time = tokio::time::Instant::now(); // Reset the batch timeout
-                }
-            }
-        }
-
-        // Send any remaining items in the batch
-        if !batch.is_empty() {
-            if tx.try_send(batch).is_err() {
-                info!("Batch channel is full. Dropping batch.");
-            }
-        }
-    });
-
-    info!(
-        "RsCap: Starting up with Probe ID: {}",
-        args.probe_id.clone()
-    );
-
-    let mut dot_last_sent_ts = Instant::now();
-    let mut x_last_sent_ts = Instant::now();
-    loop {
-        match prx.try_recv() {
-            Ok((packet, timestamp, iat)) => {
-                if packet_count > 0 && packets_captured > packet_count {
-                    println!(
-                        "\nPacket count limit reached {}, signaling termination...",
-                        packet_count
-                    );
-                    running.store(false, Ordering::SeqCst);
-                    break;
-                }
-                packets_captured += 1;
-
-                if !no_progress && dot_last_sent_ts.elapsed().as_secs() >= 1 {
-                    dot_last_sent_ts = Instant::now();
-                    print!(".");
-                    // Flush stdout to ensure the progress dots are printed
-                    io::stdout().flush().unwrap();
-                }
-
-                // Check if chunk is MPEG-TS or SMPTE 2110
-                let chunk_type = is_mpegts_or_smpte2110(&packet[payload_offset..]);
-                if chunk_type != 1 {
-                    if chunk_type == 0 {
-                        hexdump(&packet, 0, packet.len());
-                        error!("Not MPEG-TS or SMPTE 2110");
-                    }
-                    is_mpegts = false;
-                }
-
-                let chunks = if is_mpegts {
-                    process_mpegts_packet(
-                        payload_offset,
-                        packet,
-                        packet_size,
-                        start_time,
-                        timestamp,
-                        iat,
-                        source_ip.clone(),
-                        args.source_port,
-                        args.probe_id.clone(),
-                    )
-                } else {
-                    process_smpte2110_packet(
-                        payload_offset,
-                        packet,
-                        packet_size,
-                        start_time,
-                        args.debug_smpte2110,
-                        timestamp,
-                        iat,
-                        source_ip.clone(),
-                        args.source_port,
-                        args.probe_id.clone(),
-                    )
-                };
-
-                // Send each chunk to the processing thread
-                if chunk_sender.try_send(chunks).is_err() {
-                    // If the channel is full, drop the chunk
-                    log::warn!("Chunk channel is full. Dropping chunk.");
                 }
             }
             Err(TryRecvError::Empty) => {
                 // No packets received, print 'X' to indicate
-                if !no_progress && x_last_sent_ts.elapsed().as_secs() >= 1 {
+                if !args.no_progress && x_last_sent_ts.elapsed().as_secs() >= 1 {
                     x_last_sent_ts = Instant::now();
                     print!("X");
                     // Flush stdout to ensure the progress dots are printed
@@ -1334,7 +1860,7 @@ async fn rscap(running: Arc<AtomicBool>) {
                 // Flush stdout to ensure the 'X' is printed
                 io::stdout().flush().unwrap();
                 // Sleep for a short duration to avoid high CPU usage
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
             }
             Err(TryRecvError::Disconnected) => {
                 // The channel has been disconnected, break the loop
@@ -1349,22 +1875,30 @@ async fn rscap(running: Arc<AtomicBool>) {
 
     // Stop the pipeline when done
     #[cfg(feature = "gst")]
-    match pipeline.set_state(gst::State::Null) {
-        Ok(_) => (),
-        Err(err) => {
-            eprintln!("Failed to set the pipeline state to Null: {}", err);
+    if args.extract_images {
+        match pipeline.set_state(gst::State::Null) {
+            Ok(_) => (),
+            Err(err) => {
+                eprintln!("Failed to set the pipeline state to Null: {}", err);
+            }
         }
     }
 
     println!("\nWaiting for threads to finish...");
 
-    // Send ZMQ stop signal
-    let _ = tx_clone2.try_send(Vec::new());
-    drop(tx_clone2);
+    // Send Kafka stop signal
+    let _ = ktx_clone2.try_send((
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        AHashMap::new(),
+        Tr101290Errors::new(),
+    ));
+    drop(ktx_clone2);
 
-    // Wait for the zmq_thread to finish
+    // Wait for the kafka thread to finish
     capture_task.await.unwrap();
-    zmq_thread.await.unwrap();
+    kafka_thread.await.unwrap();
 
-    println!("\nThreads finished, exiting rscap probe");
+    println!("\nThreads finished, exiting rsprobe");
 }

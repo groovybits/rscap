@@ -5,16 +5,7 @@
 */
 
 use crate::current_unix_timestamp_ms;
-use crate::system_stats::get_system_stats;
-use crate::system_stats::SystemStats;
 use ahash::AHashMap;
-#[cfg(feature = "gst")]
-use std::io;
-#[cfg(feature = "gst")]
-use std::io::Write;
-#[cfg(feature = "gst")]
-use std::sync::atomic::{AtomicBool, Ordering};
-
 #[cfg(feature = "gst")]
 use gst_app::{AppSink, AppSrc};
 #[cfg(feature = "gst")]
@@ -37,16 +28,23 @@ use rtp::RtpReader;
 use rtp_rs as rtp;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+#[cfg(feature = "gst")]
+use std::io;
+#[cfg(feature = "gst")]
+use std::io::Write;
+#[cfg(feature = "gst")]
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::RwLock;
 use std::{fmt, sync::Arc, sync::Mutex};
 #[cfg(feature = "gst")]
 use tokio::sync::mpsc;
 #[cfg(feature = "gst")]
 use tokio::time::Duration;
 
-const IAT_CAPTURE_WINDOW_SIZE: usize = 1000;
+const IAT_CAPTURE_WINDOW_SIZE: usize = 100;
 
 lazy_static! {
-    static ref PID_MAP: Mutex<AHashMap<u16, Arc<StreamData>>> = Mutex::new(AHashMap::new());
+    static ref PID_MAP: RwLock<AHashMap<u16, Arc<StreamData>>> = RwLock::new(AHashMap::new());
     static ref IAT_CAPTURE_WINDOW: Mutex<VecDeque<u64>> =
         Mutex::new(VecDeque::with_capacity(IAT_CAPTURE_WINDOW_SIZE));
     static ref IAT_CAPTURE_PEAK: Mutex<u64> = Mutex::new(0);
@@ -241,160 +239,144 @@ pub fn pull_images(
 
             let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
             if let Some(sample) = sample {
-                if let Some(buffer) = sample.buffer() {
-                    // Get the pts of the buffer
-                    let pts = buffer
-                        .pts()
-                        .map_or(last_processed_pts, |pts| pts.nseconds());
+                let buffer = sample.buffer().unwrap();
+                let pts = buffer
+                    .pts()
+                    .map_or(last_processed_pts, |pts| pts.nseconds());
 
-                    // Check if the buffer should be processed for image extraction
-                    if last_processed_pts == 0 || pts >= last_processed_pts + sample_interval {
-                        last_processed_pts = pts;
+                if last_processed_pts == 0 || pts >= last_processed_pts + sample_interval {
+                    last_processed_pts = pts;
 
-                        let map = buffer.map_readable().unwrap();
-                        let data = map.as_slice();
+                    let map = buffer.map_readable().unwrap();
+                    let data = map.as_slice().to_vec();
+                    drop(map);
 
-                        // Check if the data length matches the expected dimensions for RGB format
-                        let info =
-                            VideoInfo::from_caps(&sample.caps().expect("Sample without caps"))
-                                .expect("Failed to parse caps");
-                        let width = info.width() as usize;
-                        let height = info.height() as usize;
+                    // Check if the data length matches the expected dimensions for RGB format
+                    let info = VideoInfo::from_caps(&sample.caps().expect("Sample without caps"))
+                        .expect("Failed to parse caps");
+                    let width = info.width() as usize;
+                    let height = info.height() as usize;
 
-                        // Check if height is the same as our image_height, if not, scale it to image_height while keeping the aspect ratio
-                        let (scaled_width, scaled_height, scaled_data) =
-                            if height != image_height as usize {
-                                let aspect_ratio = width as f32 / height as f32;
-                                let scaled_height = image_height as usize;
-                                let scaled_width = (scaled_height as f32 * aspect_ratio) as usize;
+                    // Check if height is the same as our image_height, if not, scale it to image_height while keeping the aspect ratio
+                    let (scaled_width, scaled_height, scaled_data) =
+                        if height != image_height as usize {
+                            let aspect_ratio = width as f32 / height as f32;
+                            let scaled_height = image_height as usize;
+                            let scaled_width = (scaled_height as f32 * aspect_ratio) as usize;
 
-                                let scaled = image::imageops::resize(
-                                    &image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(
-                                        width as u32,
-                                        height as u32,
-                                        data.to_vec(),
-                                    )
-                                    .unwrap(),
-                                    scaled_width as u32,
-                                    scaled_height as u32,
-                                    image::imageops::FilterType::Triangle,
-                                );
-
-                                (scaled_width, scaled_height, scaled.into_raw())
-                            } else {
-                                (width, height, data.to_vec())
-                            };
-
-                        let expected_length = scaled_width * scaled_height * 3; // 3 bytes per pixel for RGB
-
-                        log::debug!(
-                            "pull_images: Image scaled to {}x{}",
-                            scaled_width,
-                            scaled_height
-                        );
-
-                        if scaled_data.len() == expected_length {
-                            let image = ImageBuffer::<Rgb<u8>, _>::from_raw(
+                            let scaled = image::imageops::resize(
+                                &image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(
+                                    width as u32,
+                                    height as u32,
+                                    data,
+                                )
+                                .unwrap(),
                                 scaled_width as u32,
                                 scaled_height as u32,
-                                scaled_data,
-                            )
-                            .expect("Failed to create ImageBuffer");
+                                image::imageops::FilterType::Triangle,
+                            );
 
-                            // Save the image as a JPEG with timecode
-                            if save_images {
-                                let filename = format!("images/frame_{:04}.jpg", frame_count);
-                                let mut jpeg_data = Vec::new();
-                                let mut encoder =
-                                    image::codecs::jpeg::JpegEncoder::new_with_quality(
-                                        &mut jpeg_data,
-                                        jpeg_quality,
-                                    );
-                                encoder
-                                    .encode_image(&image)
-                                    .expect("Failed to encode image to JPEG");
-                                std::fs::write(&filename, &jpeg_data)
-                                    .expect("Failed to save JPEG image");
+                            (scaled_width, scaled_height, scaled.into_raw())
+                        } else {
+                            (width, height, data)
+                        };
+
+                    let expected_length = scaled_width * scaled_height * 3; // 3 bytes per pixel for RGB
+
+                    log::debug!(
+                        "pull_images: Image scaled to {}x{}",
+                        scaled_width,
+                        scaled_height
+                    );
+
+                    if scaled_data.len() == expected_length {
+                        let image = ImageBuffer::<Rgb<u8>, _>::from_raw(
+                            scaled_width as u32,
+                            scaled_height as u32,
+                            scaled_data,
+                        )
+                        .expect("Failed to create ImageBuffer");
+
+                        // Save the image as a JPEG with timecode
+                        if save_images {
+                            let filename = format!("images/frame_{:04}.jpg", frame_count);
+                            let mut jpeg_data = Vec::new();
+                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+                                &mut jpeg_data,
+                                jpeg_quality,
+                            );
+                            encoder
+                                .encode_image(&image)
+                                .expect("Failed to encode image to JPEG");
+                            std::fs::write(&filename, &jpeg_data)
+                                .expect("Failed to save JPEG image");
+                        }
+                        frame_count += 1;
+
+                        print!("*");
+                        // flush stdout
+                        io::stdout().flush().unwrap();
+
+                        filmstrip_images.push(image);
+
+                        if filmstrip_length <= 1 || filmstrip_images.len() >= filmstrip_length {
+                            // Create a new image buffer for the filmstrip
+                            let filmstrip_width = (scaled_width * filmstrip_length) as u32;
+                            let mut filmstrip = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(
+                                filmstrip_width,
+                                scaled_height as u32,
+                            );
+
+                            // Concatenate the images into the filmstrip
+                            for (i, img) in filmstrip_images.iter().enumerate() {
+                                let x_offset = i as u32 * scaled_width as u32;
+                                image::imageops::overlay(&mut filmstrip, img, x_offset.into(), 0);
                             }
-                            frame_count += 1;
 
-                            print!("*");
-                            // flush stdout
-                            io::stdout().flush().unwrap();
+                            // Encode the filmstrip to a JPEG vector
+                            let mut jpeg_data = Vec::new();
+                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
+                                &mut jpeg_data,
+                                jpeg_quality,
+                            );
+                            encoder
+                                .encode_image(&filmstrip)
+                                .expect("JPEG encoding failed");
 
-                            filmstrip_images.push(image);
+                            // Send the filmstrip over the channel
+                            if let Err(err) = image_sender.send((jpeg_data, pts)).await {
+                                log::error!("Failed to send image data through channel: {}", err);
+                                break;
+                            }
 
-                            if filmstrip_length <= 1 || filmstrip_images.len() >= filmstrip_length {
-                                // Create a new image buffer for the filmstrip
-                                let filmstrip_width = (scaled_width * filmstrip_length) as u32;
-                                let mut filmstrip = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(
-                                    filmstrip_width,
-                                    scaled_height as u32,
-                                );
-
-                                // Concatenate the images into the filmstrip
-                                for (i, img) in filmstrip_images.iter().enumerate() {
-                                    let x_offset = i as u32 * scaled_width as u32;
-                                    image::imageops::overlay(
-                                        &mut filmstrip,
-                                        img,
-                                        x_offset.into(),
-                                        0,
-                                    );
-                                }
-
-                                // Encode the filmstrip to a JPEG vector
-                                let mut jpeg_data = Vec::new();
-                                let mut encoder =
-                                    image::codecs::jpeg::JpegEncoder::new_with_quality(
-                                        &mut jpeg_data,
-                                        jpeg_quality,
-                                    );
-                                encoder
-                                    .encode_image(&filmstrip)
-                                    .expect("JPEG encoding failed");
-
-                                // Send the filmstrip over the channel
-                                if let Err(err) = image_sender.send((jpeg_data, pts)).await {
-                                    log::error!(
-                                        "Failed to send image data through channel: {}",
-                                        err
-                                    );
-                                    break;
-                                }
-
-                                // Clear the filmstrip images for the next set
-                                if frame_increment > 1 {
-                                    let increment = if frame_increment as usize > filmstrip_length {
-                                        filmstrip_length
-                                    } else {
-                                        frame_increment.into()
-                                    };
-                                    // remove the number of frames by frame_increment
-                                    if filmstrip_images.len() > increment as usize {
-                                        filmstrip_images.drain(0..increment as usize);
-                                    } else {
-                                        filmstrip_images.clear();
-                                    }
+                            // Clear the filmstrip images for the next set
+                            if frame_increment > 1 {
+                                let increment = if frame_increment as usize > filmstrip_length {
+                                    filmstrip_length
+                                } else {
+                                    frame_increment.into()
+                                };
+                                // remove the number of frames by frame_increment
+                                if filmstrip_images.len() > increment as usize {
+                                    filmstrip_images.drain(0..increment as usize);
                                 } else {
                                     filmstrip_images.clear();
                                 }
+                            } else {
+                                filmstrip_images.clear();
                             }
-                        } else {
-                            log::error!(
-                                "Received image data with unexpected length: {}",
-                                scaled_data.len()
-                            );
                         }
                     } else {
-                        // Sleep for a short time to prevent a busy loop
-                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        log::error!(
+                            "Received image data with unexpected length: {}",
+                            scaled_data.len()
+                        );
                     }
                 }
-            } else {
-                // Sleep for a short time to prevent a busy loop
-                tokio::time::sleep(Duration::from_millis(10)).await;
             }
+
+            // Sleep for a short time to prevent a busy loop
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
     });
 }
@@ -481,21 +463,6 @@ pub struct StreamData {
     pub capture_iat: u64,
     pub source_ip: String,
     pub source_port: i32,
-    // System stats
-    pub total_memory: u64,
-    pub used_memory: u64,
-    pub total_swap: u64,
-    pub used_swap: u64,
-    pub cpu_usage: f32,
-    pub cpu_count: usize,
-    pub core_count: usize,
-    pub boot_time: u64,
-    pub load_avg_one: f64,
-    pub load_avg_five: f64,
-    pub load_avg_fifteen: f64,
-    pub host_name: String,
-    pub kernel_version: String,
-    pub os_version: String,
     pub has_image: u8,
     pub image_pts: u64,
     pub capture_iat_max: u64,
@@ -513,7 +480,7 @@ impl Clone for StreamData {
             pid: self.pid,
             pmt_pid: self.pmt_pid,
             program_number: self.program_number,
-            stream_type: self.stream_type.clone(),
+            stream_type: self.stream_type.to_owned(),
             continuity_counter: self.continuity_counter,
             timestamp: self.timestamp,
             bitrate: self.bitrate,
@@ -532,12 +499,12 @@ impl Clone for StreamData {
             total_bits: self.total_bits,
             total_bits_sample: self.total_bits_sample,
             count: self.count,
-            packet: Arc::new(Vec::new()), // Initialize as empty with Arc
-            packet_start: 0,
-            packet_len: 0,
+            packet: Arc::clone(&self.packet),
+            packet_start: self.packet_start,
+            packet_len: self.packet_len,
             rtp_timestamp: self.rtp_timestamp,
             rtp_payload_type: self.rtp_payload_type,
-            rtp_payload_type_name: self.rtp_payload_type_name.clone(),
+            rtp_payload_type_name: self.rtp_payload_type_name.to_owned(),
             rtp_line_number: self.rtp_line_number,
             rtp_line_offset: self.rtp_line_offset,
             rtp_line_length: self.rtp_line_length,
@@ -547,32 +514,17 @@ impl Clone for StreamData {
             stream_type_number: self.stream_type_number,
             capture_time: self.capture_time,
             capture_iat: self.capture_iat,
-            source_ip: self.source_ip.clone(),
+            source_ip: self.source_ip.to_owned(),
             source_port: self.source_port,
-            // System stats initialization
-            total_memory: self.total_memory,
-            used_memory: self.used_memory,
-            total_swap: self.total_swap,
-            used_swap: self.used_swap,
-            cpu_usage: self.cpu_usage,
-            cpu_count: self.cpu_count,
-            core_count: self.core_count,
-            boot_time: self.boot_time,
-            load_avg_one: self.load_avg_one,
-            load_avg_five: self.load_avg_five,
-            load_avg_fifteen: self.load_avg_fifteen,
-            host_name: self.host_name.clone(),
-            kernel_version: self.kernel_version.clone(),
-            os_version: self.os_version.clone(),
             has_image: self.has_image,
             image_pts: self.image_pts,
             capture_iat_max: self.capture_iat_max,
-            log_message: self.log_message.clone(),
-            probe_id: self.probe_id.clone(),
-            captions: self.captions.clone(),
-            pid_map: self.pid_map.clone(),
-            scte35: self.scte35.clone(),
-            audio_loudness: self.audio_loudness.clone(),
+            log_message: self.log_message.to_owned(),
+            probe_id: self.probe_id.to_owned(),
+            captions: self.captions.to_owned(),
+            pid_map: self.pid_map.to_owned(),
+            scte35: self.scte35.to_owned(),
+            audio_loudness: self.audio_loudness.to_owned(),
         }
     }
 }
@@ -594,7 +546,6 @@ impl StreamData {
         capture_iat: u64,
         source_ip: String,
         source_port: i32,
-        system_stats: SystemStats,
         probe_id: String,
     ) -> Self {
         // convert capture_timestamp to unix timestamp in milliseconds since epoch
@@ -623,9 +574,9 @@ impl StreamData {
             total_bits: 0,        // Initialize total bits
             total_bits_sample: 0, // Initialize total bits
             count: 0,             // Initialize count
-            packet: packet,
-            packet_start: packet_start,
-            packet_len: packet_len,
+            packet,
+            packet_start,
+            packet_len,
             // SMPTE 2110 fields
             rtp_timestamp: 0,
             rtp_payload_type: 0,
@@ -642,20 +593,6 @@ impl StreamData {
             source_ip,
             source_port,
             // Initialize system stats fields from the SystemStats instance
-            total_memory: system_stats.total_memory,
-            used_memory: system_stats.used_memory,
-            total_swap: system_stats.total_swap,
-            used_swap: system_stats.used_swap,
-            cpu_usage: system_stats.cpu_usage,
-            cpu_count: system_stats.cpu_count,
-            core_count: system_stats.core_count,
-            boot_time: system_stats.boot_time,
-            load_avg_one: system_stats.load_avg.one,
-            load_avg_five: system_stats.load_avg.five,
-            load_avg_fifteen: system_stats.load_avg.fifteen,
-            host_name: system_stats.host_name,
-            kernel_version: system_stats.kernel_version,
-            os_version: system_stats.os_version,
             has_image: 0,
             image_pts: 0,
             capture_iat_max: capture_iat,
@@ -863,6 +800,7 @@ impl StreamData {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
 pub struct Tr101290Errors {
     // p1 errors
     pub ts_sync_byte_errors: u32,
@@ -988,9 +926,12 @@ pub fn parse_and_store_pat(packet: &[u8]) -> PmtInfo {
     };
     pmt_info.packet = packet.to_vec();
 
-    // Assuming there's only one program for simplicity, update PMT PID
-    if let Some(first_entry) = pat_entries.first() {
-        pmt_info.pid = first_entry.pmt_pid;
+    // loook for the program that is non zero and below 0x1FFF
+    for entry in pat_entries {
+        if entry.pmt_pid != 0 && entry.pmt_pid < 0x1FFF {
+            pmt_info.pid = entry.pmt_pid;
+            break;
+        }
     }
     pmt_info
 }
@@ -1086,23 +1027,17 @@ pub fn parse_pmt(packet: &[u8]) -> Pmt {
 pub fn process_packet(
     stream_data_packet: &mut StreamData,
     errors: &mut Tr101290Errors,
-    is_mpegts: bool,
     pmt_pid: u16,
     probe_id: String,
 ) {
     let packet: &[u8] = &stream_data_packet.packet[stream_data_packet.packet_start
         ..stream_data_packet.packet_start + stream_data_packet.packet_len];
-    if is_mpegts {
-        tr101290_p1_check(packet, errors);
-        tr101290_p2_check(packet, errors);
-    }
+    tr101290_p1_check(packet, errors);
+    tr101290_p2_check(packet, errors);
 
     let pid = stream_data_packet.pid;
 
-    let mut pid_map = PID_MAP.lock().unwrap();
-
-    // TODO: high debug level output, may need a flag specific to this dump
-    debug!("PID Map Contents: {:#?}", pid_map);
+    let mut pid_map = PID_MAP.write().unwrap();
 
     // Check if the PID map already has an entry for this PID
     match pid_map.get_mut(&pid) {
@@ -1110,10 +1045,11 @@ pub fn process_packet(
             // Existing StreamData instance found, update it
             let mut stream_data = Arc::clone(stream_data_arc);
             Arc::make_mut(&mut stream_data).update_capture_time(stream_data_packet.capture_time);
-            Arc::make_mut(&mut stream_data).update_stats(packet.len());
             Arc::make_mut(&mut stream_data)
                 .update_stream_type_number(stream_data_packet.stream_type_number);
-            if stream_data.pid != 0x1FFF && is_mpegts {
+            Arc::make_mut(&mut stream_data).update_stats(packet.len());
+            Arc::make_mut(&mut stream_data).update_capture_iat(stream_data_packet.capture_iat);
+            if stream_data.pid != 0x1FFF {
                 Arc::make_mut(&mut stream_data)
                     .set_continuity_counter(stream_data_packet.continuity_counter);
             }
@@ -1122,8 +1058,11 @@ pub fn process_packet(
                 Arc::make_mut(&mut stream_data).timestamp = stream_data_packet.timestamp;
             }
 
-            // calculate uptime using the arrival time as SystemTime and start_time as u64
-            //let uptime = stream_data.capture_time - stream_data.start_time;
+            // update the pmt_pid from the stream_data_packet to stream_data
+            Arc::make_mut(&mut stream_data).pmt_pid = pmt_pid;
+
+            // update the program_number from the stream_data_packet to stream_data
+            Arc::make_mut(&mut stream_data).program_number = stream_data_packet.program_number;
 
             // print out each field of structure
             debug!("STATUS::PACKET:MODIFY[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {} packet_offset: {}, packet_len: {}",
@@ -1167,7 +1106,6 @@ pub fn process_packet(
             } else {
                 // PMT packet not found yet, add the stream_data_packet to the pid_map
                 // OS and Network stats
-                let system_stats = get_system_stats();
                 let mut stream_data = Arc::new(StreamData::new(
                     Arc::new(Vec::new()), // Ensure packet_data is Arc<Vec<u8>>
                     0,
@@ -1183,14 +1121,26 @@ pub fn process_packet(
                     stream_data_packet.capture_iat,
                     stream_data_packet.source_ip.clone(),
                     stream_data_packet.source_port,
-                    system_stats,
                     probe_id.clone(),
                 ));
                 Arc::make_mut(&mut stream_data).update_stats(packet.len());
                 Arc::make_mut(&mut stream_data).update_capture_iat(stream_data_packet.capture_iat);
+                // update continuity counter
+                if stream_data_packet.pid != 0x1FFF {
+                    Arc::make_mut(&mut stream_data)
+                        .set_continuity_counter(stream_data_packet.continuity_counter);
+                }
 
-                // print out each field of structure
-                info!("STATUS::PACKET:ADD[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
+                info!(
+                    "[{}] Adding PID: {} [{}][{}][{}] StreamType: [{}] {}",
+                    stream_data.program_number,
+                    stream_data.pid,
+                    stream_data.capture_time,
+                    stream_data.capture_iat,
+                    stream_data.continuity_counter,
+                    stream_data.stream_type_number,
+                    stream_data.stream_type
+                );
 
                 pid_map.insert(pid, stream_data);
             }
@@ -1207,8 +1157,9 @@ pub fn update_pid_map(
     source_ip: String,
     source_port: i32,
     probe_id: String,
-) {
-    let mut pid_map = PID_MAP.lock().unwrap();
+) -> u16 {
+    let mut pid_map = PID_MAP.write().unwrap();
+    let mut program_number_result = 0;
 
     // Process the stored PAT packet to find program numbers and corresponding PMT PIDs
     let program_pids = last_pat_packet
@@ -1225,6 +1176,7 @@ pub fn update_pid_map(
             "UpdatePIDmap: Processing Program Number: {}, PMT PID: {}",
             program_number, pmt_pid
         );
+        program_number_result = program_number;
 
         // Ensure the current PMT packet matches the PMT PID from the PAT
         if extract_pid(pmt_packet) == pmt_pid {
@@ -1280,7 +1232,6 @@ pub fn update_pid_map(
                 let timestamp = current_unix_timestamp_ms().unwrap_or(0);
 
                 if !pid_map.contains_key(&stream_pid) {
-                    let system_stats = get_system_stats();
                     let mut stream_data = Arc::new(StreamData::new(
                         Arc::new(Vec::new()), // Ensure packet_data is Arc<Vec<u8>>
                         0,
@@ -1296,7 +1247,6 @@ pub fn update_pid_map(
                         capture_iat,
                         source_ip.clone(),
                         source_port,
-                        system_stats,
                         probe_id.clone(),
                     ));
                     // update stream_data stats
@@ -1304,21 +1254,33 @@ pub fn update_pid_map(
                     Arc::make_mut(&mut stream_data).update_capture_iat(capture_iat);
 
                     // print out each field of structure
-                    info!("STATUS::STREAM:CREATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
+                    info!("STATUS::STREAM:CREATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}",
+                        stream_data.program_number, stream_data.pid, stream_data.stream_type,
+                        stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min,
+                        stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min,
+                        stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter,
+                        stream_data.timestamp, 0);
 
                     pid_map.insert(stream_pid, stream_data);
                 } else {
                     // get the stream data so we can update it
                     let stream_data_arc = pid_map.get_mut(&stream_pid).unwrap();
                     let mut stream_data = Arc::clone(stream_data_arc);
+                    let stream_len = stream_data.packet_len;
 
                     // update the stream type
                     Arc::make_mut(&mut stream_data).update_stream_type(stream_type.to_string());
                     Arc::make_mut(&mut stream_data)
                         .update_stream_type_number(pmt_entry.stream_type);
+                    Arc::make_mut(&mut stream_data).update_stats(stream_len);
+                    Arc::make_mut(&mut stream_data).update_capture_iat(capture_iat);
 
                     // print out each field of structure
-                    debug!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}", stream_data.pid, stream_data.pid, stream_data.stream_type, stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
+                    debug!("STATUS::STREAM:UPDATE[{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {}",
+                        stream_data.program_number, stream_data.pid, stream_data.stream_type,
+                        stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min, stream_data.bitrate_avg,
+                        stream_data.iat, stream_data.iat_max, stream_data.iat_min, stream_data.iat_avg,
+                        stream_data.error_count, stream_data.continuity_counter, stream_data.timestamp, 0);
 
                     // write the stream_data back to the pid_map with modified values
                     pid_map.insert(stream_pid, stream_data);
@@ -1328,10 +1290,11 @@ pub fn update_pid_map(
             error!("UpdatePIDmap: Skipping PMT PID: {} as it does not match with current PMT packet PID", pmt_pid);
         }
     }
+    program_number_result
 }
 
 pub fn determine_stream_type(pid: u16) -> String {
-    let pid_map = PID_MAP.lock().unwrap();
+    let pid_map = PID_MAP.read().unwrap();
 
     // check if pid already is mapped, if so return the stream type already stored
     if let Some(stream_data) = pid_map.get(&pid) {
@@ -1344,8 +1307,14 @@ pub fn determine_stream_type(pid: u16) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+pub fn get_pid_map() -> AHashMap<u16, Arc<StreamData>> {
+    let pid_map = PID_MAP.read().unwrap();
+    // clone the pid_map so we can return it
+    pid_map.clone()
+}
+
 pub fn determine_stream_type_number(pid: u16) -> u8 {
-    let pid_map = PID_MAP.lock().unwrap();
+    let pid_map = PID_MAP.read().unwrap();
 
     // check if pid already is mapped, if so return the stream type already stored
     if let Some(stream_data) = pid_map.get(&pid) {
@@ -1359,7 +1328,7 @@ pub fn determine_stream_type_number(pid: u16) -> u8 {
 }
 
 pub fn determine_stream_program_number(pid: u16) -> u16 {
-    let pid_map = PID_MAP.lock().unwrap();
+    let pid_map = PID_MAP.read().unwrap();
 
     // check if pid already is mapped, if so return the stream type already stored
     if let Some(stream_data) = pid_map.get(&pid) {
@@ -1384,24 +1353,6 @@ pub fn identify_video_pid(pmt_packet: &[u8]) -> Option<(u16, Codec)> {
         };
         codec.map(|c| (entry.stream_pid, c))
     })
-}
-
-// Check if the packet is MPEG-TS or SMPTE 2110
-pub fn is_mpegts_or_smpte2110(packet: &[u8]) -> i32 {
-    // Check for MPEG-TS (starts with 0x47 sync byte)
-    if packet.starts_with(&[0x47]) {
-        return 1;
-    }
-
-    // Basic check for RTP (which SMPTE ST 2110 uses)
-    // This checks if the first byte is 0x80 or 0x81
-    // This might need more robust checks based on requirements
-    if packet.len() > 12 && (packet[0] == 0x80 || packet[0] == 0x81) {
-        // TODO: Check payload type or other RTP header fields here if necessary
-        return 2; // Assuming it's SMPTE ST 2110 for now
-    }
-
-    0 // Not MPEG-TS or SMPTE 2110
 }
 
 // ## RFC 4175 SMPTE2110 header functions ##
@@ -1483,7 +1434,6 @@ pub fn process_smpte2110_packet(
                 let stream_type = payload_type.to_string();
 
                 // Create new StreamData instance
-                let system_stats = get_system_stats();
                 let mut stream_data = StreamData::new(
                     packet_arc,
                     rtp_payload_offset,
@@ -1499,7 +1449,6 @@ pub fn process_smpte2110_packet(
                     capture_iat,
                     source_ip.clone(),
                     source_port,
-                    system_stats,
                     probe_id.clone(),
                 );
 
@@ -1572,7 +1521,6 @@ pub fn process_mpegts_packet(
             let timestamp = extract_timestamp(chunk);
             let continuity_counter = chunk[3] & 0x0F;
 
-            let system_stats = get_system_stats();
             let mut stream_data = StreamData::new(
                 Arc::clone(&packet),
                 start,
@@ -1588,7 +1536,6 @@ pub fn process_mpegts_packet(
                 capture_iat,
                 source_ip.clone(),
                 source_port,
-                system_stats,
                 probe_id.clone(),
             );
             stream_data.update_stats(packet_size);

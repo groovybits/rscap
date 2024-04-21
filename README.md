@@ -1,75 +1,60 @@
-# MpegTS/SMPTE2110 Capture Stream Monitoring in Rust
+# MpegTS Stream Analysis Probe with Kafka and GStreamer
 
 [![Rust](https://github.com/groovybits/rscap/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/groovybits/rscap/actions/workflows/rust.yml)
 
-An experiment researching Rust and efficiency at handling high rates of streaming MpegTS and SMPTE2110 for Broadcast Monitoring usage.
-Distribute an PCap sourced MpegTS/SMPTE2110 multcast network stream and distribute to ZeroMQ Monitor module for sending to Kafka.
-Capture the TS/SMPTE2110 using pcap with filter rules for specifying which stream ip and port. Validate the stream for conformance
-keeping the ZeroMQ output clean without any non-legal TS/SMPTE2110 packets. Send metadata from probe to monitor via ZMQP serialized as Cap'n Proto buffers.
-Send metrics to Kafka from the monitor process if requested for long-term storage.
+## Overview
 
-Optionally the monitor process can output final json metrics to kafka for distributed probes sending to some kafka based centralized processing system for the data collected.
+This project is an experiment researching Rust and its efficiency at handling high rates of streaming MpegTS for broadcast monitoring usage. The goal is to distribute a PCap-sourced MpegTS multicast network stream and send metrics with image assets and stream metadata to Kafka. The project captures the MpegTS using pcap with filter rules for specifying the stream IP and port, and validates the stream for conformance. If requested, metrics are sent to Kafka for long-term storage.
 
-Gstreamer support with --features gst `make build_gst` for using Gstreamer for stream demuxing/decoding. Currently `--extract-images` will extract images from the stream and save them to disk or send them off to a kafka feed as base64 with json metadata. See the scripts/monitor.sh and scripts/probe.sh for examples of how to use RsCap in a common use case.
+![RsProbe](https://storage.googleapis.com/groovybits/images/rscap/rscap.webp)
 
-Can enable MPEG2TS_Reader and H264_Reader crates from <https://github.com/dholroyd> for NAL parsing. The information from the SPS/PPS and other NAL data isn't currently used but will be added to the monitor process eventually to allow for a more detailed analysis of the stream.
+Gstreamer support is available with the `--features gst` flag (`make build_gst`) for using Gstreamer for stream demuxing/decoding. Currently, `--extract-images` will extract images from the stream and save them to disk or send them off to a Kafka feed as base64 with JSON metadata. See [scripts/probe.sh](scripts/probe.sh) for examples of how to use RsProbe in a common use case.
 
-## This consists of two programs, a probe and a monitor client.
+## The Probe Client
 
-- The [src/bin/probe.rs](src/bin/probe.rs) takes MpegTS or SMPTE2110 via Packet Capture and publishes batches of the MpegTS 188 / SMPTE2110 sized byte packets to a ZeroMQ socket it binds with PUSH. The probe has zero copy of the pcap buffers for the life cycle. They are passed through to the monitor module with Cap'n Proto allowing highly efficient capture and processing of MpegTS (and someday SMPTE2110 streams WIP: needs development and testing to completely optimize the behavior).
+The [src/bin/probe.rs](src/bin/probe.rs) takes MpegTS via Packet Capture and publishes batches of the MpegTS 188 sized byte packets to a ZeroMQ socket it binds with PUSH. The probe has zero copy of the pcap buffers for the life cycle. It analyzes the MpegTS currently, a goal is to also support SMPTE2110 streams with DPDK, which is a work in progress and needs development and testing to completely optimize the behavior.
 
-- The [src/bin/monitor.rs](src/bin/monitor.rs) client reads from the ZeroMQ socket as a pull model from the probe, can write the assets and push them to kafka in a flattened json schema.
+## Configuration with Environment Variables
 
-## Configuration with environment variables using [.env](.env.example)
+Use `.env` and/or command line args to override the default/env variables. See [.env.example](.env.example) for an example configuration.
 
-Use .env and/or command line args to override the default/env variables.
+## RsProbe RPM for CentOS 7 with Gstreamer Support
 
-## RsCap RPM available for CentOS 7 with Gstreamer support
-
-[specs/rscap.spec](specs/rscap.spec) Builds for CentOS 7 with all the Gstreamer build dependencies handled for you.
+[specs/rsprobe.spec](specs/rsprobe.spec) builds for CentOS 7 with all the Gstreamer build dependencies handled for you.
 
 ```
-rpmbuild -bb specs/rscap.spec
+rpmbuild -bb specs/rsprobe.spec
 ```
 
-## Building and executing Rscap + Gstreamer dependencies
+## Building and Executing RsProbe with Gstreamer Dependencies
 
-RsCap + Gstreamer Install script: [scripts/install.sh](scripts/install.sh) for Gstreamer + deps setup Linux CentoOS 7 and MacOS into /opt/rscap contained directory.
-RsCap Compile script: [scripts/compile.sh](scripts/compile.sh) for RsCap build using Gstreamer setup in /opt/rscap.
+- RsProbe + Gstreamer Install script: [scripts/install.sh](scripts/install.sh) for Gstreamer + deps setup on Linux CentOS 7 and macOS into the `/opt/rsprobe` contained directory.
+- RsProbe Compile script: [scripts/compile.sh](scripts/compile.sh) for RsProbe build using Gstreamer setup in `/opt/rsprobe`.
 
 ```text
-# Install RsCap w/gstreamer in /opt/rscap/ (MacOS or CentOS 7)
+# Install RsProbe w/gstreamer in /opt/rsprobe/ (MacOS or CentOS 7)
 ./scripts/install.sh
 
-# Optionally rebuild rscap if making changes
+# Optionally rebuild RsProbe if making changes
 ./scripts/compile.sh gst
 
 # Run the probe
 ./scripts/probe.sh
 ```
 
-Output by default is the original data packet, you can add the json header with --send-json-header.
+Output by default is the original data packet. You can add the JSON header with `--send-json-header`.
 
-Build and run the zmq capture monitor client...
+## Kafka Output of JSON Metrics
 
-```text
-# Run the monitor
-./scripts/monitor.sh
-```
-
-## Kafka output of json metrics from the monitor process after processing and extraction
-
-- [Kafka Schema](test_data/kafka.json) That is sent into Kafka
+After processing and extraction, the project sends JSON metrics to Kafka. See the [Kafka Schema](kafka_schema/kafka.json) for the format of the data sent to Kafka.
 
 ```text
-scripts/monitor:
-
         --kafka-broker sun:9092 \
         --kafka-topic test \
         --send-to-kafka
 ```
 
-## Profiling with Intel Vtune (Linux/Windows)
+## Profiling with Intel VTune (Linux/Windows)
 
 Get VTune: [Intel oneAPI Base Toolkit](https://software.intel.com/content/www/us/en/develop/tools/oneapi/base-toolkit/download.html)
 
@@ -81,25 +66,24 @@ Running VTune [scripts/vtune.sh](scripts/vtune.sh)
 ./scripts/vtune.sh
 ```
 
-## TODO - roadmap plans
+## TODO - Roadmap Plans
 
-- Multiple monitor client support so one monitor client handles all the probes.
 - Audio analysis, capture, sampling showing amplitude graphs and noise violations of various broadcasting regulations.
 - Caption packets and other NAL and SEI data / metadata extraction and sending.
 - (WIP) Add more information header to the stream data metadata like network stats, mediainfo, captions, ancillary data.
-- (WIP) SMPTE 2110 handling reassembling frames and analogous to the MpegTS support.
+- SMPTE 2110 handling reassembling frames and analogous to the MpegTS support.
 - (WIP) PES parsing and analysis of streams.
 - (WIP) FFmpeg libzmq protocol compatibility to allow branching off into libav easily.
 - (WIP) General network analyzer view of network around the streams we know/care about.
-- Have multiple client modes to distribute processing of the stream on the zmq endpoints.
-- Improve NAL parsing and various aspects of MpegTS and VANC ancillary data from SMPTE2110.
 - Use [OpenCV img_hash fingerprinting](https://docs.opencv.org/3.4/d4/d93/group__img__hash.html#ga5eeee1e27bc45caffe3b529ab42568e3) to perceptually align and compare video streams frames.
-- OpenAI Whisper speech to text for caption verfication and insertion. <https://github.com/openai/whisper>
+- OpenAI Whisper speech to text for caption verification and insertion. <https://github.com/openai/whisper>
 - Problem discovery and reporting via LLM/VectorDB analysis detection of anomalies in data.
-- Fine tune LLM model for finding stream issues beyond basic commonly used ones.
+- Fine-tune LLM model for finding stream issues beyond basic commonly used ones.
 - Segmentation of captured MpegTS, VOD file writer by various specs.
 - Compression for proxy capture. Encode bitrate ladders realtime in parallel?
 - SMPTE2110 data stream and audio stream support (need to have more than one pcap ip/port and distinguish them apart).
-- Meme like overlay of current frame and stream metrics on the thumbnail images with precise timing and frame information like a scope. (phone/pad usage)
+- Meme-like overlay of current frame and stream metrics on the thumbnail images with precise timing and frame information like a scope. (phone/pad usage)
+
+![RsProbe](https://storage.googleapis.com/groovybits/images/rscap/rscap_circuit.webp)
 
 ### Chris Kennedy (C) 2024 MIT License
