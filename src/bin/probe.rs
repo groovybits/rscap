@@ -610,6 +610,10 @@ struct Args {
     #[clap(long, env = "EXTRACT_IMAGES", default_value_t = false)]
     extract_images: bool,
 
+    /// Extract Captions from the video stream (requires feature gst)
+    #[clap(long, env = "EXTRACT_CAPTIONS", default_value_t = false)]
+    extract_captions: bool,
+
     /// Save Images to disk
     #[cfg(feature = "gst")]
     #[clap(long, env = "SAVE_IMAGES", default_value_t = false)]
@@ -1567,6 +1571,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
             args.filmstrip_length,
             args.jpeg_quality,
             args.image_frame_increment,
+            args.extract_captions,
             running_gstreamer_pull,
         );
     }

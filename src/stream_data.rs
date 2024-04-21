@@ -115,6 +115,7 @@ fn decode_cea608(data: &[u8]) -> Vec<Caption> {
         text: String::new(),
         style: String::new(),
     };
+    current_caption.style = "default".to_string();
 
     let mut i = 0;
     while i + 1 < data.len() {
@@ -360,6 +361,7 @@ pub fn pull_images(
     filmstrip_length: usize,
     jpeg_quality: u8,
     frame_increment: u8,
+    get_captions: bool,
     running: Arc<AtomicBool>,
 ) {
     tokio::spawn(async move {
@@ -369,38 +371,47 @@ pub fn pull_images(
 
         while running.load(Ordering::SeqCst) {
             // captions sink
-            let captionssample = captionssink.try_pull_sample(gst::ClockTime::ZERO);
-            if let Some(sample) = captionssample {
-                if let Some(buffer) = sample.buffer() {
-                    // Check if the buffer contains caption data
-                    if let Some(meta) = buffer.meta::<VideoCaptionMeta>() {
-                        let caption_type = meta.caption_type();
-                        let caption_data = meta.data();
-                        log::debug!(
-                            "Received video packet with caption type [{:?}] and data [{:?}]",
-                            caption_type,
-                            caption_data
-                        );
-                        // decode the VBI caption line 21 data and print it
-                        match caption_type {
-                            VideoCaptionType::Cea708Raw => {
-                                // PID for CEA-608/708 data
-                                let cc_pid = 0x1FF; // Example PID for CEA-608/708 captions
+            if get_captions {
+                let captionssample = captionssink.try_pull_sample(gst::ClockTime::ZERO);
+                if let Some(sample) = captionssample {
+                    if let Some(buffer) = sample.buffer() {
+                        // Check if the buffer contains caption data
+                        if let Some(meta) = buffer.meta::<VideoCaptionMeta>() {
+                            let caption_type = meta.caption_type();
+                            let caption_data = meta.data();
+                            log::debug!(
+                                "Received video packet with caption type [{:?}] and data [{:?}]",
+                                caption_type,
+                                caption_data
+                            );
+                            // decode the VBI caption line 21 data and print it
+                            match caption_type {
+                                VideoCaptionType::Cea708Raw => {
+                                    // PID for CEA-608/708 data
+                                    let cc_pid = 0x1FF; // Example PID for CEA-608/708 captions
 
-                                // Extract CEA-608/708 data from the raw MPEG-TS data
-                                let cea608_data = extract_cea608_data(&caption_data, cc_pid);
+                                    // Extract CEA-608/708 data from the raw MPEG-TS data
+                                    let cea608_data = extract_cea608_data(&caption_data, cc_pid);
 
-                                let caption = decode_cea608(&cea608_data);
-                                if caption.len() > 0 {
-                                    log::info!("Decoded VBI caption: {:?}", caption);
-                                } else {
-                                    log::debug!("No caption data found in {:?}", caption_data);
+                                    let caption = decode_cea608(&cea608_data);
+                                    if caption.len() > 0 {
+                                        log::info!("Decoded VBI caption: {:?}", caption);
+                                    } else {
+                                        log::debug!("No caption data found in {:?}", caption_data);
+                                    }
+                                }
+                                _ => {
+                                    log::warn!("Unsupported caption type: {:?}", caption_type);
                                 }
                             }
-                            _ => {
-                                log::warn!("Unsupported caption type: {:?}", caption_type);
-                            }
                         }
+                    }
+                }
+            } else {
+                // Drain the caption sink
+                while let Some(sample) = captionssink.try_pull_sample(gst::ClockTime::ZERO) {
+                    if let Some(buffer) = sample.buffer() {
+                        log::debug!("Draining caption sink buffer: {:?}", buffer);
                     }
                 }
             }
