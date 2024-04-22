@@ -80,7 +80,7 @@ struct PidStreamType {
     stream_type_number: u8,
     media_type: String, // audio, video, data
     ccerrors: u32,
-    bitrate: u32,
+    bitrate: u64,
 }
 
 fn flatten_streams(
@@ -1052,7 +1052,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         stream_type_number: stream_data.stream_type_number,
                         ccerrors: stream_data.error_count,
                         media_type: media_type.to_string(),
-                        bitrate: stream_data.bitrate,
+                        bitrate: stream_data.bitrate as u64,
                     });
                 }
 
@@ -1298,9 +1298,17 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             flattened_data
                                 .insert("pid_map".to_string(), serde_json::json!(pid_stream_types));
 
-                            // Build a set of bitrate.{video,audio,text,data}.bitrate fields from the pid_map members
-                            let mut bitrate_fields = AHashMap::new();
+                            // Define the possible media types
+                            let media_types =
+                                vec!["video", "audio", "text", "data", "padding", "scte35"];
 
+                            // Initialize the bitrate_fields with default values of 0 for each media type
+                            let mut bitrate_fields: AHashMap<String, u64> = media_types
+                                .into_iter()
+                                .map(|media_type| (format!("bitrate.{}.bitrate", media_type), 0))
+                                .collect();
+
+                            // Update the bitrate_fields with the actual bitrate values from pid_stream_types
                             for pid_stream_type in pid_stream_types.iter() {
                                 let media_type = &pid_stream_type.media_type;
                                 let bitrate_field = format!("bitrate.{}.bitrate", media_type);
