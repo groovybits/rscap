@@ -186,6 +186,15 @@ fn flatten_streams(
             format!("{}.stream_type_number", prefix),
             json!(stream_data.stream_type_number),
         );
+        // pcr and pts
+        flat_structure.insert(
+            format!("{}.pcr", prefix),
+            json!(stream_data.pcr),
+        );
+        flat_structure.insert(
+            format!("{}.pts", prefix),
+            json!(stream_data.pts),
+        );
     }
 
     flat_structure

@@ -662,6 +662,8 @@ pub struct StreamData {
     pub pid_map: String,
     pub scte35: String,
     pub audio_loudness: String,
+    pub pts: u64,
+    pub pcr: u64,
 }
 
 impl Clone for StreamData {
@@ -715,6 +717,8 @@ impl Clone for StreamData {
             pid_map: self.pid_map.to_owned(),
             scte35: self.scte35.to_owned(),
             audio_loudness: self.audio_loudness.to_owned(),
+            pts: self.pts,
+            pcr: self.pcr,
         }
     }
 }
@@ -792,6 +796,8 @@ impl StreamData {
             pid_map: "".to_string(),
             scte35: "".to_string(),
             audio_loudness: "".to_string(),
+            pts: 0,
+            pcr: 0,
         }
     }
     // set RTP fields
@@ -1087,7 +1093,30 @@ pub fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors, pid: u16, s
     if pid == 0 {
         let section_syntax_indicator = (packet[1] & 0x80) != 0;
         let section_length = (((packet[1] & 0x0F) as u16) << 8) | packet[2] as u16;
-        if !section_syntax_indicator || section_length < 13 {
+        if section_syntax_indicator && section_length >= 13 && packet.len() >= 8 {
+            let table_id = packet[5];
+            let section_number = packet[6];
+            let last_section_number = packet[7];
+            if table_id == 0x00 && section_number == 0x00 && last_section_number == 0x00 {
+                let program_count = (section_length - 9) / 4;
+                let mut i = 8;
+                let mut valid_programs = 0;
+                while i < packet.len() - 4 && valid_programs < program_count {
+                    let program_number = (packet[i] as u16) << 8 | packet[i + 1] as u16;
+                    if program_number != 0 {
+                        valid_programs += 1;
+                    }
+                    i += 4;
+                }
+                if valid_programs == 0 {
+                    errors.pat_errors += 1;
+                }
+            } else {
+                errors.pat_errors += 1;
+            }
+        } else if packet.len() >= 8 && packet[5] == 0x00 {
+            // Ignore PAT packets with section length less than 13
+        } else {
             errors.pat_errors += 1;
         }
     }
@@ -1115,82 +1144,87 @@ pub fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors, stream_data
     }
 
     // CRC error
-        let has_adaptation_field = (packet[3] & 0x20) != 0;
-        let has_payload = (packet[3] & 0x10) != 0;
-        if has_adaptation_field && has_payload {
-            let adaptation_field_length = packet[4] as usize;
-            let payload_start = 5 + adaptation_field_length;
-            let crc32 = u32::from_be_bytes([
-                packet[payload_start - 4],
-                packet[payload_start - 3],
-                packet[payload_start - 2],
-                packet[payload_start - 1],
-            ]);
-            let crc32_calculator = Crc::<u32>::new(&CRC_32_ISO_HDLC);
-            let calculated_crc32 = crc32_calculator.checksum(&packet[payload_start..]);
-            if crc32 != calculated_crc32 {
-                errors.crc_errors += 1;
+    let has_adaptation_field = (packet[3] & 0x20) != 0;
+    let has_payload = (packet[3] & 0x10) != 0;
+    if has_adaptation_field && has_payload {
+        let adaptation_field_length = packet[4] as usize;
+        let payload_start = 5 + adaptation_field_length;
+        if payload_start + 4 <= packet.len() {
+            let crc32_valid = (packet[1] & 0x80) != 0;
+            if crc32_valid {
+                let crc32 = u32::from_be_bytes([
+                    packet[payload_start - 4],
+                    packet[payload_start - 3],
+                    packet[payload_start - 2],
+                    packet[payload_start - 1],
+                ]);
+                let crc32_calculator = Crc::<u32>::new(&CRC_32_ISO_HDLC);
+                let calculated_crc32 = crc32_calculator.checksum(&packet[payload_start..packet.len() - 4]);
+                if crc32 != calculated_crc32 {
+                    errors.crc_errors += 1;
+                }
             }
         }
+    }
 
-        // PCR repetition error
-        let has_pcr = (packet[5] & 0x10) != 0;
-        if has_pcr {
-            let pcr_base = u64::from_be_bytes([0, 0, packet[6], packet[7], packet[8], packet[9], packet[10] & 0xFE, 0]);
-            let pcr_ext = (((packet[10] & 0x01) as u64) << 8) | (packet[11] as u64);
-            let pcr = pcr_base * 300 + pcr_ext;
-            let max_pcr_repetition_interval = 40_000; // 40 ms in PCR units (27 MHz)
-            let prev_pcr = stream_data.timestamp;
-            if pcr - prev_pcr > max_pcr_repetition_interval {
-                errors.pcr_repetition_errors += 1;
-            }
-            stream_data.timestamp = pcr;
+    // PCR repetition error
+    let has_pcr = (packet[5] & 0x10) != 0;
+    if has_pcr {
+        let pcr_base = u64::from_be_bytes([0, 0, packet[6], packet[7], packet[8], packet[9], packet[10] & 0xFE, 0]);
+        let pcr_ext = (((packet[10] & 0x01) as u64) << 8) | (packet[11] as u64);
+        let pcr = pcr_base * 300 + pcr_ext;
+        let max_pcr_repetition_interval = 40_000; // 40 ms in PCR units (27 MHz)
+        let prev_pcr = stream_data.pcr ;
+        if pcr - prev_pcr > max_pcr_repetition_interval {
+            errors.pcr_repetition_errors += 1;
         }
+        stream_data.pcr = pcr;
+    }
 
-        // PCR discontinuity indicator error
-        let has_discontinuity_indicator = (packet[5] & 0x80) != 0;
-        if has_discontinuity_indicator {
-            let prev_discontinuity_state = stream_data.timestamp & 0x01;
-            if prev_discontinuity_state == 1 {
-                errors.pcr_discontinuity_indicator_errors += 1;
-            }
+    // PCR discontinuity indicator error
+    let has_discontinuity_indicator = (packet[5] & 0x80) != 0;
+    if has_discontinuity_indicator {
+        let prev_discontinuity_state = stream_data.timestamp & 0x01;
+        if prev_discontinuity_state == 1 {
+            errors.pcr_discontinuity_indicator_errors += 1;
         }
+    }
 
-        // PCR accuracy error
-        if has_pcr {
-            let pcr_base = u64::from_be_bytes([0, 0, packet[6], packet[7], packet[8], packet[9], packet[10] & 0xFE, 0]);
-            let pcr_ext = (((packet[10] & 0x01) as u64) << 8) | (packet[11] as u64);
-            let pcr = pcr_base * 300 + pcr_ext;
-            let max_pcr_accuracy_error = 500; // 500 nanoseconds
-            let prev_pcr = stream_data.timestamp;
-            if (pcr as i64 - prev_pcr as i64).abs() > max_pcr_accuracy_error {
-                errors.pcr_accuracy_errors += 1;
-            }
+    // PCR accuracy error
+    if has_pcr {
+        let pcr_base = u64::from_be_bytes([0, 0, packet[6], packet[7], packet[8], packet[9], packet[10] & 0xFE, 0]);
+        let pcr_ext = (((packet[10] & 0x01) as u64) << 8) | (packet[11] as u64);
+        let pcr = pcr_base * 300 + pcr_ext;
+        let max_pcr_accuracy_error = 500; // 500 nanoseconds
+        let prev_pcr = stream_data.timestamp;
+        if (pcr as i64 - prev_pcr as i64).abs() > max_pcr_accuracy_error {
+            errors.pcr_accuracy_errors += 1;
         }
+    }
 
-        // PTS error
-        let has_pts = (packet[7] & 0x80) != 0;
-        if has_pts {
-            let pts_high = u64::from_be_bytes([0, 0, 0, packet[9] & 0x0E, packet[10], packet[11], packet[12], packet[13] & 0xFE]);
-            let pts_low = (((packet[13] & 0x01) as u64) << 8) | (packet[14] as u64);
-            let pts = pts_high | pts_low;
-            let max_pts_interval = 700_000; // 700 ms in PTS units (90 kHz)
-            let prev_pts = stream_data.timestamp;
-            if pts < prev_pts || pts - prev_pts > max_pts_interval {
-                errors.pts_errors += 1;
-            }
-            stream_data.timestamp = pts;
+    // PTS error
+    let has_pts = (packet[7] & 0x80) != 0;
+    if has_pts {
+        let pts_high = u64::from_be_bytes([0, 0, 0, packet[9] & 0x0E, packet[10], packet[11], packet[12], packet[13] & 0xFE]);
+        let pts_low = (((packet[13] & 0x01) as u64) << 8) | (packet[14] as u64);
+        let pts = pts_high | pts_low;
+        let max_pts_interval = 700_000; // 700 ms in PTS units (90 kHz)
+        let prev_pts = stream_data.pts ;
+        if pts < prev_pts || pts - prev_pts > max_pts_interval {
+            errors.pts_errors += 1;
         }
+        stream_data.pts = pts;
+    }
 
-        // CAT error
-        let has_cat = packet[3] == 0x01;
-        if has_cat {
-            let section_syntax_indicator = (packet[1] & 0x80) != 0;
-            let section_length = (((packet[1] & 0x0F) as u16) << 8) | (packet[2] as u16);
-            if !section_syntax_indicator || section_length < 9 {
-                errors.cat_errors += 1;
-            }
+    // CAT error
+    let has_cat = packet[3] == 0x01;
+    if has_cat {
+        let section_syntax_indicator = (packet[1] & 0x80) != 0;
+        let section_length = (((packet[1] & 0x0F) as u16) << 8) | (packet[2] as u16);
+        if !section_syntax_indicator || section_length < 9 {
+            errors.cat_errors += 1;
         }
+    }
 }
 
 // Implement a function to extract PID from a packet
@@ -1337,6 +1371,10 @@ pub fn process_packet(
         tr101290_p2_check(packet, errors, &mut updated_stream_data);
     }
 
+    // copy the pts and pcr values back to the original stream_data_packet
+    stream_data_packet.pts = updated_stream_data.pts;
+    stream_data_packet.pcr = updated_stream_data.pcr;
+
     let pid = stream_data_packet.pid;
 
     let mut pid_map = PID_MAP.write().unwrap();
@@ -1365,6 +1403,10 @@ pub fn process_packet(
 
             // update the program_number from the stream_data_packet to stream_data
             Arc::make_mut(&mut stream_data).program_number = stream_data_packet.program_number;
+
+            // write the current pts and pcr values to the stream_data
+            Arc::make_mut(&mut stream_data).pts = stream_data_packet.pts;
+            Arc::make_mut(&mut stream_data).pcr = stream_data_packet.pcr;
 
             // print out each field of structure
             debug!("Modify PID: process_packet [{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {} packet_offset: {}, packet_len: {}",
