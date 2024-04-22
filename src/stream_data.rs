@@ -28,8 +28,6 @@ use gstreamer_video::VideoInfo;
 use image::{ImageBuffer, Rgb};
 use lazy_static::lazy_static;
 use log::{debug, error, info};
-use rtp::RtpReader;
-use rtp_rs as rtp;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 #[cfg(feature = "gst")]
@@ -1069,7 +1067,7 @@ impl Tr101290Errors {
 }
 
 // TR 101 290 Priority 1 Check
-pub fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors, pid: u16, stream_data: &StreamData) {
+pub fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors, pid: u16, stream_data: &mut StreamData) {
     // TS sync byte error
     if packet[0] != 0x47 {
         errors.ts_sync_byte_errors += 1;
@@ -1110,87 +1108,89 @@ pub fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors, pid: u16, s
 }
 
 // TR 101 290 Priority 2 Check
-pub fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
+pub fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors, stream_data: &mut StreamData) {
     // Transport error indicator
     if (packet[1] & 0x80) != 0 {
         errors.transport_error_indicator_errors += 1;
     }
 
     // CRC error
-    let has_adaptation_field = (packet[3] & 0x20) != 0;
-    let has_payload = (packet[3] & 0x10) != 0;
-    if has_adaptation_field && has_payload {
-        let adaptation_field_length = packet[4] as usize;
-        let payload_start = 5 + adaptation_field_length;
-        let crc32 = u32::from_be_bytes([
-            packet[payload_start - 4],
-            packet[payload_start - 3],
-            packet[payload_start - 2],
-            packet[payload_start - 1],
-        ]);
-        let crc32_calculator = Crc::<u32>::new(&CRC_32_ISO_HDLC);
-        let calculated_crc32 = crc32_calculator.checksum(&packet[payload_start..]);
-        if crc32 != calculated_crc32 {
-            errors.crc_errors += 1;
+        let has_adaptation_field = (packet[3] & 0x20) != 0;
+        let has_payload = (packet[3] & 0x10) != 0;
+        if has_adaptation_field && has_payload {
+            let adaptation_field_length = packet[4] as usize;
+            let payload_start = 5 + adaptation_field_length;
+            let crc32 = u32::from_be_bytes([
+                packet[payload_start - 4],
+                packet[payload_start - 3],
+                packet[payload_start - 2],
+                packet[payload_start - 1],
+            ]);
+            let crc32_calculator = Crc::<u32>::new(&CRC_32_ISO_HDLC);
+            let calculated_crc32 = crc32_calculator.checksum(&packet[payload_start..]);
+            if crc32 != calculated_crc32 {
+                errors.crc_errors += 1;
+            }
         }
-    }
 
-    // PCR repetition error
-    let has_pcr = (packet[5] & 0x10) != 0;
-    if has_pcr {
-        let pcr_base = u64::from_be_bytes([0, 0, packet[6], packet[7], packet[8], packet[9], packet[10] & 0xFE, 0]);
-        let pcr_ext = (((packet[10] & 0x01) as u64) << 8) | (packet[11] as u64);
-        let pcr = pcr_base * 300 + pcr_ext;
-        let max_pcr_repetition_interval = 40_000; // 40 ms in PCR units (27 MHz)
-        let prev_pcr = PID_MAP.read().unwrap().get(&0).map(|stream_data| stream_data.timestamp).unwrap_or(0);
-        if pcr - prev_pcr > max_pcr_repetition_interval {
-            errors.pcr_repetition_errors += 1;
+        // PCR repetition error
+        let has_pcr = (packet[5] & 0x10) != 0;
+        if has_pcr {
+            let pcr_base = u64::from_be_bytes([0, 0, packet[6], packet[7], packet[8], packet[9], packet[10] & 0xFE, 0]);
+            let pcr_ext = (((packet[10] & 0x01) as u64) << 8) | (packet[11] as u64);
+            let pcr = pcr_base * 300 + pcr_ext;
+            let max_pcr_repetition_interval = 40_000; // 40 ms in PCR units (27 MHz)
+            let prev_pcr = stream_data.timestamp;
+            if pcr - prev_pcr > max_pcr_repetition_interval {
+                errors.pcr_repetition_errors += 1;
+            }
+            stream_data.timestamp = pcr;
         }
-    }
 
-    // PCR discontinuity indicator error
-    let has_discontinuity_indicator = (packet[5] & 0x80) != 0;
-    if has_discontinuity_indicator {
-        let prev_discontinuity_state = PID_MAP.read().unwrap().get(&0).map(|stream_data| stream_data.rtp_timestamp).unwrap_or(0) & 0x01;
-        if prev_discontinuity_state == 1 {
-            errors.pcr_discontinuity_indicator_errors += 1;
+        // PCR discontinuity indicator error
+        let has_discontinuity_indicator = (packet[5] & 0x80) != 0;
+        if has_discontinuity_indicator {
+            let prev_discontinuity_state = stream_data.timestamp & 0x01;
+            if prev_discontinuity_state == 1 {
+                errors.pcr_discontinuity_indicator_errors += 1;
+            }
         }
-    }
 
-    // PCR accuracy error
-    if has_pcr {
-        let pcr_base = u64::from_be_bytes([0, 0, packet[6], packet[7], packet[8], packet[9], packet[10] & 0xFE, 0]);
-        let pcr_ext = (((packet[10] & 0x01) as u64) << 8) | (packet[11] as u64);
-        let pcr = pcr_base * 300 + pcr_ext;
-        let max_pcr_accuracy_error = 500; // 500 nanoseconds
-        let prev_pcr = PID_MAP.read().unwrap().get(&0).map(|stream_data| stream_data.timestamp).unwrap_or(0);
-        if (pcr as i64 - prev_pcr as i64).abs() > max_pcr_accuracy_error {
-            errors.pcr_accuracy_errors += 1;
+        // PCR accuracy error
+        if has_pcr {
+            let pcr_base = u64::from_be_bytes([0, 0, packet[6], packet[7], packet[8], packet[9], packet[10] & 0xFE, 0]);
+            let pcr_ext = (((packet[10] & 0x01) as u64) << 8) | (packet[11] as u64);
+            let pcr = pcr_base * 300 + pcr_ext;
+            let max_pcr_accuracy_error = 500; // 500 nanoseconds
+            let prev_pcr = stream_data.timestamp;
+            if (pcr as i64 - prev_pcr as i64).abs() > max_pcr_accuracy_error {
+                errors.pcr_accuracy_errors += 1;
+            }
         }
-    }
 
-    // PTS error
-    let has_pts = (packet[7] & 0x80) != 0;
-    if has_pts {
-        let pts_high = u64::from_be_bytes([0, 0, 0, packet[9] & 0x0E, packet[10], packet[11], packet[12], packet[13] & 0xFE]);
-        let pts_low = (((packet[13] & 0x01) as u64) << 8) | (packet[14] as u64);
-        let pts = pts_high | pts_low;
-        let max_pts_interval = 700_000; // 700 ms in PTS units (90 kHz)
-        let prev_pts = PID_MAP.read().unwrap().get(&0).map(|stream_data| stream_data.timestamp).unwrap_or(0) as u64;
-        if pts < prev_pts || pts - prev_pts > max_pts_interval {
-            errors.pts_errors += 1;
+        // PTS error
+        let has_pts = (packet[7] & 0x80) != 0;
+        if has_pts {
+            let pts_high = u64::from_be_bytes([0, 0, 0, packet[9] & 0x0E, packet[10], packet[11], packet[12], packet[13] & 0xFE]);
+            let pts_low = (((packet[13] & 0x01) as u64) << 8) | (packet[14] as u64);
+            let pts = pts_high | pts_low;
+            let max_pts_interval = 700_000; // 700 ms in PTS units (90 kHz)
+            let prev_pts = stream_data.timestamp;
+            if pts < prev_pts || pts - prev_pts > max_pts_interval {
+                errors.pts_errors += 1;
+            }
+            stream_data.timestamp = pts;
         }
-    }
 
-    // CAT error
-    let has_cat = packet[3] == 0x01;
-    if has_cat {
-        let section_syntax_indicator = (packet[1] & 0x80) != 0;
-        let section_length = (((packet[1] & 0x0F) as u16) << 8) | (packet[2] as u16);
-        if !section_syntax_indicator || section_length < 9 {
-            errors.cat_errors += 1;
+        // CAT error
+        let has_cat = packet[3] == 0x01;
+        if has_cat {
+            let section_syntax_indicator = (packet[1] & 0x80) != 0;
+            let section_length = (((packet[1] & 0x0F) as u16) << 8) | (packet[2] as u16);
+            if !section_syntax_indicator || section_length < 9 {
+                errors.cat_errors += 1;
+            }
         }
-    }
 }
 
 // Implement a function to extract PID from a packet
@@ -1330,9 +1330,11 @@ pub fn process_packet(
     let packet: &[u8] = &stream_data_packet.packet[stream_data_packet.packet_start
         ..stream_data_packet.packet_start + stream_data_packet.packet_len];
 
+    let mut updated_stream_data = stream_data_packet.clone();
+
     if stream_data_packet.pid != 0x1FFF {
-        tr101290_p1_check(packet, errors, stream_data_packet.pid, &stream_data_packet);
-        tr101290_p2_check(packet, errors);
+        tr101290_p1_check(packet, errors, stream_data_packet.pid, &mut updated_stream_data);
+        tr101290_p2_check(packet, errors, &mut updated_stream_data);
     }
 
     let pid = stream_data_packet.pid;
@@ -1649,140 +1651,6 @@ pub fn identify_video_pid(pmt_packet: &[u8]) -> Option<(u16, Codec)> {
         };
         codec.map(|c| (entry.stream_pid, c))
     })
-}
-
-// ## RFC 4175 SMPTE2110 header functions ##
-/*const RFC_4175_EXT_SEQ_NUM_LEN: usize = 2;
-const RFC_4175_HEADER_LEN: usize = 6; // Note: extended sequence number not included*/ // TODO: implement RFC 4175 SMPTE2110 header functions
-
-fn get_extended_sequence_number(buf: &[u8]) -> u16 {
-    ((buf[0] as u16) << 8) | buf[1] as u16
-}
-
-fn get_line_length(buf: &[u8]) -> u16 {
-    ((buf[0] as u16) << 8) | buf[1] as u16
-}
-
-fn get_line_field_id(buf: &[u8]) -> u8 {
-    buf[2] >> 7
-}
-
-fn get_line_number(buf: &[u8]) -> u16 {
-    ((buf[2] as u16 & 0x7f) << 8) | buf[3] as u16
-}
-
-fn get_line_continuation(buf: &[u8]) -> u8 {
-    buf[4] >> 7
-}
-
-fn get_line_offset(buf: &[u8]) -> u16 {
-    ((buf[4] as u16 & 0x7f) << 8) | buf[5] as u16
-}
-// ## End of RFC 4175 SMPTE2110 header functions ##
-
-// Process the packet and return a vector of SMPTE ST 2110 packets
-pub fn process_smpte2110_packet(
-    payload_offset: usize,
-    packet: Arc<Vec<u8>>,
-    _packet_size: usize,
-    start_time: u64,
-    debug: bool,
-    capture_timestamp: u64,
-    capture_iat: u64,
-    source_ip: String,
-    source_port: i32,
-    probe_id: String,
-) -> Vec<StreamData> {
-    let mut streams = Vec::new();
-    let mut offset = payload_offset;
-
-    let len = packet.len();
-
-    // Check if the packet is large enough to contain an RTP header
-    while offset + 12 <= len {
-        // Check for RTP header marker
-        let packet_arc = Arc::clone(&packet);
-        if packet_arc[offset] == 0x80 || packet_arc[offset] == 0x81 {
-            let rtp_packet = &packet[offset..];
-
-            // Create an RtpReader
-            if let Ok(rtp) = RtpReader::new(rtp_packet) {
-                // Extract the timestamp and payload type
-                let timestamp = rtp.timestamp();
-                let payload_type = rtp.payload_type();
-                let rtp_payload = rtp.payload();
-                let rtp_payload_offset = rtp.payload_offset();
-
-                // Extract SMPTE 2110 specific fields
-                let line_length = get_line_length(rtp_packet);
-                let rtp_packet_size = line_length as usize;
-                let line_number = get_line_number(rtp_packet);
-                let extended_sequence_number = get_extended_sequence_number(rtp_packet);
-                let line_offset = get_line_offset(rtp_packet);
-                let field_id = get_line_field_id(rtp_packet);
-                let line_continuation = get_line_continuation(rtp_packet);
-
-                // Calculate the length of the RTP payload
-                let rtp_payload_length = rtp_payload.len();
-
-                // Use payload type as PID (for the purpose of this example)
-                let pid = payload_type as u16;
-                let stream_type = payload_type.to_string();
-
-                // Create new StreamData instance
-                let mut stream_data = StreamData::new(
-                    packet_arc,
-                    rtp_payload_offset,
-                    rtp_payload_length,
-                    pid,
-                    stream_type,
-                    payload_type,
-                    0,
-                    start_time,
-                    timestamp as u64,
-                    0,
-                    capture_timestamp,
-                    capture_iat,
-                    source_ip.clone(),
-                    source_port,
-                    probe_id.clone(),
-                );
-
-                // Update StreamData stats and RTP fields
-                stream_data.update_stats(rtp_payload_length);
-                stream_data.update_capture_iat(capture_iat);
-                stream_data.set_rtp_fields(
-                    timestamp,
-                    payload_type,
-                    payload_type.to_string(),
-                    line_number,
-                    line_offset,
-                    line_length,
-                    field_id,
-                    line_continuation,
-                    extended_sequence_number,
-                );
-                if debug {
-                    info!(
-                        "SMPTE ST 2110 packet: offset: {} size: {} timestamp: {}, payload_type: {}, line_number: {}, line_offset: {}, line_length: {}, field_id: {}, line_continuation: {}, extended_sequence_number: {}",
-                        rtp_payload_offset, rtp_payload_length, timestamp, payload_type, line_number, line_offset, line_length, field_id, line_continuation, extended_sequence_number
-                    );
-                }
-
-                // Add the StreamData to the stream list
-                streams.push(stream_data);
-
-                // Move to the next RTP packet
-                offset += rtp_packet_size;
-            } else {
-                error!("Error parsing RTP header, not SMPTE ST 2110");
-            }
-        } else {
-            error!("No RTP header detected, not SMPTE ST 2110");
-        }
-    }
-
-    streams
 }
 
 // Process the packet and return a vector of MPEG-TS packets
