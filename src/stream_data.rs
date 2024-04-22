@@ -1131,7 +1131,7 @@ pub fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors, pid: u16, s
     }
 
     // PID map error
-    if !PID_MAP.read().unwrap().contains_key(&pid) {
+    if pid > 0 && pid < 0x1FFF && pid != stream_data.pmt_pid && !PID_MAP.read().unwrap().contains_key(&pid) {
         errors.pid_map_errors += 1;
     }
 }
@@ -1167,26 +1167,16 @@ pub fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors, stream_data
         }
     }
 
-    // PCR repetition error
-    let has_pcr = (packet[5] & 0x10) != 0;
-    if has_pcr {
-        let pcr_base = u64::from_be_bytes([0, 0, packet[6], packet[7], packet[8], packet[9], packet[10] & 0xFE, 0]);
-        let pcr_ext = (((packet[10] & 0x01) as u64) << 8) | (packet[11] as u64);
-        let pcr = pcr_base * 300 + pcr_ext;
-        let max_pcr_repetition_interval = 40_000; // 40 ms in PCR units (27 MHz)
-        let prev_pcr = stream_data.pcr ;
-        if pcr - prev_pcr > max_pcr_repetition_interval {
-            errors.pcr_repetition_errors += 1;
-        }
-        stream_data.pcr = pcr;
-    }
+    // Check if the packet has an adaptation field
+    let adaptation_field_control = (packet[3] & 0x30) >> 4;
+    let has_adaptation_field = adaptation_field_control == 0b11 || adaptation_field_control == 0b10;
 
-    // PCR discontinuity indicator error
-    let has_discontinuity_indicator = (packet[5] & 0x80) != 0;
-    if has_discontinuity_indicator {
-        let prev_discontinuity_state = stream_data.timestamp & 0x01;
-        if prev_discontinuity_state == 1 {
-            errors.pcr_discontinuity_indicator_errors += 1;
+    let mut has_pcr = false;
+    if has_adaptation_field && packet.len() >= 6 {
+        let adaptation_field_length = packet[4] as usize;
+        if packet.len() >= 6 + adaptation_field_length {
+            // Check if the PCR flag is set in the adaptation field
+            has_pcr = (packet[5] & 0x10) != 0;
         }
     }
 
@@ -1195,10 +1185,36 @@ pub fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors, stream_data
         let pcr_base = u64::from_be_bytes([0, 0, packet[6], packet[7], packet[8], packet[9], packet[10] & 0xFE, 0]);
         let pcr_ext = (((packet[10] & 0x01) as u64) << 8) | (packet[11] as u64);
         let pcr = pcr_base * 300 + pcr_ext;
-        let max_pcr_accuracy_error = 500; // 500 nanoseconds
-        let prev_pcr = stream_data.timestamp;
-        if (pcr as i64 - prev_pcr as i64).abs() > max_pcr_accuracy_error {
-            errors.pcr_accuracy_errors += 1;
+        if pcr != 0 {
+            let max_pcr_accuracy_error = 500; // 500 nanoseconds
+            let prev_pcr = stream_data.timestamp;
+            if (pcr as i64 - prev_pcr as i64).abs() > max_pcr_accuracy_error {
+                errors.pcr_accuracy_errors += 1;
+            }
+        }
+    }
+
+    // PCR repetition error
+    if has_pcr {
+        let pcr_base = u64::from_be_bytes([0, 0, packet[6], packet[7], packet[8], packet[9], packet[10] & 0xFE, 0]);
+        let pcr_ext = (((packet[10] & 0x01) as u64) << 8) | (packet[11] as u64);
+        let pcr = pcr_base * 300 + pcr_ext;
+        if pcr != 0 {
+            let max_pcr_repetition_interval = 40_000; // 40 ms in PCR units (27 MHz)
+            let prev_pcr = stream_data.pcr ;
+            if pcr - prev_pcr > max_pcr_repetition_interval {
+                errors.pcr_repetition_errors += 1;
+            }
+            stream_data.pcr = pcr;
+        }
+    }
+
+    // PCR discontinuity indicator error
+    let has_discontinuity_indicator = (packet[5] & 0x80) != 0;
+    if has_discontinuity_indicator {
+        let prev_discontinuity_state = stream_data.timestamp & 0x01;
+        if prev_discontinuity_state == 1 {
+            errors.pcr_discontinuity_indicator_errors += 1;
         }
     }
 
