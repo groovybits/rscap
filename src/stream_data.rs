@@ -1122,10 +1122,33 @@ pub fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors, pid: u16, s
     }
 
     // PMT error
-    if pid == stream_data.pmt_pid {
+    if pid == stream_data.pmt_pid && stream_data.pmt_pid != 0 && stream_data.pmt_pid != 0x1FFF && stream_data.pmt_pid != 0xFFFF {
         let section_syntax_indicator = (packet[1] & 0x80) != 0;
         let section_length = (((packet[1] & 0x0F) as u16) << 8) | packet[2] as u16;
-        if !section_syntax_indicator || section_length < 17 {
+        if section_syntax_indicator && packet.len() >= 4 && section_length >= 13 {
+            let table_id = packet[3];
+            if table_id == 0x02 {
+                let program_number = (packet[4] as u16) << 8 | packet[5] as u16;
+                let _version_number = (packet[6] & 0x3E) >> 1;
+                let current_next_indicator = (packet[6] & 0x01) != 0;
+                let section_number = packet[7];
+                let last_section_number = packet[8];
+                let program_info_length = (((packet[10] & 0x0F) as u16) << 8) | packet[11] as u16;
+
+                if program_number == stream_data.program_number &&
+                   current_next_indicator &&
+                   section_number == 0 &&
+                   last_section_number == 0 &&
+                   program_info_length + 12 <= section_length
+                {
+                    // PMT is valid, don't increment the error counter
+                } else {
+                    errors.pmt_errors += 1;
+                }
+            } else {
+                errors.pmt_errors += 1;
+            }
+        } else {
             errors.pmt_errors += 1;
         }
     }
@@ -1187,10 +1210,11 @@ pub fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors, stream_data
         let pcr = pcr_base * 300 + pcr_ext;
         if pcr != 0 {
             let max_pcr_accuracy_error = 500; // 500 nanoseconds
-            let prev_pcr = stream_data.timestamp;
+            let prev_pcr = stream_data.pcr;
             if (pcr as i64 - prev_pcr as i64).abs() > max_pcr_accuracy_error {
                 errors.pcr_accuracy_errors += 1;
             }
+            stream_data.pcr = pcr;
         }
     }
 
@@ -1212,7 +1236,7 @@ pub fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors, stream_data
     // PCR discontinuity indicator error
     let has_discontinuity_indicator = (packet[5] & 0x80) != 0;
     if has_discontinuity_indicator {
-        let prev_discontinuity_state = stream_data.timestamp & 0x01;
+        let prev_discontinuity_state = stream_data.pcr & 0x01;
         if prev_discontinuity_state == 1 {
             errors.pcr_discontinuity_indicator_errors += 1;
         }
@@ -1224,12 +1248,24 @@ pub fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors, stream_data
         let pts_high = u64::from_be_bytes([0, 0, 0, packet[9] & 0x0E, packet[10], packet[11], packet[12], packet[13] & 0xFE]);
         let pts_low = (((packet[13] & 0x01) as u64) << 8) | (packet[14] as u64);
         let pts = pts_high | pts_low;
-        let max_pts_interval = 700_000; // 700 ms in PTS units (90 kHz)
-        let prev_pts = stream_data.pts ;
-        if pts < prev_pts || pts - prev_pts > max_pts_interval {
-            errors.pts_errors += 1;
+
+        if pts != 0 {
+            let max_pts_interval = 700_000; // 700 ms in PTS units (90 kHz)
+            let prev_pts = stream_data.pts;
+
+            if pts < prev_pts {
+                // PTS is not monotonically increasing
+                errors.pts_errors += 1;
+            } else if pts - prev_pts > max_pts_interval {
+                // PTS discontinuity exceeds the maximum allowed interval
+                let max_pts_gap = 90_000; // 1 second in PTS units (90 kHz)
+                if pts - prev_pts > max_pts_gap {
+                    errors.pts_errors += 1;
+                }
+            }
+
+            stream_data.pts = pts;
         }
-        stream_data.pts = pts;
     }
 
     // CAT error
