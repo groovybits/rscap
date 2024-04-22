@@ -1293,46 +1293,42 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             flattened_data
                                 .insert("pid_map".to_string(), serde_json::json!(pid_stream_types));
                             flattened_data
-                                .insert("tr101290_cat_errors".to_string(), serde_json::json!(0));
+                                .insert("tr101290_cat_errors".to_string(), serde_json::json!(tr101290.cat_errors));
                             flattened_data.insert(
                                 "tr101290_continuity_counter_errors".to_string(),
-                                serde_json::json!(0),
+                                serde_json::json!(tr101290.continuity_counter_errors),
                             );
                             flattened_data
-                                .insert("tr101290_crc_errors".to_string(), serde_json::json!(0));
+                                .insert("tr101290_crc_errors".to_string(), serde_json::json!(tr101290.crc_errors));
                             flattened_data
-                                .insert("tr101290_pat_errors".to_string(), serde_json::json!(0));
+                                .insert("tr101290_pat_errors".to_string(), serde_json::json!(tr101290.pat_errors));
                             flattened_data.insert(
                                 "tr101290_pcr_accuracy_errors".to_string(),
-                                serde_json::json!(0),
+                                serde_json::json!(tr101290.pcr_accuracy_errors),
                             );
                             flattened_data.insert(
                                 "tr101290_pcr_discontinuity_indicator_errors".to_string(),
-                                serde_json::json!(0),
+                                serde_json::json!(tr101290.pcr_discontinuity_indicator_errors),
                             );
                             flattened_data.insert(
                                 "tr101290_pcr_repetition_errors".to_string(),
-                                serde_json::json!(0),
+                                serde_json::json!(tr101290.pcr_repetition_errors),
                             );
                             flattened_data.insert(
                                 "tr101290_pid_map_errors".to_string(),
-                                serde_json::json!(0),
+                                serde_json::json!(tr101290.pid_map_errors),
                             );
                             flattened_data
-                                .insert("tr101290_pmt_errors".to_string(), serde_json::json!(0));
+                                .insert("tr101290_pmt_errors".to_string(), serde_json::json!(tr101290.pmt_errors));
                             flattened_data
-                                .insert("tr101290_pts_errors".to_string(), serde_json::json!(0));
-                            flattened_data.insert(
-                                "tr101290_sync_byte_errors".to_string(),
-                                serde_json::json!(0),
-                            );
+                                .insert("tr101290_pts_errors".to_string(), serde_json::json!(tr101290.pts_errors));
                             flattened_data.insert(
                                 "tr101290_transport_error_indicator_errors".to_string(),
-                                serde_json::json!(0),
+                                serde_json::json!(tr101290.transport_error_indicator_errors),
                             );
                             flattened_data.insert(
                                 "tr101290_ts_sync_byte_errors".to_string(),
-                                serde_json::json!(0),
+                                serde_json::json!(tr101290.ts_sync_byte_errors),
                             );
 
                             flattened_data.insert("scte35".to_string(), serde_json::json!(scte35));

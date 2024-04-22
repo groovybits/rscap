@@ -1069,7 +1069,7 @@ impl Tr101290Errors {
 }
 
 // TR 101 290 Priority 1 Check
-pub fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors, pid: u16, continuity_counter: u8) {
+pub fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors, pid: u16, stream_data: &StreamData) {
     // TS sync byte error
     if packet[0] != 0x47 {
         errors.ts_sync_byte_errors += 1;
@@ -1082,10 +1082,7 @@ pub fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors, pid: u16, c
 
     // Continuity counter error
     if pid != 0x1FFF {
-        let prev_continuity_counter = PID_MAP.read().unwrap().get(&pid).map(|stream_data| stream_data.continuity_counter).unwrap_or(0);
-        if continuity_counter != (prev_continuity_counter + 1) % 16 {
-            errors.continuity_counter_errors += 1;
-        }
+        errors.continuity_counter_errors = stream_data.error_count;
     }
 
     // PAT error
@@ -1098,7 +1095,7 @@ pub fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors, pid: u16, c
     }
 
     // PMT error
-    if pid == 0x1000 {
+    if pid == stream_data.pmt_pid {
         let section_syntax_indicator = (packet[1] & 0x80) != 0;
         let section_length = (((packet[1] & 0x0F) as u16) << 8) | packet[2] as u16;
         if !section_syntax_indicator || section_length < 17 {
@@ -1179,7 +1176,7 @@ pub fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors) {
         let pts_low = (((packet[13] & 0x01) as u64) << 8) | (packet[14] as u64);
         let pts = pts_high | pts_low;
         let max_pts_interval = 700_000; // 700 ms in PTS units (90 kHz)
-        let prev_pts = PID_MAP.read().unwrap().get(&0).map(|stream_data| stream_data.rtp_timestamp).unwrap_or(0) as u64;
+        let prev_pts = PID_MAP.read().unwrap().get(&0).map(|stream_data| stream_data.timestamp).unwrap_or(0) as u64;
         if pts < prev_pts || pts - prev_pts > max_pts_interval {
             errors.pts_errors += 1;
         }
@@ -1332,8 +1329,11 @@ pub fn process_packet(
 ) {
     let packet: &[u8] = &stream_data_packet.packet[stream_data_packet.packet_start
         ..stream_data_packet.packet_start + stream_data_packet.packet_len];
-    tr101290_p1_check(packet, errors, stream_data_packet.pid, stream_data_packet.continuity_counter);
-    tr101290_p2_check(packet, errors);
+
+    if stream_data_packet.pid != 0x1FFF {
+        tr101290_p1_check(packet, errors, stream_data_packet.pid, &stream_data_packet);
+        tr101290_p2_check(packet, errors);
+    }
 
     let pid = stream_data_packet.pid;
 
