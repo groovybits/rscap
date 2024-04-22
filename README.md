@@ -28,7 +28,7 @@ rpmbuild -bb specs/rsprobe.spec
 
 ## Docker Image for RsProbe
 
-The Dockerfile in the root of the project builds a CentOS 7 image with RsProbe installed. The image has various env variables matching the .env file for configuration. The image is built with the `--build-arg` flag for the environment variables.
+The Dockerfile [Dockerfile](Dockerfile) in the root of the project builds a CentOS 7 image with RsProbe installed. The image has various env variables matching the .env file for configuration. The image is built with the `--build-arg` flag for the environment variables.
 
 ## Building and Executing RsProbe with Gstreamer Dependencies
 
