@@ -494,7 +494,7 @@ async fn send_to_kafka(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.6.4",
+    version = "0.6.5",
     about = "MpegTS Stream Analysis Probe with Kafka and GStreamer"
 )]
 struct Args {
@@ -1305,13 +1305,13 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             // Initialize the bitrate_fields with default values of 0 for each media type
                             let mut bitrate_fields: AHashMap<String, u64> = media_types
                                 .into_iter()
-                                .map(|media_type| (format!("bitrate.{}.bitrate", media_type), 0))
+                                .map(|media_type| (format!("bitrate.{}", media_type), 0))
                                 .collect();
 
                             // Update the bitrate_fields with the actual bitrate values from pid_stream_types
                             for pid_stream_type in pid_stream_types.iter() {
                                 let media_type = &pid_stream_type.media_type;
-                                let bitrate_field = format!("bitrate.{}.bitrate", media_type);
+                                let bitrate_field = format!("bitrate.{}", media_type);
 
                                 let bitrate = bitrate_fields.entry(bitrate_field).or_insert(0);
 
