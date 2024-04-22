@@ -80,6 +80,7 @@ struct PidStreamType {
     stream_type_number: u8,
     media_type: String, // audio, video, data
     ccerrors: u32,
+    bitrate: u32,
 }
 
 fn flatten_streams(
@@ -187,14 +188,8 @@ fn flatten_streams(
             json!(stream_data.stream_type_number),
         );
         // pcr and pts
-        flat_structure.insert(
-            format!("{}.pcr", prefix),
-            json!(stream_data.pcr),
-        );
-        flat_structure.insert(
-            format!("{}.pts", prefix),
-            json!(stream_data.pts),
-        );
+        flat_structure.insert(format!("{}.pcr", prefix), json!(stream_data.pcr));
+        flat_structure.insert(format!("{}.pts", prefix), json!(stream_data.pts));
     }
 
     flat_structure
@@ -1057,6 +1052,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         stream_type_number: stream_data.stream_type_number,
                         ccerrors: stream_data.error_count,
                         media_type: media_type.to_string(),
+                        bitrate: stream_data.bitrate,
                     });
                 }
 
@@ -1301,16 +1297,40 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                 .insert("id".to_string(), serde_json::json!(probe_id_clone2));
                             flattened_data
                                 .insert("pid_map".to_string(), serde_json::json!(pid_stream_types));
-                            flattened_data
-                                .insert("tr101290_cat_errors".to_string(), serde_json::json!(tr101290.cat_errors));
+
+                            // Build a set of bitrate.{video,audio,text,data}.bitrate fields from the pid_map members
+                            let mut bitrate_fields = AHashMap::new();
+
+                            for pid_stream_type in pid_stream_types.iter() {
+                                let media_type = &pid_stream_type.media_type;
+                                let bitrate_field = format!("bitrate.{}.bitrate", media_type);
+
+                                let bitrate = bitrate_fields.entry(bitrate_field).or_insert(0);
+
+                                *bitrate += pid_stream_type.bitrate;
+                            }
+
+                            // Insert the bitrate fields into the flattened_data
+                            for (bitrate_field, bitrate) in bitrate_fields.into_iter() {
+                                flattened_data.insert(bitrate_field, serde_json::json!(bitrate));
+                            }
+
+                            flattened_data.insert(
+                                "tr101290_cat_errors".to_string(),
+                                serde_json::json!(tr101290.cat_errors),
+                            );
                             flattened_data.insert(
                                 "tr101290_continuity_counter_errors".to_string(),
                                 serde_json::json!(tr101290.continuity_counter_errors),
                             );
-                            flattened_data
-                                .insert("tr101290_crc_errors".to_string(), serde_json::json!(tr101290.crc_errors));
-                            flattened_data
-                                .insert("tr101290_pat_errors".to_string(), serde_json::json!(tr101290.pat_errors));
+                            flattened_data.insert(
+                                "tr101290_crc_errors".to_string(),
+                                serde_json::json!(tr101290.crc_errors),
+                            );
+                            flattened_data.insert(
+                                "tr101290_pat_errors".to_string(),
+                                serde_json::json!(tr101290.pat_errors),
+                            );
                             flattened_data.insert(
                                 "tr101290_pcr_accuracy_errors".to_string(),
                                 serde_json::json!(tr101290.pcr_accuracy_errors),
@@ -1327,10 +1347,14 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                 "tr101290_pid_map_errors".to_string(),
                                 serde_json::json!(tr101290.pid_map_errors),
                             );
-                            flattened_data
-                                .insert("tr101290_pmt_errors".to_string(), serde_json::json!(tr101290.pmt_errors));
-                            flattened_data
-                                .insert("tr101290_pts_errors".to_string(), serde_json::json!(tr101290.pts_errors));
+                            flattened_data.insert(
+                                "tr101290_pmt_errors".to_string(),
+                                serde_json::json!(tr101290.pmt_errors),
+                            );
+                            flattened_data.insert(
+                                "tr101290_pts_errors".to_string(),
+                                serde_json::json!(tr101290.pts_errors),
+                            );
                             flattened_data.insert(
                                 "tr101290_transport_error_indicator_errors".to_string(),
                                 serde_json::json!(tr101290.transport_error_indicator_errors),
@@ -1525,8 +1549,9 @@ async fn rsprobe(running: Arc<AtomicBool>) {
             !args.scale_images_after_gstreamer,
             &args.image_framerate,
         ) {
-            Ok((pipeline, appsrc, appsink, captionssink, audiosink)) =>
-                (pipeline, appsrc, appsink, captionssink, audiosink),
+            Ok((pipeline, appsrc, appsink, captionssink, audiosink)) => {
+                (pipeline, appsrc, appsink, captionssink, audiosink)
+            }
             Err(err) => {
                 eprintln!("Failed to initialize the pipeline: {}", err);
                 return;
