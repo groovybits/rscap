@@ -79,9 +79,9 @@ if [ "$OS" = "Linux" ]; then
     $SUDO yum install -y centos-release-scl-rh epel-release
     $SUDO yum install -y yum-utils
     $SUDO yum-config-manager --disable epel
-    $SUDO yum install --enablerepo=epel* -y zvbi-devel
+    $SUDO yum install --enablerepo=epel* -y zvbi-devel cmake3
     $SUDO yum install -y git
-    $SUDO yum install -y cmake3 git libstdc++-devel
+    $SUDO yum install -y libstdc++-devel
     $SUDO yum install -y llvm-toolset-7.0-llvm-devel llvm-toolset-7.0-clang
     $SUDO yum install -y rh-python38 rh-python38-python-pip
 

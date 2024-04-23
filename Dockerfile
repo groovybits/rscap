@@ -13,7 +13,7 @@ RUN yum groupinstall -y "Development Tools" && \
     yum install -y yum-utils && \
     yum-config-manager --disable epel && \
     yum install --enablerepo=epel* -y zvbi-devel && \
-    yum install -y wget curl git cmake3 && \
+    yum install -y --enablerepo=epel* wget curl git cmake3 && \
     yum install -y cmake3 git libstdc++-devel gcc gcc-c++ make && \
     yum install -y bison flex python3 wget libffi-devel \
     util-linux libmount-devel libxml2-devel glib2-devel \
