@@ -389,7 +389,7 @@ if [ ! -f "gst-plugins-bad-installed.done" ] ; then
         tar xf gst-plugins-bad-$GST_VERSION.tar.xz
     fi
     cd gst-plugins-bad-$GST_VERSION
-    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE -Dopenexr=disabled -Dopencv=disabled
+    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE # -Dopenexr=disabled -Dopencv=disabled
     run_with_scl ninja -C _build
     run_with_scl ninja -C _build install
     cd ..

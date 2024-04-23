@@ -232,7 +232,7 @@ echo "---"
 wget https://gstreamer.freedesktop.org/src/gst-plugins-good/gst-plugins-good-$GST_VERSION.tar.xz
 tar xf gst-plugins-good-$GST_VERSION.tar.xz
 cd gst-plugins-good-$GST_VERSION
-run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE  -Dopenexr=disabled -Dopencv=disabled --pkg-config-path=$PKG_CONFIG_PATH
+run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
 run_with_scl ninja -C _build
 run_with_scl ninja -C _build install
 cd ..
