@@ -4,7 +4,7 @@ Release:        1%{?dist}
 Summary:        MpegTS Stream Analysis Probe with Kafka and GStreamer
 License:        MIT
 URL:            https://github.com/groovybits/rscap
-BuildRequires:  epel-release, centos-release-scl-rh, gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3, libxml2-devel, pango-devel, cairo-devel, zvbi-devel, ladspa-devel, cairo-gobject-devel, cairo-gobject, rh-python38, rh-python38-python-pip llvm-toolset-7.0-clang-devel, glibc-devel, libstdc++-devel, llvm, llvm-devel
+BuildRequires:  epel-release, centos-release-scl-rh, gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3, libxml2-devel, pango-devel, cairo-devel, zvbi-devel, ladspa-devel, cairo-gobject-devel, cairo-gobject, rh-python38, rh-python38-python-pip llvm-toolset-7.0-clang-devel, glibc-devel, libstdc++-devel, llvm, llvm-devel, libjpeg-turbo-devel, libtiff-devel
 Requires:       orc, libffi
 Prefix:        /opt/rsprobe
 
@@ -127,6 +127,8 @@ else
     mkdir opencv/build
 fi
 cd opencv/build
+
+run_with_scl pip3.8 install numpy
 
 run_with_scl_llvm cmake3 -D CMAKE_BUILD_TYPE=RELEASE \
     -D CMAKE_INSTALL_PREFIX=$PREFIX \
