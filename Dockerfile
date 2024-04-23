@@ -3,7 +3,7 @@ FROM centos:7 as builder
 # Install required packages
 RUN yum install -y epel-release centos-release-scl && \
     yum install -y devtoolset-11 rh-python38 && \
-    yum install -y wget curl git
+    yum install -y wget curl git cmake3
 
 # Set up working directory
 WORKDIR /app
