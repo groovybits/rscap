@@ -35,7 +35,7 @@ use rsprobe::get_system_stats;
 use rsprobe::stream_data::process_mpegts_packet;
 use rsprobe::stream_data::{
     get_pid_map, identify_video_pid, parse_and_store_pat, process_packet, update_pid_map, Codec,
-    PmtInfo, StreamData, Tr101290Errors, PAT_PID,
+    ImageData, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
 };
 #[cfg(feature = "gst")]
 use rsprobe::stream_data::{initialize_pipeline, process_video_packets, pull_images};
@@ -956,7 +956,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     let (ktx, mut krx) = mpsc::channel::<(
         Vec<Arc<StreamData>>,
         Vec<String>,
-        Vec<Vec<u8>>,
+        Vec<ImageData>,
         AHashMap<u16, Arc<StreamData>>,
         Tr101290Errors,
     )>(args.kafka_channel_size);
@@ -982,6 +982,12 @@ async fn rsprobe(running: Arc<AtomicBool>) {
         let mut dot_last_file_write = Instant::now();
         let mut log_messages = Vec::<String>::new();
         let output_file_without_jpg = args.output_file.replace(".jpg", "");
+
+        // Now you can directly use the fields from `image_data`
+        let mut image_pts: u64 = 0;
+        let mut duplicates: u64 = 0;
+        let mut hash = Vec::new();
+        let mut hamming: f64 = 0.0;
 
         info!("Kafka publisher startup {}", args.kafka_broker);
         let mut kafka_conf = ClientConfig::new();
@@ -1069,7 +1075,25 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                     let mut base64_image = String::new();
 
                     if images.len() > 0 {
-                        let image = images.pop().unwrap();
+                        // Define default ImageData in case `images.pop()` returns None
+                        let default_image_data: ImageData = ImageData {
+                            image: Vec::new(),
+                            pts: 0,
+                            duplicates: 0,
+                            hash: Vec::new(),
+                            hamming: 0.0,
+                        };
+
+                        // Attempt to pop an image from the stack, or use the default
+                        let image_data: ImageData = images.pop().unwrap_or(default_image_data);
+
+                        // Now you can directly use the fields from `image_data`
+                        let image_bin = image_data.image;
+                        image_pts = image_data.pts;
+                        duplicates = image_data.duplicates;
+                        hash = image_data.hash;
+                        hamming = image_data.hamming;
+
                         let output_file_incremental =
                             format!("{}_{:08}.jpg", output_file_without_jpg, output_file_counter);
 
@@ -1080,27 +1104,28 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         } else {
                             None
                         };
-                        log::info!(
-                            "Kafka Sender: [{}] Jpeg image received: {} size {} pts saved to {}",
-                            probe_id_clone1.clone(),
-                            image.len(),
-                            stream_data.capture_time,
-                            output_file_incremental
-                        );
 
                         // Write to file if output_file is provided
                         if let Some(file) = output_file_mut.as_mut() {
                             if !args.no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
+                                log::debug!(
+                                    "Kafka Sender: [{}] Jpeg image saved: {} size {} pts saved to {}",
+                                    probe_id_clone1.clone(),
+                                    image_bin.len(),
+                                    stream_data.capture_time,
+                                    output_file_incremental
+                                );
+
                                 dot_last_file_write = Instant::now();
                                 print!("*");
                                 // flush stdout
                                 std::io::stdout().flush().unwrap();
                             }
-                            file.write_all(&image).unwrap();
+                            file.write_all(&image_bin).unwrap();
                         }
 
                         // Encode the JPEG image as Base64
-                        base64_image = general_purpose::STANDARD.encode::<&[u8]>(&image);
+                        base64_image = general_purpose::STANDARD.encode::<&[u8]>(&image_bin);
 
                         // clear the image buffer
                         images.clear();
@@ -1168,7 +1193,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             let mut stream_count: u64 = 0;
                             let mut source_ip: String = String::new();
                             let mut source_port: u32 = 0;
-                            let mut image_pts: u64 = 0;
                             let mut captions: String = String::new();
                             let mut scte35: String = String::new();
                             let mut audio_loudness: String = String::new();
@@ -1184,9 +1208,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                         stream_data.current_error_count as u64;
                                     source_port = stream_data.source_port as u32;
                                     source_ip = stream_data.source_ip.clone();
-                                    if stream_data.has_image > 0 && stream_data.image_pts > 0 {
-                                        image_pts = stream_data.image_pts;
-                                    }
                                     if stream_data.captions != "" {
                                         // concatenate captions
                                         captions = format!("{}{}", captions, stream_data.captions);
@@ -1271,6 +1292,11 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
                                 format!("data:image/jpeg;base64,{}", base64_image)
                             } else {
+                                image_pts = 0;
+                                duplicates = 0;
+                                hash = Vec::new();
+                                hamming = 0.0;
+
                                 "".to_string()
                             };
                             flattened_data
@@ -1279,6 +1305,12 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                 "base64_image".to_string(),
                                 serde_json::json!(base64_image_tag),
                             );
+                            // add image_pts, duplicates, hash, and hamming to the flattened_data map
+                            flattened_data
+                                .insert("duplicates".to_string(), serde_json::json!(duplicates));
+                            flattened_data.insert("hash".to_string(), serde_json::json!(hash));
+                            flattened_data
+                                .insert("hamming".to_string(), serde_json::json!(hamming));
 
                             // Check if we have a log_message in log_messages Vector, if so add it to the flattened_data map
                             if log_messages.len() > 0 {
@@ -1661,7 +1693,8 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     let mut x_last_sent_ts = Instant::now();
 
     // vector of images and logs
-    let mut images = Vec::<Vec<u8>>::new();
+    let mut images: Vec<ImageData> = Vec::new();
+
     let mut logs = Vec::<String>::new();
 
     let mut last_kafka_send_time = Instant::now();
@@ -1828,19 +1861,26 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
                         // Receive and process images
                         #[cfg(feature = "gst")]
-                        if let Ok((image_data, pts, image_same, hash, hamming)) =
+                        if let Ok((image_data, pts, duplicates, hash, hamming)) =
                             image_receiver.try_recv()
                         {
-                            info!(
-                                "Probe: [{}] Received a jpeg image with size: {} bytes {} repeated image {:?} hash {} hamming.",
+                            log::info!(
+                                "Probe: [{}] Received jpeg image of {} bytes repeated[{}] perceptual hash[{:?}] hamming difference[{}].",
                                 pts,
                                 image_data.len(),
-                                image_same,
+                                duplicates,
                                 hash,
                                 hamming,
                             );
+
                             // Process the received image data
-                            images.push(image_data);
+                            images.push(ImageData {
+                                image: image_data,
+                                pts: pts,
+                                duplicates: duplicates,
+                                hash: hash,
+                                hamming: hamming,
+                            });
                         }
                     }
 
@@ -1882,7 +1922,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             batch.push(Arc::clone(&pid_stream_data));
                         }
 
-                        // Send the batch to the Kafka thread
                         if ktx_clone1
                             .send((
                                 batch.clone(),

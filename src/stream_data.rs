@@ -60,6 +60,15 @@ lazy_static! {
     static ref IAT_CAPTURE_PEAK: Mutex<u64> = Mutex::new(0);
 }
 
+#[derive(Clone, Debug)]
+pub struct ImageData {
+    pub image: Vec<u8>,
+    pub pts: u64,
+    pub duplicates: u64,
+    pub hash: Vec<u8>,
+    pub hamming: f64,
+}
+
 // CEA-608 character set mapping
 const CEA608_CHAR_MAP: &[&str] = &[
     " ", "!", "\"", "#", "$", "%", "&", "'", "(", ")", "á", "+", ",", "-", ".", "/", "0", "1", "2",
@@ -341,7 +350,7 @@ pub fn pull_images(
     appsink: AppSink,
     captionssink: AppSink,
     audio_sink: AppSink,
-    image_sender: mpsc::Sender<(Vec<u8>, u64, u64, Option<Mat>, f64)>,
+    image_sender: mpsc::Sender<(Vec<u8>, u64, u64, Vec<u8>, f64)>,
     save_images: bool,
     sample_interval: u64,
     image_height: u32,
@@ -599,8 +608,16 @@ pub fn pull_images(
                                 .expect("JPEG encoding failed");
 
                             // Send the filmstrip over the channel
+                            let hash_value = if let Some(ref hash_mat) = cur_hash {
+                                (0..hash_mat.cols())
+                                    .map(|i| *hash_mat.at::<u8>(i).unwrap())
+                                    .collect()
+                            } else {
+                                vec![0; 8]
+                            };
+
                             if let Err(err) = image_sender
-                                .send((jpeg_data, pts, image_same, cur_hash.clone(), hamming))
+                                .send((jpeg_data, pts, image_same, hash_value, hamming))
                                 .await
                             {
                                 log::error!("Failed to send image data through channel: {}", err);
