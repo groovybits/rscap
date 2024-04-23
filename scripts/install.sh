@@ -497,7 +497,6 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=$PREFIX --libdir=$PREFIX/lib64
 
   cd ..
-  rm -rf gst-plugin-rs
 fi
 touch gst-plugins-rs-installed.done
 
@@ -506,8 +505,9 @@ echo
 echo "------------------------------------------------------------"
 echo "Cleaning RsCap..."
 cargo clean
-echo "Building RsCap..."
-BUILD=release sh scripts/compile.sh gst
+CUR_DIR=$(pwd)
+echo "Building RsCap in $CUR_DIR ..."
+BUILD=release sh ./scripts/compile.sh gst
 #run_with_scl cargo build --features gst --release
 
 # Copy RsCap binaries to the installation directory
