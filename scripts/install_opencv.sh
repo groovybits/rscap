@@ -89,8 +89,10 @@ run_with_scl $CMAKE -D CMAKE_BUILD_TYPE=RELEASE \
     -D WITH_GSTREAMER=OFF \
     -D WITH_FFMPEG=OFF \
     -D OPENCV_GENERATE_PKGCONFIG=ON \
-    -D BUILD_EXAMPLES=OFF \
-    ..
+    -D BUILD_EXAMPLES=OFF ..
 
+echo "Built OpenCV"
 run_with_scl make
 run_with_scl make install
+
+echo "OpenCV installed to $PREFIX"
