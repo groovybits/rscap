@@ -119,9 +119,9 @@ elif [ "$OS" = "Darwin" ]; then
     # Build on macOS
     echo "Building project (macOS)..."
     if [ "$BUILD" = "release" ]; then
-        cargo build $FEATURES --profile=release-with-debug
-    elif [ "$BUILD" == "release-with-debug" ]; then
         cargo build $FEATURES --release
+    elif [ "$BUILD" == "release-with-debug" ]; then
+        cargo build $FEATURES --profile=release-with-debug
     else
         cargo build $FEATURES
     fi
