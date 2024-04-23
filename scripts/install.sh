@@ -441,7 +441,7 @@ touch gst-plugins-good-installed.done
 if [ "$OS" == "Linux" ]; then
     export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
 else
-    export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib -C link-args=-Wl,-rpath,$PREFIX/lib64"
+    export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib -Wl,-rpath,$PREFIX/lib64"
 fi
 
 if [ ! -f "gst-plugins-rs-installed.done" ]; then
