@@ -2,7 +2,11 @@
 set -e
 #set -v
 
-CLEAN=0
+if [ "$CLEAN" == "" ]; then
+    CLEAN=1
+else
+    CLEAN=$CLEAN
+fi
 
 # Function to run a command within the SCL environment for CentOS
 run_with_scl() {
