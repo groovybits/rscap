@@ -92,8 +92,8 @@ run_with_scl $CMAKE -D CMAKE_BUILD_TYPE=RELEASE \
     -D OPENCV_GENERATE_PKGCONFIG=ON \
     -D BUILD_EXAMPLES=OFF ..
 
+echo "Configured OpenCV"
+run_with_scl make -j $(nproc)
 echo "Built OpenCV"
-run_with_scl make
 make install
-
 echo "OpenCV installed to $PREFIX"

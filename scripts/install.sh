@@ -2,7 +2,7 @@
 set -e
 #set -v
 
-CLEAN=1
+CLEAN=0
 
 # Function to run a command within the SCL environment for CentOS
 run_with_scl() {
@@ -90,7 +90,9 @@ if [ "$OS" = "Linux" ]; then
 fi
 
 # OpenCV installation
-sh ../scripts/install_opencv.sh
+if [ ! -d "opencv" ]; then
+    sh ../scripts/install_opencv.sh $PREFIX
+fi
 
 # Ensure Meson and Ninja are installed and use the correct Ninja
 if [ "$OS" = "Darwin" ]; then
@@ -105,9 +107,12 @@ if [ "$OS" = "Darwin" ]; then
 fi
 
 if [ "$OS" = "Linux" ]; then
-    export CXXFLAGS="-stdlib=libc++"
-    export LDFLAGS="-lc++"
-    export CXXFLAGS="-std=c++11"
+    echo "Linux Build"
+    #export CXXFLAGS="-stdlib=libc++"
+    #export LDFLAGS="-lc++"
+    #export CXXFLAGS="-std=c++11"
+else
+    echo "Mac Build"
 fi
 
 # Explicitly use cmake from $PREFIX/bin for Meson configuration
