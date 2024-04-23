@@ -470,7 +470,7 @@ if [ ! -f "gst-plugins-good-installed.done" ] ; then
         tar xf gst-plugins-good-$GST_VERSION.tar.xz
     fi
     cd gst-plugins-good-$GST_VERSION
-    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE -Dqml6=disabled
+    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
     run_with_scl ninja -C _build
     run_with_scl ninja -C _build install
     cd ..
