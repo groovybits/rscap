@@ -110,7 +110,6 @@ elif [ "$OS" = "Darwin" ]; then
         xcode-select --install
         # Note: The user will need to continue the installation process manually if required.
     fi
-    brew install capnp zeromq
     export CXXFLAGS="-stdlib=libc++"
     export LDFLAGS="-lc++"
     # macOS specific setup
