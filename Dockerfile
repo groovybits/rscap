@@ -11,8 +11,7 @@ WORKDIR /app
 COPY . /app/
 WORKDIR /app
 
-# Run the install script
-RUN ./scripts/install.sh gst
+RUN echo "alias sudo='true'" >> ~/.bashrc && source ~/.bashrc && sh ./scripts/install.sh
 
 FROM centos:7 AS binary
 
