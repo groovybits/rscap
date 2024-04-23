@@ -6,14 +6,14 @@ clean:
 	cargo clean
 
 probe_run:
-	scripts/probe.sh
+	sh scripts/probe.sh
 
 build:
-	scripts/compile.sh
+	sh scripts/compile.sh
 
 build_gst:
-	scripts/compile.sh gst
+	sh scripts/compile.sh gst
 
 install:
-	scripts/install.sh
+	sh scripts/install.sh
 
