@@ -41,8 +41,8 @@ mkdir -p %{_builddir}%{prefix}
 cd %{_builddir}
 
 # Clone RsProbe repository and checkout the specific tag
-GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/rscap.git %{_builddir}rsprobe
-cd %{_builddir}rsprobe
+GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/rscap.git %{_builddir}/rsprobe
+cd %{_builddir}/rsprobe
 git checkout $RSCAP_VERSION
 sh scripts/install_opencv.sh %{_builddir}%{prefix}
 cd ..
@@ -286,7 +286,7 @@ echo "------------------------------------------------------------"
 echo "Building RsProbe..."
 echo "------------------------------------------------------------"
 
-cd %{_builddir}rsprobe
+cd %{_builddir}/rsprobe
 
 # Set RUSTFLAGS for RPATH
 export RUSTFLAGS="-C link-args=-Wl,-rpath,%{prefix}/lib:%{prefix}/lib64"
