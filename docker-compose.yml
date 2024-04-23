@@ -12,9 +12,9 @@ services:
       - KAFKA_TOPIC=rsprobe
       - KAFKA_BROKER=localhost:9092
       - EXTRACT_IMAGES=true
+    network_mode: host
     networks:
       - rsnet
 
 networks:
   rsnet:
-
