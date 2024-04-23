@@ -502,6 +502,8 @@ touch gst-plugins-rs-installed.done
 
 # RsCap installation
 echo
+echo "Changing to RsCap directory... 'cd ../'"
+cd ..
 echo "------------------------------------------------------------"
 echo "Cleaning RsCap..."
 cargo clean
