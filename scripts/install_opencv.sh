@@ -9,8 +9,16 @@ O0PENCV_VERSION=4.5.5
 CMAKE=cmake
 PREFIX=/opt/rsprobe
 
+if [ "$OS" == "Linux" ]; then
+    export CMAKE=cmake3
+else
+    brew install cmake
+    export CMAKE=cmake
+fi
+
 run_with_scl() {
-    if [ "$OS" = "Linux" ]; then
+    OS="$(uname -s)"
+    if [ "$OS" == "Linux" ]; then
         scl enable devtoolset-11 llvm-toolset-7.0 -- "$@"
     else
         "$@"
@@ -45,13 +53,6 @@ if [ -d "opencv/build" ]; then
     mkdir opencv/build
 else
     mkdir opencv/build
-fi
-
-if [ "$OS" == "Linux" ]; then
-    export CMAKE=cmake3
-else
-    brew install cmake
-    export CMAKE=cmake
 fi
 
 export GST_PLUGIN_PATH=$PREFIX/lib64/gstreamer-1.0
@@ -93,6 +94,6 @@ run_with_scl $CMAKE -D CMAKE_BUILD_TYPE=RELEASE \
 
 echo "Built OpenCV"
 run_with_scl make
-run_with_scl make install
+make install
 
 echo "OpenCV installed to $PREFIX"
