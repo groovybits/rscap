@@ -1,5 +1,6 @@
-#!/bin/sh
+#!/bin/bash
 set -e
+#set -v
 
 CLEAN=1
 
@@ -45,7 +46,6 @@ LIBFFI_VERSION=3.3
 NASM_VERSION=2.15.05
 FFMPEG_VERSION=6.1.1
 LIBZVBI_VERSION=0.2.42
-OPENCV_VERSION=4.5.5
 
 # Define the installation prefix
 PREFIX=/opt/rsprobe
@@ -73,10 +73,14 @@ if [ "$OS" = "Linux" ]; then
     sudo yum-config-manager --disable epel
     sudo yum install --enablerepo=epel* -y zvbi-devel
     sudo yum install -y git
-    sudo yum install -y cmake3 git llvm-toolset-7.0-clang-devel, glibc-devel, libstdc++-devel
+    sudo yum install -y cmake3 git libstdc++-devel
+    sudo yum install -y llvm-toolset-7.0-llvm-devel llvm-toolset-7.0-clang
     sudo yum install -y rh-python38 rh-python38-python-pip
 
 fi
+
+# OpenCV installation
+sh ../scripts/install_opencv.sh build
 
 # Ensure Meson and Ninja are installed and use the correct Ninja
 if [ "$OS" = "Linux" ]; then
@@ -98,64 +102,6 @@ if [ "$OS" = "Linux" ]; then
     export LDFLAGS="-lc++"
     export CXXFLAGS="-std=c++11"
 fi
-
-# OpenCV
-#if [ "$OS" = "Linux" ]; then
-    ## Install OpenCV with perceptual image hashing
-    if [ ! -d "opencv" ]; then
-        git clone https://github.com/opencv/opencv.git
-        cd opencv
-        git checkout $OPENCV_VERSION
-        cd ..
-    fi
-    if [ ! -d "opencv_contrib" ]; then
-        git clone https://github.com/opencv/opencv_contrib.git
-        cd opencv_contrib
-        git checkout $OPENCV_VERSION
-        cd ..
-    fi
-
-    if [ -d "opencv/build" ]; then
-        rm -rf opencv/build # fresh build
-        mkdir opencv/build
-    else
-        mkdir opencv/build
-    fi
-    cd opencv/build
-
-    CMAKE_C_COMPILER_VAR=
-    CMAKE_CXX_COMPILER_VAR=
-    if [ "$OS" == "Linux" ]; then
-         CMAKE_C_COMPILER_VAR="-D CMAKE_C_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang"
-         CMAKE_CXX_COMPILER_VAR="-D CMAKE_CXX_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang++"
-    fi
-
-    run_with_scl_llvm $CMAKE -D CMAKE_BUILD_TYPE=RELEASE \
-        -D CMAKE_INSTALL_PREFIX=$PREFIX \
-        -D INSTALL_C_EXAMPLES=OFF \
-        -D INSTALL_PYTHON_EXAMPLES=OFF \
-        -DBUILD_opencv_core=ON \
-        -DBUILD_opencv_imgproc=ON \
-        -DBUILD_opencv_img_hash=ON \
-        -DBUILD_opencv_imgcodecs=ON \
-        -DBUILD_opencv_highgui=ON $CMAKE_C_COMPILER_VAR $CMAKE_CXX_COMPILER_VAR \
-        -D WITH_TBB=ON \
-        -D WITH_V4L=OFF \
-        -D WITH_QT=OFF \
-        -D WITH_OPENGL=ON \
-        -D OPENCV_EXTRA_MODULES_PATH=../../opencv_contrib/modules \
-        -D WITH_GSTREAMER=OFF \
-        -D WITH_FFMPEG=OFF \
-        -D OPENCV_GENERATE_PKGCONFIG=ON \
-        -D BUILD_EXAMPLES=OFF \
-        ..
-
-    run_with_scl_llvm make
-    run_with_scl_llvm make install
-    cd ../../
-#else
-#    brew install opencv
-#fi
 
 # Explicitly use cmake from $PREFIX/bin for Meson configuration
 echo "[binaries]" > meson-native-file.ini
@@ -287,7 +233,6 @@ else
     brew install nasm
 fi
 
-
 # libx264
 if [ "$OS" = "Linux" ]; then
     if [ ! -f "x264-installed.done" ] ; then
@@ -316,11 +261,6 @@ else
     brew install x264
 fi
 
-CMAKE=cmake3
-if [ "$OS" = "Darwin" ]; then
-    CMAKE=cmake
-fi
-
 # libx265
 if [ "$OS" = "Linux" ]; then
     if [ ! -f "x265-installed.done" ] ; then
@@ -339,7 +279,7 @@ if [ "$OS" = "Linux" ]; then
         cd build
 
         # Use cmake3 to configure the build, respecting the PREFIX variable for installation
-        run_with_scl $CMAKE -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=$PREFIX -DENABLE_SHARED:bool=on ../source
+        run_with_scl cmake3 -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=$PREFIX -DENABLE_SHARED:bool=on ../source
 
         # Compile and install
         run_with_scl make
