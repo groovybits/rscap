@@ -515,13 +515,13 @@ pub fn pull_images(
                         // Convert the RGB image to grayscale (GRAY8)
                         let gray_image: ImageBuffer<Luma<u8>, Vec<u8>> = image.convert();
 
-                        // Convert the grayscale image to a Vec<u8>
-                        let gray_data = gray_image.into_raw();
-
                         // Create a perceptual hash from the grayscale image using the opencv img_hash module
                         let mut current_hash = Mat::default();
                         {
-                            let gray_mat = Mat::from_slice(&gray_data).unwrap();
+                            let (_width, height) = gray_image.dimensions();
+                            let data = gray_image.into_raw();
+                            let gray_mat_1d = Mat::from_slice(&data).unwrap();
+                            let gray_mat = gray_mat_1d.reshape(1, height as i32).unwrap();
                             let mut hasher = PHash::create().unwrap();
                             hasher.compute(&gray_mat, &mut current_hash).unwrap();
                         }
