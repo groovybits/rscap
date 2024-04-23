@@ -486,19 +486,19 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   echo
   echo "Building gst-plugin-closedcaption..."
   run_with_scl cargo cbuild --release --package gst-plugin-closedcaption --quiet
-  run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64 --quiet
+  run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64 --silent
 
   # Audio
   echo
   echo "Building gst-plugin-audiofx..."
   run_with_scl cargo cbuild --release --package gst-plugin-audiofx --quiet
-  run_with_scl cargo cinstall --release --package gst-plugin-audiofx --prefix=$PREFIX --libdir=$PREFIX/lib64 --quiet
+  run_with_scl cargo cinstall --release --package gst-plugin-audiofx --prefix=$PREFIX --libdir=$PREFIX/lib64 --silent
 
   # Video
   echo
   echo "Building gst-plugin-videofx..."
   run_with_scl cargo cbuild --release --package gst-plugin-videofx --quiet
-  run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=$PREFIX --libdir=$PREFIX/lib64 --quiet
+  run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=$PREFIX --libdir=$PREFIX/lib64 --silent
 
   cd ..
 fi
