@@ -341,7 +341,7 @@ pub fn pull_images(
     appsink: AppSink,
     captionssink: AppSink,
     audio_sink: AppSink,
-    image_sender: mpsc::Sender<(Vec<u8>, u64, u64)>,
+    image_sender: mpsc::Sender<(Vec<u8>, u64, u64, Option<Mat>, f64)>,
     save_images: bool,
     sample_interval: u64,
     image_height: u32,
@@ -357,6 +357,8 @@ pub fn pull_images(
         let mut filmstrip_images = Vec::new();
         let save_captions = false;
         let mut prev_hash = None;
+        let mut cur_hash = None;
+        let mut hamming: f64 = 0.0;
         let mut image_same = 0;
         let frozen_frame_threshold = 30; // Number of frames to detect frozen picture
 
@@ -520,7 +522,9 @@ pub fn pull_images(
                             let hasher = PHash::create().unwrap();
                             let hamming_distance =
                                 hasher.compare(prev_hash, &current_hash).unwrap();
-                            log::info!("Hamming Distance: {}", hamming_distance);
+                            hamming = hamming_distance;
+                            cur_hash = Some(current_hash.clone());
+                            log::debug!("Hamming Distance: {}", hamming_distance);
 
                             // Check if the current frame is the same as the previous frame
                             if hamming_distance == 0.0 {
@@ -541,7 +545,7 @@ pub fn pull_images(
 
                             // Trigger alerts or perform actions based on the hamming distance
                             if hamming_distance > 10.0 {
-                                log::warn!("Significant perceptual difference detected!");
+                                log::debug!("Significant perceptual difference detected!");
                             }
                         }
 
@@ -595,7 +599,9 @@ pub fn pull_images(
                                 .expect("JPEG encoding failed");
 
                             // Send the filmstrip over the channel
-                            if let Err(err) = image_sender.send((jpeg_data, pts, image_same)).await
+                            if let Err(err) = image_sender
+                                .send((jpeg_data, pts, image_same, cur_hash.clone(), hamming))
+                                .await
                             {
                                 log::error!("Failed to send image data through channel: {}", err);
                                 break;

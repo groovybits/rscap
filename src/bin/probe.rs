@@ -1828,12 +1828,16 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
                         // Receive and process images
                         #[cfg(feature = "gst")]
-                        if let Ok((image_data, pts, image_same)) = image_receiver.try_recv() {
-                            debug!(
-                                "[{}] Received a jpeg image with size: {} bytes {} repeated image.",
+                        if let Ok((image_data, pts, image_same, hash, hamming)) =
+                            image_receiver.try_recv()
+                        {
+                            info!(
+                                "Probe: [{}] Received a jpeg image with size: {} bytes {} repeated image {:?} hash {} hamming.",
                                 pts,
                                 image_data.len(),
-                                image_same
+                                image_same,
+                                hash,
+                                hamming,
                             );
                             // Process the received image data
                             images.push(image_data);
