@@ -15,7 +15,7 @@ LD_LIBRARY_PATH=$PREFIX/lib:$PREFIX/lib64:$LD_LIBRARY_PATH
 export LD_LIBRARY_PATH
 
 # Assuming your pkg-config files are in /opt/rsprobe/lib64/pkgconfig
-PKG_CONFIG_PATH=/opt/rsprobe/lib64/pkgconfig:$PKG_CONFIG_PATH
+PKG_CONFIG_PATH=/opt/rsprobe/lib64/pkgconfig:/opt/rsprobe/lib/pkgconfig:$PKG_CONFIG_PATH
 export PKG_CONFIG_PATH
 
 # Function to prompt for installation
