@@ -42,7 +42,7 @@ cd %{_builddir}
 
 # Clone RsProbe repository and checkout the specific tag
 GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/rscap.git %{_builddir}rsprobe
-cd ${_builddir}rsprobe
+cd %{_builddir}rsprobe
 git checkout $RSCAP_VERSION
 sh scripts/install_opencv.sh %{_builddir}%{prefix}
 cd ..
