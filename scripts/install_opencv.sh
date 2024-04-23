@@ -96,10 +96,10 @@ run_with_scl $CMAKE \
     -DWITH_GSTREAMER=OFF \
     -DWITH_FFMPEG=OFF \
     -DOPENCV_GENERATE_PKGCONFIG=ON \
-    -DBUILD_EXAMPLES=OFF ..
+    -DBUILD_EXAMPLES=OFF .. --log-level=ERROR
 
 echo "Configured OpenCV"
-run_with_scl make -j $CPUS
+run_with_scl make -j $CPUS --silent
 echo "Built OpenCV"
-make install
+make install --silent
 echo "OpenCV installed to $PREFIX"

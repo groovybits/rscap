@@ -110,8 +110,8 @@ tar -xzf nasm-$NASM_VERSION.tar.gz
 cd nasm-$NASM_VERSION
 ./autogen.sh
 ./configure --prefix=%{_builddir}%{prefix}
-make -j $(nproc)
-make install
+make -j $(nproc) --silent
+make install --silent
 cd ..
 rm -rf nasm-$NASM_VERSION
 rm -f nasm-$NASM_VERSION.tar.gz
@@ -124,8 +124,8 @@ echo "---"
 GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"  git clone https://code.videolan.org/videolan/x264.git
 cd x264
 run_with_scl ./configure --prefix=%{_builddir}%{prefix} --enable-shared --enable-static --enable-pic --libdir=%{_builddir}%{prefix}/lib64 --includedir=%{_builddir}%{prefix}/include --extra-ldflags="-L%{_builddir}%{prefix}/lib64"
-run_with_scl make -j $(nproc)
-make install
+run_with_scl make -j $(nproc) --silent
+make install --silent
 ldconfig
 cd ..
 rm -rf x264
@@ -138,9 +138,9 @@ GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"  git clone https://github.com/
 cd x265
 mkdir -p build
 cd build
-run_with_scl cmake3 -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=%{_builddir}%{prefix} -DCMAKE_INSTALL_LIBDIR=lib64 -DCMAKE_BUILD_TYPE=Release -DENABLE_SHARED:bool=on --libdir=%{_builddir}%{prefix}/lib64 --includedir=%{_buildidr}%{prefix}/include --extra-ldflags="-L%{_builddir}%{prefix}/lib64" ../source
-run_with_scl make -j $(nproc)
-make install
+run_with_scl cmake3 -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=%{_builddir}%{prefix} -DCMAKE_INSTALL_LIBDIR=lib64 -DCMAKE_BUILD_TYPE=Release -DENABLE_SHARED:bool=on --libdir=%{_builddir}%{prefix}/lib64 --includedir=%{_buildidr}%{prefix}/include --extra-ldflags="-L%{_builddir}%{prefix}/lib64" ../source --log-level=ERROR
+run_with_scl make -j $(nproc) --silent
+make install --silent
 ldconfig
 cd ../..
 rm -rf x265
@@ -158,8 +158,8 @@ run_with_scl ./configure --prefix=%{_builddir}%{prefix} \
     --enable-libx265 --enable-libzvbi \
     --extra-cflags="-I%{_builddir}%{prefix}/include" --extra-ldflags="-L%{_builddir}%{prefix}/lib" \
     --libdir=%{_builddir}%{prefix}/lib64
-run_with_scl make -j $(nproc)
-make install
+run_with_scl make -j $(nproc) --silent
+make install --silent
 ldconfig
 cd ..
 rm -rf ffmpeg-$FFMPEG_VERSION
@@ -247,8 +247,8 @@ export RUSTC=%{_builddir}%{prefix}/bin/rustc
 # gstreamer rust plugins
 GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/cargo-c.git
 cd cargo-c
-#run_with_scl cargo install cargo-c --root=%{_builddir}%{prefix}
-run_with_scl cargo install --path=. --root=%{_builddir}%{prefix}
+#run_with_scl cargo install cargo-c --root=%{_builddir}%{prefix} --quiet
+run_with_scl cargo install --path=. --root=%{_builddir}%{prefix} --quiet
 cd ../
 
 rm -rf gst-plugin-rs
@@ -257,16 +257,16 @@ cd gst-plugin-rs
 git checkout $GST_PLUGINS_RS_VERSION
 
 # Closed Caption
-run_with_scl cargo cbuild --release --package gst-plugin-closedcaption
-run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=%{_builddir}%{prefix} --libdir=%{_builddir}%{prefix}/lib64
+run_with_scl cargo cbuild --release --package gst-plugin-closedcaption --quiet
+run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=%{_builddir}%{prefix} --libdir=%{_builddir}%{prefix}/lib64 --quiet
 
 # Audio
-run_with_scl cargo cbuild --release --package gst-plugin-audiofx
-run_with_scl cargo cinstall --release --package gst-plugin-audiofx --prefix=%{_builddir}%{prefix} --libdir=%{_builddir}%{prefix}/lib64
+run_with_scl cargo cbuild --release --package gst-plugin-audiofx --quiet
+run_with_scl cargo cinstall --release --package gst-plugin-audiofx --prefix=%{_builddir}%{prefix} --libdir=%{_builddir}%{prefix}/lib64 --quiet
 
 # Video
-run_with_scl cargo cbuild --release --package gst-plugin-videofx
-run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=%{_builddir}%{prefix} --libdir=%{_builddir}%{prefix}/lib64
+run_with_scl cargo cbuild --release --package gst-plugin-videofx --quiet
+run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=%{_builddir}%{prefix} --libdir=%{_builddir}%{prefix}/lib64 --quiet
 
 cd ..
 rm -rf gst-plugin-rs

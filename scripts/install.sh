@@ -179,8 +179,8 @@ if [ "$OS" = "Linux" ]; then
         fi
         cd libffi-$LIBFFI_VERSION
         run_with_scl ./configure --prefix=$PREFIX
-        run_with_scl make -j $CPUS
-        run_with_scl make install
+        run_with_scl make -j $CPUS --silent
+        run_with_scl make install --silent
         cd ..
     fi
     touch libffi-installed.done
@@ -200,8 +200,8 @@ if [ "$(uname)" = "Darwin" ]; then
         git checkout v$LIBZVBI_VERSION
         run_with_scl sh autogen.sh
         run_with_scl ./configure --prefix=$PREFIX
-        run_with_scl make -j $CPUS
-        run_with_scl make install
+        run_with_scl make -j $CPUS --silent
+        run_with_scl make install --silent
         cd ..
     fi
     touch libzvbi-installed.done
@@ -246,8 +246,8 @@ if [ "$OS" = "Linux" ]; then
         # Compile and install
         ./autogen.sh
         ./configure --prefix=$PREFIX
-        make -j $CPUS
-        make install
+        make -j $CPUS --silent
+        make install --silent
         cd ..
     fi
     touch nasm-installed.done
@@ -274,8 +274,8 @@ if [ "$OS" = "Linux" ]; then
 
         # Compile
         run_with_scl ./configure --prefix=$PREFIX --enable-shared --enable-static --enable-pic
-        run_with_scl make -j $CPUS
-        make install
+        run_with_scl make -j $CPUS --silent
+        make install --silent
         cd ..
     fi
     touch x264-installed.done
@@ -304,8 +304,8 @@ if [ "$OS" = "Linux" ]; then
         run_with_scl cmake3 -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=$PREFIX -DENABLE_SHARED:bool=on ../source
 
         # Compile and install
-        run_with_scl make -j $CPUS
-        make install
+        run_with_scl make -j $CPUS --silent
+        make install --silent
 
         # Navigate back to the initial directory
         cd ../..
@@ -326,7 +326,7 @@ fi
             wget http://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.bz2
         fi
         # Extract
-        if [ ! -d ffmpeg-$FFMPEG_VERSION ]; then
+        if [ ! -d "ffmpeg-$FFMPEG_VERSION" ]; then
             tar xf ffmpeg-$FFMPEG_VERSION.tar.bz2
         fi
         # Compile
@@ -337,8 +337,8 @@ fi
             --enable-libx265 --enable-libzvbi \
             --disable-vulkan \
             --extra-cflags="-I$PREFIX/include" --extra-ldflags="-L$PREFIX/lib"
-        run_with_scl make -j $CPUS
-        make install
+        run_with_scl make -j $CPUS --silent
+        make install --silent
         cd ..
     fi
     touch ffmpeg-installed.done
@@ -467,8 +467,8 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   # GStreamer Rust plugins
   GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/cargo-c.git
   cd cargo-c
-  #run_with_scl cargo install cargo-c --root=$PREFIX
-  run_with_scl cargo install --path=. --root=$PREFIX
+  #run_with_scl cargo install cargo-c --root=$PREFIX --quiet
+  run_with_scl cargo install --path=. --root=$PREFIX --quiet
   cd ../
 
   # Download gst-plugins-rs source code
@@ -485,20 +485,20 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   # Closed Caption
   echo
   echo "Building gst-plugin-closedcaption..."
-  run_with_scl cargo cbuild --release --package gst-plugin-closedcaption
-  run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64
+  run_with_scl cargo cbuild --release --package gst-plugin-closedcaption --quiet
+  run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64 --quiet
 
   # Audio
   echo
   echo "Building gst-plugin-audiofx..."
-  run_with_scl cargo cbuild --release --package gst-plugin-audiofx
-  run_with_scl cargo cinstall --release --package gst-plugin-audiofx --prefix=$PREFIX --libdir=$PREFIX/lib64
+  run_with_scl cargo cbuild --release --package gst-plugin-audiofx --quiet
+  run_with_scl cargo cinstall --release --package gst-plugin-audiofx --prefix=$PREFIX --libdir=$PREFIX/lib64 --quiet
 
   # Video
   echo
   echo "Building gst-plugin-videofx..."
-  run_with_scl cargo cbuild --release --package gst-plugin-videofx
-  run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=$PREFIX --libdir=$PREFIX/lib64
+  run_with_scl cargo cbuild --release --package gst-plugin-videofx --quiet
+  run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=$PREFIX --libdir=$PREFIX/lib64 --quiet
 
   cd ..
 fi
@@ -510,7 +510,7 @@ echo "Changing to RsCap directory... 'cd ../'"
 cd ..
 echo "------------------------------------------------------------"
 echo "Cleaning RsCap..."
-cargo clean
+cargo clean --quiet
 CUR_DIR=$(pwd)
 echo "Building RsCap in $CUR_DIR ..."
 BUILD_TYPE=release
