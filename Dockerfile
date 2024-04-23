@@ -11,7 +11,6 @@ RUN yum groupinstall -y "Development Tools" && \
     yum install -y centos-release-scl-rh epel-release && \
     yum install -y devtoolset-11 rh-python38 && \
     yum install -y yum-utils && \
-    yum-config-manager --disable epel && \
     yum install --enablerepo=epel* -y zvbi-devel && \
     yum install -y --enablerepo=epel* wget curl git cmake3 && \
     yum install -y cmake3 git libstdc++-devel gcc gcc-c++ make && \
