@@ -439,7 +439,11 @@ if [ ! -f "gst-plugins-good-installed.done" ] ; then
 fi
 touch gst-plugins-good-installed.done
 
-export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
+if [ "$OS" == "Linux ]; then
+    export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
+else
+    export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib -C link-args=-Wl,-rpath,$PREFIX/lib64"
+fi
 
 if [ ! -f "gst-plugins-rs-installed.done" ]; then
   echo "---"

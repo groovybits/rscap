@@ -93,7 +93,7 @@ if [ "$OS" = "Linux" ]; then
     fi
     # Add elif blocks here for other specific Linux distributions
 elif [ "$OS" = "Darwin" ]; then
-    export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib"
+    export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib -C link-args=-Wl,-rpath,$PREFIX/lib64"
     echo "macOS detected."
     # Brew RPMs
     # check if brew binary exists
