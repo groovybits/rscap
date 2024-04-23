@@ -52,10 +52,16 @@ PREFIX=/opt/rsprobe
 export PATH=$PREFIX/bin:$PATH
 
 USER=$(whoami)
-if [ ! -d "$PREFIX" ]; then
-    sudo mkdir -p $PREFIX
+if [ "$USER" == "root" ]; then
+    SUDO=
+else
+    SUDO=sudo
 fi
-sudo chown -R $USER $PREFIX
+echo "User $USER executing script"
+if [ ! -d "$PREFIX" ]; then
+    $SUDO mkdir -p $PREFIX
+fi
+$SUDO chown -R $USER $PREFIX
 # Ensure necessary tools are installed
 
 # For pkg-config to find .pc files
@@ -66,16 +72,16 @@ export PATH=$PREFIX/bin:$PATH
 
 if [ "$OS" = "Linux" ]; then
     # Ensure the system is up to date and has the basic build tools
-    sudo yum groupinstall -y "Development Tools"
-    sudo yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel libxml2-devel glib2-devel cairo-devel capnproto-devel capnproto ladspa-devel pango-devel cairo-gobject-devel cairo-gobject
-    sudo yum install -y centos-release-scl-rh epel-release
-    sudo yum install -y yum-utils
-    sudo yum-config-manager --disable epel
-    sudo yum install --enablerepo=epel* -y zvbi-devel
-    sudo yum install -y git
-    sudo yum install -y cmake3 git libstdc++-devel
-    sudo yum install -y llvm-toolset-7.0-llvm-devel llvm-toolset-7.0-clang
-    sudo yum install -y rh-python38 rh-python38-python-pip
+    $SUDO yum groupinstall -y "Development Tools"
+    $SUDO yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel libxml2-devel glib2-devel cairo-devel capnproto-devel capnproto ladspa-devel pango-devel cairo-gobject-devel cairo-gobject
+    $SUDO yum install -y centos-release-scl-rh epel-release
+    $SUDO yum install -y yum-utils
+    $SUDO yum-config-manager --disable epel
+    $SUDO yum install --enablerepo=epel* -y zvbi-devel
+    $SUDO yum install -y git
+    $SUDO yum install -y cmake3 git libstdc++-devel
+    $SUDO yum install -y llvm-toolset-7.0-llvm-devel llvm-toolset-7.0-clang
+    $SUDO yum install -y rh-python38 rh-python38-python-pip
 
 fi
 
@@ -84,8 +90,8 @@ sh ../scripts/install_opencv.sh
 
 # Ensure Meson and Ninja are installed and use the correct Ninja
 if [ "$OS" = "Linux" ]; then
-    run_with_scl sudo pip3.8 install meson
-    run_with_scl sudo pip3.8 install ninja
+    run_with_scl $SUDO pip3.8 install meson
+    run_with_scl $SUDO pip3.8 install ninja
 else
     brew install meson
     brew install ninja
