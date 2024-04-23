@@ -8,11 +8,11 @@ if [ "$1" != "" ]; then
     FEATURES="--features $1"
 fi
 
-if [ "$BUILD" != "" ]; then
-    echo "Using build profile: $BUILD"
-else
+if [ "$BUILD" == "" ]; then
     echo "Using default build profile."
     BUILD=release-with-debug
+else
+    echo "Using build profile: $BUILD"
 fi
 PREFIX=/opt/rsprobe
 

@@ -293,8 +293,8 @@ export RUSTFLAGS="-C link-args=-Wl,-rpath,%{prefix}/lib:%{prefix}/lib64"
 
 ## Build RsProbe
 echo "Running scripts/compile.sh gst"
-BUILD_TYPE=release
-BUILD=$BUILD_TYPE sh scripts/compile.sh gst
+export BUILD_TYPE=release
+BUILD=$BUILD_TYPE ./scripts/compile.sh gst
 
 # Copy RsProbe binaries to the installation directory
 echo "Copying RsProbe binaries to %{_builddir}%{prefix}/bin"
