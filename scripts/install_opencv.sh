@@ -3,6 +3,7 @@
 set -e
 
 O0PENCV_VERSION=4.5.5
+CMAKE=cmake
 
 run_with_scl() {
     OS="$(uname -s)"
@@ -12,6 +13,12 @@ run_with_scl() {
         "$@"
     fi
 }
+
+if [ "$OS" == "Linux" ]; then
+    CMAKE=cmake3
+else
+    CMAKE=cmake
+fi
 
 if [ ! -d "build" ]; then
     mkdir -p build
@@ -46,7 +53,7 @@ export PKG_CONFIG_PATH=$PREFIX/lib64/pkgconfig:$PREFIX/lib/pkgconfig:$PKG_CONFIG
 
 cd opencv/build
 
-run_with_scl cmake3 -D CMAKE_BUILD_TYPE=RELEASE \
+run_with_scl $CMAKE -D CMAKE_BUILD_TYPE=RELEASE \
     -D CMAKE_INSTALL_PREFIX=$PREFIX \
     -D INSTALL_C_EXAMPLES=OFF \
     -D INSTALL_PYTHON_EXAMPLES=OFF \
