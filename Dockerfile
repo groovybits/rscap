@@ -11,7 +11,7 @@ WORKDIR /app
 COPY . /app/
 WORKDIR /app
 
-RUN echo "alias sudo='true'" >> ~/.bashrc && source ~/.bashrc && sh ./scripts/install.sh
+RUN ./scripts/install.sh
 
 FROM centos:7 AS binary
 
