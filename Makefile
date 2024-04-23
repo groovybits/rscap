@@ -15,13 +15,13 @@ build_gst:
 	sh scripts/compile.sh gst
 
 docker:
-    docker compose build
+	docker compose build
 
 docker_up:
-    docker compose up
+	docker compose up
 
 docker_down:
-    docker compose down
+	docker compose down
 
 install:
 	sh scripts/install.sh
