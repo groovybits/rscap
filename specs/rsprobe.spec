@@ -1,5 +1,5 @@
 Name:           rsprobe
-Version:        0.6.8
+Version:        0.6.9
 Release:        1%{?dist}
 Summary:        MpegTS Stream Analysis Probe with Kafka and GStreamer
 License:        MIT
@@ -235,7 +235,7 @@ echo "---"
 wget https://gstreamer.freedesktop.org/src/gst-plugins-good/gst-plugins-good-$GST_VERSION.tar.xz
 tar xf gst-plugins-good-$GST_VERSION.tar.xz
 cd gst-plugins-good-$GST_VERSION
-run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
+run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH -Dopenexr=disabled -Dopencv=disabled
 run_with_scl ninja -C _build
 run_with_scl ninja -C _build install
 cd ..
