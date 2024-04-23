@@ -7,7 +7,7 @@ O0PENCV_VERSION=4.5.5
 run_with_scl() {
     OS="$(uname -s)"
     if [ "$OS" = "Linux" ]; then
-        scl enable devtoolset-11 rh-python38 llvm-toolset-7.0 -- "$@"
+        scl enable devtoolset-11 llvm-toolset-7.0 -- "$@"
     else
         "$@"
     fi
