@@ -88,7 +88,7 @@ run_with_scl_llvm cmake3 -D CMAKE_BUILD_TYPE=RELEASE \
     -D BUILD_EXAMPLES=OFF \
     ..
 
-run_with_scl_llvm make -j$(nproc)
+run_with_scl_llvm make
 run_with_scl_llvm make install
 cd ../../
 
@@ -148,7 +148,7 @@ tar -xzf nasm-$NASM_VERSION.tar.gz
 cd nasm-$NASM_VERSION
 ./autogen.sh
 ./configure --prefix=%{_builddir}%{prefix}
-make -j$(nproc)
+make
 make install
 cd ..
 rm -rf nasm-$NASM_VERSION
@@ -162,7 +162,7 @@ echo "---"
 GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"  git clone https://code.videolan.org/videolan/x264.git
 cd x264
 run_with_scl ./configure --prefix=%{_builddir}%{prefix} --enable-shared --enable-static --enable-pic --libdir=%{_builddir}%{prefix}/lib64 --includedir=%{_builddir}%{prefix}/include --extra-ldflags="-L%{_builddir}%{prefix}/lib64"
-run_with_scl make -j$(nproc)
+run_with_scl make
 make install
 ldconfig
 cd ..
@@ -177,7 +177,7 @@ cd x265
 mkdir -p build
 cd build
 run_with_scl cmake3 -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=%{_builddir}%{prefix} -DCMAKE_INSTALL_LIBDIR=lib64 -DCMAKE_BUILD_TYPE=Release -DENABLE_SHARED:bool=on --libdir=%{_builddir}%{prefix}/lib64 --includedir=%{_buildidr}%{prefix}/include --extra-ldflags="-L%{_builddir}%{prefix}/lib64" ../source
-run_with_scl make -j$(nproc)
+run_with_scl make
 make install
 ldconfig
 cd ../..
@@ -196,7 +196,7 @@ run_with_scl ./configure --prefix=%{_builddir}%{prefix} \
     --enable-libx265 --enable-libzvbi \
     --extra-cflags="-I%{_builddir}%{prefix}/include" --extra-ldflags="-L%{_builddir}%{prefix}/lib" \
     --libdir=%{_builddir}%{prefix}/lib64
-run_with_scl make -j$(nproc)
+run_with_scl make
 make install
 ldconfig
 cd ..

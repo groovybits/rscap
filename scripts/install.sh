@@ -150,7 +150,7 @@ fi
         -D BUILD_EXAMPLES=OFF \
         ..
 
-    run_with_scl_llvm make -j$(nproc)
+    run_with_scl_llvm make
     run_with_scl_llvm make install
     cd ../../
 #else

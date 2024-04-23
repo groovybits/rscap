@@ -82,7 +82,7 @@ run_with_scl $CMAKE -D CMAKE_BUILD_TYPE=RELEASE \
     -D BUILD_EXAMPLES=OFF \
     ..
 
-run_with_scl make -j$(nproc)
+run_with_scl make
 run_with_scl make install
 
 cd ..
