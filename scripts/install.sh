@@ -85,6 +85,8 @@ if [ "$OS" = "Linux" ]; then
     $SUDO yum install -y llvm-toolset-7.0-llvm-devel llvm-toolset-7.0-clang
     $SUDO yum install -y rh-python38 rh-python38-python-pip
 
+    $SUDO pip3 install meson
+    $SUDO pip3 install ninja
     run_with_scl $SUDO pip3.8 install meson
     run_with_scl $SUDO pip3.8 install ninja
 
@@ -505,7 +507,7 @@ echo "------------------------------------------------------------"
 echo "Cleaning RsCap..."
 cargo clean
 echo "Building RsCap..."
-sh BUILD=release scripts/compile.sh gst
+BUILD=release sh scripts/compile.sh gst
 #run_with_scl cargo build --features gst --release
 
 # Copy RsCap binaries to the installation directory

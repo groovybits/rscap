@@ -24,10 +24,11 @@ RUN yum groupinstall -y "Development Tools" && \
     make python3 wget libffi-devel util-linux libmount-devel bison flex git \
     libxml2-devel pango-devel cairo-devel zvbi-devel ladspa-devel cairo-gobject-devel \
     cairo-gobject rh-python38 rh-python38-python-pip llvm-toolset-7.0-clang-devel libstdc++-devel \
-    llvm llvm-devel libjpeg-turbo-devel libtiff-devel llvm-toolset-7.0-llvm-devel llvm-toolset-7.0-clang && \
-    scl enable devtoolset-11 rh-python38 -- pip3.8 install meson && \
-    scl enable devtoolset-11 rh-python38 -- pip3.8 install ninja && \
-    sh ./scripts/install.sh
+    llvm llvm-devel libjpeg-turbo-devel libtiff-devel llvm-toolset-7.0-llvm-devel llvm-toolset-7.0-clang
+
+RUN pip3 install meson && scl enable devtoolset-11 rh-python38 -- pip3.8 install meson
+RUN pip3 install ninja && scl enable devtoolset-11 rh-python38 -- pip3.8 install ninja
+RUN sh ./scripts/install.sh
 
 FROM centos:7 AS binary
 
