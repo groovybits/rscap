@@ -41,8 +41,8 @@ mkdir -p %{_builddir}%{prefix}
 cd %{_builddir}
 
 # Clone RsProbe repository and checkout the specific tag
-GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/rscap.git rsprobe
-cd rsprobe
+GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/rscap.git %{_builddir}rsprobe
+cd ${_builddir}rsprobe
 git checkout $RSCAP_VERSION
 sh scripts/install_opencv.sh %{_builddir}%{prefix}
 cd ..
@@ -53,9 +53,6 @@ export PATH=%{_builddir}%{prefix}/bin:$PATH
 # For pkg-config to find .pc files
 export PKG_CONFIG_PATH=%{_builddir}%{prefix}/lib64/pkgconfig:%{_builddir}%{prefix}/lib/pkgconfig:$PKG_CONFIG_PATH
 export LD_LIBRARY_PATH=%{_builddir}%{prefix}/lib64:%{_builddir}%{prefix}/lib:$LD_LIBRARY_PATH
-
-echo "Changing directory... ../../"
-cd ../../
 
 # Explicitly use cmake3 for Meson configuration
 echo "[binaries]" > %{_builddir}/meson-native-file.ini
@@ -289,7 +286,7 @@ echo "------------------------------------------------------------"
 echo "Building RsProbe..."
 echo "------------------------------------------------------------"
 
-cd rsprobe
+cd %{_builddir}rsprobe
 
 # Set RUSTFLAGS for RPATH
 export RUSTFLAGS="-C link-args=-Wl,-rpath,%{prefix}/lib:%{prefix}/lib64"
