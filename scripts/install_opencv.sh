@@ -7,6 +7,7 @@ OS="$(uname -s)"
 
 O0PENCV_VERSION=4.5.5
 CMAKE=cmake
+PREFIX=/opt/rsprobe
 
 run_with_scl() {
     if [ "$OS" = "Linux" ]; then
@@ -16,14 +17,17 @@ run_with_scl() {
     fi
 }
 
-if [ "$1" == "build" ]; then
-    echo "Building OpenCV"
-else
+# CMD LINE ARGS
+if [ "$1" == "" ]; then
     if [ ! -d "build" ]; then
         mkdir -p build
     fi
 
     cd build
+    echo "Building OpenCV"
+else
+    echo "Building OpenCV"
+    PREFIX=$1
 fi
 
 ## Install OpenCV with perceptual image hashing
@@ -50,7 +54,6 @@ else
     export CMAKE=cmake
 fi
 
-export PREFIX=/opt/rsprobe
 export GST_PLUGIN_PATH=$PREFIX/lib64/gstreamer-1.0
 export LD_LIBRARY_PATH=$PREFIX/lib64:$PREFIX/lib:$LD_LIBRARY_PATH
 export PATH=$PREFIX/bin:$PATH

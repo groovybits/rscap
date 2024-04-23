@@ -80,7 +80,7 @@ if [ "$OS" = "Linux" ]; then
 fi
 
 # OpenCV installation
-sh ../scripts/install_opencv.sh build
+sh ../scripts/install_opencv.sh
 
 # Ensure Meson and Ninja are installed and use the correct Ninja
 if [ "$OS" = "Linux" ]; then

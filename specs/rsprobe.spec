@@ -4,7 +4,7 @@ Release:        1%{?dist}
 Summary:        MpegTS Stream Analysis Probe with Kafka and GStreamer
 License:        MIT
 URL:            https://github.com/groovybits/rscap
-BuildRequires:  epel-release, centos-release-scl-rh, gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3, libxml2-devel, pango-devel, cairo-devel, zvbi-devel, ladspa-devel, cairo-gobject-devel, cairo-gobject, rh-python38, rh-python38-python-pip llvm-toolset-7.0-clang-devel, glibc-devel, libstdc++-devel, llvm, llvm-devel, libjpeg-turbo-devel, libtiff-devel
+BuildRequires:  epel-release, centos-release-scl-rh, gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3, libxml2-devel, pango-devel, cairo-devel, zvbi-devel, ladspa-devel, cairo-gobject-devel, cairo-gobject, rh-python38, rh-python38-python-pip llvm-toolset-7.0-clang-devel, libstdc++-devel, llvm, llvm-devel, libjpeg-turbo-devel, libtiff-devel, llvm-toolset-7.0-llvm-devel llvm-toolset-7.0-clang
 Requires:       orc, libffi
 Prefix:        /opt/rsprobe
 
@@ -35,11 +35,17 @@ GST_PLUGINS_RS_VERSION=gstreamer-$GST_VERSION
 GLIB_MAJOR_VERSION=2.64
 GLIB_VERSION=$GLIB_MAJOR_VERSION.6
 ORC_VERSION=0.4.31
-OPENCV_VERSION=4.5.5
 
 # Create builddir
 mkdir -p %{_builddir}%{prefix}
 cd %{_builddir}
+
+# Clone RsProbe repository and checkout the specific tag
+GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/rscap.git rsprobe
+cd rsprobe
+git checkout $RSCAP_VERSION
+sh scripts/install_opencv.sh %{_builddir}/%{prefix}
+cd ..
 
 # Define the PATH to include the Rust binaries
 export PATH=%{_builddir}%{prefix}/bin:$PATH
@@ -48,48 +54,7 @@ export PATH=%{_builddir}%{prefix}/bin:$PATH
 export PKG_CONFIG_PATH=%{_builddir}%{prefix}/lib64/pkgconfig:%{_builddir}%{prefix}/lib/pkgconfig:$PKG_CONFIG_PATH
 export LD_LIBRARY_PATH=%{_builddir}%{prefix}/lib64:%{_builddir}%{prefix}/lib:$LD_LIBRARY_PATH
 
-## Install OpenCV with perceptual image hashing
-git clone https://github.com/opencv/opencv.git
-cd opencv
-git checkout $OPENCV_VERSION
-cd ..
-git clone https://github.com/opencv/opencv_contrib.git
-cd opencv_contrib
-git checkout $OPENCV_VERSION
-cd ..
-
-if [ -d "opencv/build" ]; then
-    rm -rf opencv/build # fresh build
-    mkdir opencv/build
-else
-    mkdir opencv/build
-fi
-cd opencv/build
-
-run_with_scl_llvm cmake3 -D CMAKE_BUILD_TYPE=RELEASE \
-    -D CMAKE_INSTALL_PREFIX=$PREFIX \
-    -D INSTALL_C_EXAMPLES=OFF \
-    -D INSTALL_PYTHON_EXAMPLES=OFF \
-    -DBUILD_opencv_core=ON \
-    -DBUILD_opencv_imgproc=ON \
-    -DBUILD_opencv_img_hash=ON \
-    -DBUILD_opencv_imgcodecs=ON \
-    -DBUILD_opencv_highgui=ON \
-    -D CMAKE_C_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang \
-    -D CMAKE_CXX_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang++ \
-    -D WITH_TBB=ON \
-    -D WITH_V4L=OFF \
-    -D WITH_QT=OFF \
-    -D WITH_OPENGL=ON \
-    -D OPENCV_EXTRA_MODULES_PATH=../../opencv_contrib/modules \
-    -D WITH_GSTREAMER=OFF \
-    -D WITH_FFMPEG=OFF \
-    -D OPENCV_GENERATE_PKGCONFIG=ON \
-    -D BUILD_EXAMPLES=OFF \
-    ..
-
-run_with_scl_llvm make
-run_with_scl_llvm make install
+echo "Changing directory... ../../"
 cd ../../
 
 # Explicitly use cmake3 for Meson configuration
@@ -324,16 +289,12 @@ echo "------------------------------------------------------------"
 echo "Building RsProbe..."
 echo "------------------------------------------------------------"
 
-# Clone RsProbe repository and checkout the specific tag
-rm -rf rsprobe
-GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/rscap.git rsprobe
 cd rsprobe
 
 # Set RUSTFLAGS for RPATH
 export RUSTFLAGS="-C link-args=-Wl,-rpath,%{prefix}/lib:%{prefix}/lib64"
 
 ## Build RsProbe
-git checkout $RSCAP_VERSION
 run_with_scl cargo build --features gst --release
 
 # Copy RsProbe binaries to the installation directory
@@ -342,9 +303,6 @@ cp scripts/probe.sh %{_builddir}%{prefix}/bin
 cp scripts/setup_env.sh %{_builddir}%{prefix}/bin
 
 cd ..
-
-# cleanup rsprobe
-rm -rf rsprobe
 
 # Remove unnecessary build dependencies
 rm -rf %{_builddir}%{prefix}/cargo
