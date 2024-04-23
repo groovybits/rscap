@@ -100,7 +100,7 @@ if [ "$OS" = "Linux" ]; then
 fi
 
 # OpenCV
-if [ "$OS" = "Linux" ]; then
+#if [ "$OS" = "Linux" ]; then
     ## Install OpenCV with perceptual image hashing
     if [ ! -d "opencv" ]; then
         git clone https://github.com/opencv/opencv.git
@@ -153,9 +153,9 @@ if [ "$OS" = "Linux" ]; then
     run_with_scl_llvm make -j$(nproc)
     run_with_scl_llvm make install
     cd ../../
-else
-    brew install opencv
-fi
+#else
+#    brew install opencv
+#fi
 
 # Explicitly use cmake from $PREFIX/bin for Meson configuration
 echo "[binaries]" > meson-native-file.ini
