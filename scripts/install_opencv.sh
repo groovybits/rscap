@@ -1,14 +1,14 @@
 #!/bin/bash
 
 set -e
+#set -v
+
+OS="$(uname -s)"
 
 O0PENCV_VERSION=4.5.5
 CMAKE=cmake
 
-brew install cmake
-
 run_with_scl() {
-    OS="$(uname -s)"
     if [ "$OS" = "Linux" ]; then
         scl enable devtoolset-11 llvm-toolset-7.0 -- "$@"
     else
@@ -16,17 +16,15 @@ run_with_scl() {
     fi
 }
 
-if [ "$OS" == "Linux" ]; then
-    CMAKE=cmake3
+if [ "$1" == "build" ]; then
+    echo "Building OpenCV"
 else
-    CMAKE=cmake
-fi
+    if [ ! -d "build" ]; then
+        mkdir -p build
+    fi
 
-if [ ! -d "build" ]; then
-    mkdir -p build
+    cd build
 fi
-
-cd build
 
 ## Install OpenCV with perceptual image hashing
 if [ ! -d "opencv" ]; then
@@ -43,6 +41,13 @@ if [ -d "opencv/build" ]; then
     mkdir opencv/build
 else
     mkdir opencv/build
+fi
+
+if [ "$OS" == "Linux" ]; then
+    export CMAKE=cmake3
+else
+    brew install cmake
+    export CMAKE=cmake
 fi
 
 export PREFIX=/opt/rsprobe
@@ -70,7 +75,9 @@ run_with_scl $CMAKE -D CMAKE_BUILD_TYPE=RELEASE \
     -DBUILD_opencv_imgproc=ON \
     -DBUILD_opencv_img_hash=ON \
     -DBUILD_opencv_imgcodecs=ON \
-    -DBUILD_opencv_highgui=ON $CMAKE_C_COMPILER_VAR $CMAKE_CXX_COMPILER_VAR \
+    -DBUILD_opencv_highgui=ON \
+    $CMAKE_C_COMPILER_VAR \
+    $CMAKE_CXX_COMPILER_VAR \
     -D WITH_TBB=ON \
     -D WITH_V4L=OFF \
     -D WITH_QT=OFF \
@@ -84,5 +91,3 @@ run_with_scl $CMAKE -D CMAKE_BUILD_TYPE=RELEASE \
 
 run_with_scl make
 run_with_scl make install
-
-cd ..
