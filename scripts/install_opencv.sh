@@ -55,6 +55,13 @@ export PKG_CONFIG_PATH=$PREFIX/lib64/pkgconfig:$PREFIX/lib/pkgconfig:$PKG_CONFIG
 
 cd opencv/build
 
+CMAKE_C_COMPILER_VAR=
+CMAKE_CXX_COMPILER_VAR=
+if [ "$OS" == "Linux" ]; then
+     CMAKE_C_COMPILER_VAR="-D CMAKE_C_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang"
+     CMAKE_CXX_COMPILER_VAR="-D CMAKE_CXX_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang++"
+fi
+
 run_with_scl $CMAKE -D CMAKE_BUILD_TYPE=RELEASE \
     -D CMAKE_INSTALL_PREFIX=$PREFIX \
     -D INSTALL_C_EXAMPLES=OFF \
@@ -63,9 +70,7 @@ run_with_scl $CMAKE -D CMAKE_BUILD_TYPE=RELEASE \
     -DBUILD_opencv_imgproc=ON \
     -DBUILD_opencv_img_hash=ON \
     -DBUILD_opencv_imgcodecs=ON \
-    -DBUILD_opencv_highgui=ON \
-    -D CMAKE_C_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang \
-    -D CMAKE_CXX_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang++ \
+    -DBUILD_opencv_highgui=ON $CMAKE_C_COMPILER_VAR $CMAKE_CXX_COMPILER_VAR \
     -D WITH_TBB=ON \
     -D WITH_V4L=OFF \
     -D WITH_QT=OFF \

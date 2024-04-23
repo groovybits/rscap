@@ -78,6 +78,27 @@ if [ "$OS" = "Linux" ]; then
 
 fi
 
+# Ensure Meson and Ninja are installed and use the correct Ninja
+if [ "$OS" = "Linux" ]; then
+    run_with_scl sudo pip3.8 install meson
+    run_with_scl sudo pip3.8 install ninja
+else
+    brew install meson
+    brew install ninja
+    brew install pkg-config
+    brew install bison
+    brew install wget
+    brew install llvm
+    brew install cmake
+    export PATH="/usr/local/opt/bison/bin:$PATH"
+fi
+
+if [ "$OS" = "Linux" ]; then
+    export CXXFLAGS="-stdlib=libc++"
+    export LDFLAGS="-lc++"
+    export CXXFLAGS="-std=c++11"
+fi
+
 # OpenCV
 if [ "$OS" = "Linux" ]; then
     ## Install OpenCV with perceptual image hashing
@@ -102,6 +123,13 @@ if [ "$OS" = "Linux" ]; then
     fi
     cd opencv/build
 
+    CMAKE_C_COMPILER_VAR=
+    CMAKE_CXX_COMPILER_VAR=
+    if [ "$OS" == "Linux" ]; then
+         CMAKE_C_COMPILER_VAR="-D CMAKE_C_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang"
+         CMAKE_CXX_COMPILER_VAR="-D CMAKE_CXX_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang++"
+    fi
+
     run_with_scl_llvm $CMAKE -D CMAKE_BUILD_TYPE=RELEASE \
         -D CMAKE_INSTALL_PREFIX=$PREFIX \
         -D INSTALL_C_EXAMPLES=OFF \
@@ -110,9 +138,7 @@ if [ "$OS" = "Linux" ]; then
         -DBUILD_opencv_imgproc=ON \
         -DBUILD_opencv_img_hash=ON \
         -DBUILD_opencv_imgcodecs=ON \
-        -DBUILD_opencv_highgui=ON \
-        -D CMAKE_C_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang \
-        -D CMAKE_CXX_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang++ \
+        -DBUILD_opencv_highgui=ON $CMAKE_C_COMPILER_VAR $CMAKE_CXX_COMPILER_VAR \
         -D WITH_TBB=ON \
         -D WITH_V4L=OFF \
         -D WITH_QT=OFF \
@@ -128,9 +154,7 @@ if [ "$OS" = "Linux" ]; then
     run_with_scl_llvm make install
     cd ../../
 else
-    export CXXFLAGS="-stdlib=libc++"
-    export LDFLAGS="-lc++"
-    export CXXFLAGS="-std=c++11"
+    brew install opencv
 fi
 
 # Explicitly use cmake from $PREFIX/bin for Meson configuration
@@ -142,22 +166,6 @@ else
 fi
 CWD=$(pwd)
 MESON_NATIVE_FILE=$CWD/meson-native-file.ini
-
-# Ensure Meson and Ninja are installed and use the correct Ninja
-if [ "$OS" = "Linux" ]; then
-    run_with_scl sudo pip3.8 install meson
-    run_with_scl sudo pip3.8 install ninja
-else
-    brew install meson
-    brew install ninja
-    brew install pkg-config
-    brew install bison
-    brew install wget
-    brew install opencv
-    brew install llvm
-    brew install cmake
-    export PATH="/usr/local/opt/bison/bin:$PATH"
-fi
 
 echo "------------------------------------------------------------"
 echo "Installing GStreamer and essential dependencies..."
