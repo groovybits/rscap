@@ -2,7 +2,7 @@
 
 set -e
 
-OPENCV_VERSION=4.9.0
+O0PENCV_VERSION=4.5.5
 
 run_with_scl() {
     OS="$(uname -s)"
