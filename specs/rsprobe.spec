@@ -293,12 +293,12 @@ export RUSTFLAGS="-C link-args=-Wl,-rpath,%{prefix}/lib:%{prefix}/lib64"
 
 ## Build RsProbe
 echo "Running scripts/compile.sh gst"
-BUILD=release sh scripts/compile.sh gst
-#run_with_scl cargo build --features gst --release
+BUILD_TYPE=release
+BUILD=$BUILD_TYPE sh scripts/compile.sh gst
 
 # Copy RsProbe binaries to the installation directory
 echo "Copying RsProbe binaries to %{_builddir}%{prefix}/bin"
-cp target/release/probe %{_builddir}%{prefix}/bin/
+cp target/$BUILD_TYPE/probe %{_builddir}%{prefix}/bin/
 cp scripts/probe.sh %{_builddir}%{prefix}/bin
 cp scripts/setup_env.sh %{_builddir}%{prefix}/bin
 

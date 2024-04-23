@@ -509,11 +509,12 @@ echo "Cleaning RsCap..."
 cargo clean
 CUR_DIR=$(pwd)
 echo "Building RsCap in $CUR_DIR ..."
-BUILD=release sh ./scripts/compile.sh gst
+BUILD_TYPE=release
+BUILD=$BUILD_TYPE sh ./scripts/compile.sh gst
 
 # Copy RsCap binaries to the installation directory
 echo "Copying RsCap binaries to the installation directory..."
-cp -f target/$BUILD/probe $PREFIX/bin/
+cp -f target/$BUILD_TYPE/probe $PREFIX/bin/
 cp -f scripts/probe.sh $PREFIX/bin/
 cp -f scripts/setup_env.sh $PREFIX/bin/
 
