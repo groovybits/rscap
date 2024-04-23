@@ -32,6 +32,7 @@ GST_PLUGINS_RS_VERSION=gstreamer-$GST_VERSION
 GLIB_MAJOR_VERSION=2.64
 GLIB_VERSION=$GLIB_MAJOR_VERSION.6
 ORC_VERSION=0.4.31
+OPENCV_VERSION=4.9.0
 
 # Create builddir
 mkdir -p %{_builddir}%{prefix}
@@ -100,11 +101,59 @@ tar -xzf nasm-$NASM_VERSION.tar.gz
 cd nasm-$NASM_VERSION
 ./autogen.sh
 ./configure --prefix=%{_builddir}%{prefix}
-make
+make -j$(nproc)
 make install
 cd ..
 rm -rf nasm-$NASM_VERSION
 rm -f nasm-$NASM_VERSION.tar.gz
+
+## Install OpenCV with perceptual image hashing
+if [ ! -d "opencv" ]; then
+    git clone https://github.com/opencv/opencv.git
+    cd opencv
+    git checkout $OPENCV_VERSION
+    cd ..
+fi
+if [ ! -d "opencv_contrib" ]; then
+    git clone https://github.com/opencv/opencv_contrib.git
+    cd opencv_contrib
+    git checkout $OPENCV_VERSION
+    cd ..
+fi
+
+if [ -d "opencv/build" ]; then
+    rm -rf opencv/build # fresh build
+    mkdir opencv/build
+else
+    mkdir opencv/build
+fi
+cd opencv/build
+
+run_with_scl cmake3 -D CMAKE_BUILD_TYPE=RELEASE \
+    -D CMAKE_INSTALL_PREFIX=$PREFIX \
+    -D INSTALL_C_EXAMPLES=OFF \
+    -D INSTALL_PYTHON_EXAMPLES=OFF \
+    -DBUILD_opencv_core=ON \
+    -DBUILD_opencv_imgproc=ON \
+    -DBUILD_opencv_img_hash=ON \
+    -DBUILD_opencv_imgcodecs=ON \
+    -DBUILD_opencv_highgui=ON \
+    -D CMAKE_C_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang \
+    -D CMAKE_CXX_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang++ \
+    -D WITH_TBB=ON \
+    -D WITH_V4L=OFF \
+    -D WITH_QT=OFF \
+    -D WITH_OPENGL=ON \
+    -D OPENCV_EXTRA_MODULES_PATH=../../opencv_contrib/modules \
+    -D WITH_GSTREAMER=OFF \
+    -D WITH_FFMPEG=OFF \
+    -D OPENCV_GENERATE_PKGCONFIG=ON \
+    -D BUILD_EXAMPLES=OFF \
+    ..
+
+run_with_scl make -j$(nproc)
+run_with_scl make install
+cd ../../
 
 # libx264
 echo "---"
@@ -113,7 +162,7 @@ echo "---"
 GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"  git clone https://code.videolan.org/videolan/x264.git
 cd x264
 run_with_scl ./configure --prefix=%{_builddir}%{prefix} --enable-shared --enable-static --enable-pic --libdir=%{_builddir}%{prefix}/lib64 --includedir=%{_builddir}%{prefix}/include --extra-ldflags="-L%{_builddir}%{prefix}/lib64"
-run_with_scl make
+run_with_scl make -j$(nproc)
 make install
 ldconfig
 cd ..
@@ -128,7 +177,7 @@ cd x265
 mkdir -p build
 cd build
 run_with_scl cmake3 -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=%{_builddir}%{prefix} -DCMAKE_INSTALL_LIBDIR=lib64 -DCMAKE_BUILD_TYPE=Release -DENABLE_SHARED:bool=on --libdir=%{_builddir}%{prefix}/lib64 --includedir=%{_buildidr}%{prefix}/include --extra-ldflags="-L%{_builddir}%{prefix}/lib64" ../source
-run_with_scl make
+run_with_scl make -j$(nproc)
 make install
 ldconfig
 cd ../..
@@ -147,7 +196,7 @@ run_with_scl ./configure --prefix=%{_builddir}%{prefix} \
     --enable-libx265 --enable-libzvbi \
     --extra-cflags="-I%{_builddir}%{prefix}/include" --extra-ldflags="-L%{_builddir}%{prefix}/lib" \
     --libdir=%{_builddir}%{prefix}/lib64
-run_with_scl make
+run_with_scl make -j$(nproc)
 make install
 ldconfig
 cd ..
