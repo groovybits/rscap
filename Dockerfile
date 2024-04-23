@@ -8,13 +8,11 @@ RUN yum install -y epel-release centos-release-scl && \
 # Set up working directory
 WORKDIR /app
 
-# Copy the install script and other necessary files
-COPY install.sh /app/
-COPY scripts /app/scripts
-COPY meson-native-file.ini /app/
+COPY . /app/
+WORKDIR /app
 
 # Run the install script
-RUN /app/install.sh gst
+RUN ./scripts/install.sh gst
 
 FROM centos:7 AS binary
 
