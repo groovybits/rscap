@@ -7,12 +7,20 @@ CLEAN=1
 run_with_scl() {
     OS="$(uname -s)"
     if [ "$OS" = "Linux" ]; then
-        scl enable devtoolset-11 rh-python38 llvm-toolset-7.0 -- "$@"
+        scl enable devtoolset-11 rh-python38 -- "$@"
     else
         "$@"
     fi
 }
 
+run_with_scl_llvm() {
+    OS="$(uname -s)"
+    if [ "$OS" = "Linux" ]; then
+        scl enable devtoolset-11 rh-python38 llvm-toolset-7.0 -- "$@"
+    else
+        "$@"
+    fi
+}
 # Detect the operating system
 OS="$(uname -s)"
 echo "Detected OS: $OS"
@@ -241,7 +249,7 @@ if [ "$OS" = "Linux" ]; then
     fi
     cd opencv/build
 
-    run_with_scl cmake3 -D CMAKE_BUILD_TYPE=RELEASE \
+    run_with_scl_llvm cmake3 -D CMAKE_BUILD_TYPE=RELEASE \
         -D CMAKE_INSTALL_PREFIX=$PREFIX \
         -D INSTALL_C_EXAMPLES=OFF \
         -D INSTALL_PYTHON_EXAMPLES=OFF \
@@ -263,8 +271,8 @@ if [ "$OS" = "Linux" ]; then
         -D BUILD_EXAMPLES=OFF \
         ..
 
-    run_with_scl make -j$(nproc)
-    run_with_scl make install
+    run_with_scl_llvm make -j$(nproc)
+    run_with_scl_llvm make install
     cd ../../
 fi
 

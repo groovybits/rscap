@@ -19,6 +19,9 @@ Capture probe analyzing MpegTS UDP Streams and sending status to Kafka with thum
 
 # Function to run a command within the SCL environment for CentOS
 run_with_scl() {
+    scl enable rh-python38 devtoolset-11 -- "$@"
+}
+run_with_scl_llvm() {
     scl enable rh-python38 devtoolset-11 llvm-toolset-7.0 -- "$@"
 }
 
@@ -108,18 +111,14 @@ rm -rf nasm-$NASM_VERSION
 rm -f nasm-$NASM_VERSION.tar.gz
 
 ## Install OpenCV with perceptual image hashing
-if [ ! -d "opencv" ]; then
-    git clone https://github.com/opencv/opencv.git
-    cd opencv
-    git checkout $OPENCV_VERSION
-    cd ..
-fi
-if [ ! -d "opencv_contrib" ]; then
-    git clone https://github.com/opencv/opencv_contrib.git
-    cd opencv_contrib
-    git checkout $OPENCV_VERSION
-    cd ..
-fi
+git clone https://github.com/opencv/opencv.git
+cd opencv
+git checkout $OPENCV_VERSION
+cd ..
+git clone https://github.com/opencv/opencv_contrib.git
+cd opencv_contrib
+git checkout $OPENCV_VERSION
+cd ..
 
 if [ -d "opencv/build" ]; then
     rm -rf opencv/build # fresh build
@@ -129,7 +128,7 @@ else
 fi
 cd opencv/build
 
-run_with_scl cmake3 -D CMAKE_BUILD_TYPE=RELEASE \
+run_with_scl_llvm cmake3 -D CMAKE_BUILD_TYPE=RELEASE \
     -D CMAKE_INSTALL_PREFIX=$PREFIX \
     -D INSTALL_C_EXAMPLES=OFF \
     -D INSTALL_PYTHON_EXAMPLES=OFF \
@@ -151,8 +150,8 @@ run_with_scl cmake3 -D CMAKE_BUILD_TYPE=RELEASE \
     -D BUILD_EXAMPLES=OFF \
     ..
 
-run_with_scl make -j$(nproc)
-run_with_scl make install
+run_with_scl_llvm make -j$(nproc)
+run_with_scl_llvm make install
 cd ../../
 
 # libx264
