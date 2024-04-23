@@ -61,6 +61,8 @@ fi
 
 # CentOS 7 specific setup
 if [ "$OS" = "Linux" ]; then
+    export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
+
     if [ -f /etc/centos-release ]; then
         . /etc/os-release
         if [ "$VERSION_ID" = "7" ]; then
@@ -91,6 +93,7 @@ if [ "$OS" = "Linux" ]; then
     fi
     # Add elif blocks here for other specific Linux distributions
 elif [ "$OS" = "Darwin" ]; then
+    export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
     echo "macOS detected."
     # Brew RPMs
     # check if brew binary exists
@@ -123,6 +126,7 @@ elif [ "$OS" = "Darwin" ]; then
         cargo build $FEATURES
     fi
 else
+    export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
     echo "Generic Unix-like OS detected."
     # Generic Unix/Linux setup
     # Build for generic Unix/Linux
