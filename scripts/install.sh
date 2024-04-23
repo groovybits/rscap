@@ -65,8 +65,8 @@ $SUDO chown -R $USER $PREFIX
 # Ensure necessary tools are installed
 
 # For pkg-config to find .pc files
-export PKG_CONFIG_PATH=$PREFIX/lib64/pkgconfig:$PREFIX/lib/pkgconfig:/usr/lib64/pkgconfig:$PKG_CONFIG_PATH
-export LD_LIBRARY_PATH=$PREFIX/lib64:$PREFIX/lib:$LD_LIBRARY_PATH
+export PKG_CONFIG_PATH=$PREFIX/lib64/pkgconfig:${PREFIX}/lib/pkgconfig:$PKG_CONFIG_PATH
+export LD_LIBRARY_PATH=$PREFIX/lib64:${PREFIX}/lib:$LD_LIBRARY_PATH
 
 export PATH=$PREFIX/bin:$PATH
 
@@ -450,7 +450,7 @@ touch gst-plugins-good-installed.done
 if [ "$OS" == "Linux" ]; then
     export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
 else
-    export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib -Wl,-rpath,$PREFIX/lib64"
+    export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib"
 fi
 
 if [ ! -f "gst-plugins-rs-installed.done" ]; then
