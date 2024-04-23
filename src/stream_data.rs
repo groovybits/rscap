@@ -65,7 +65,7 @@ pub struct ImageData {
     pub image: Vec<u8>,
     pub pts: u64,
     pub duplicates: u64,
-    pub hash: Vec<u8>,
+    pub hash: u64,
     pub hamming: f64,
 }
 
@@ -350,7 +350,7 @@ pub fn pull_images(
     appsink: AppSink,
     captionssink: AppSink,
     audio_sink: AppSink,
-    image_sender: mpsc::Sender<(Vec<u8>, u64, u64, Vec<u8>, f64)>,
+    image_sender: mpsc::Sender<(Vec<u8>, u64, u64, u64, f64)>,
     save_images: bool,
     sample_interval: u64,
     image_height: u32,
@@ -609,11 +609,14 @@ pub fn pull_images(
 
                             // Send the filmstrip over the channel
                             let hash_value = if let Some(ref hash_mat) = cur_hash {
-                                (0..hash_mat.cols())
+                                let hash_bytes: [u8; 8] = (0..hash_mat.cols())
                                     .map(|i| *hash_mat.at::<u8>(i).unwrap())
-                                    .collect()
+                                    .collect::<Vec<u8>>()
+                                    .try_into()
+                                    .unwrap();
+                                u64::from_be_bytes(hash_bytes)
                             } else {
-                                vec![0; 8]
+                                0
                             };
 
                             if let Err(err) = image_sender

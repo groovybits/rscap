@@ -986,7 +986,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
         // Now you can directly use the fields from `image_data`
         let mut image_pts: u64 = 0;
         let mut duplicates: u64 = 0;
-        let mut hash = Vec::new();
+        let mut hash = 0;
         let mut hamming: f64 = 0.0;
 
         info!("Kafka publisher startup {}", args.kafka_broker);
@@ -1080,7 +1080,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             image: Vec::new(),
                             pts: 0,
                             duplicates: 0,
-                            hash: Vec::new(),
+                            hash: 0,
                             hamming: 0.0,
                         };
 
@@ -1294,7 +1294,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             } else {
                                 image_pts = 0;
                                 duplicates = 0;
-                                hash = Vec::new();
+                                hash = 0;
                                 hamming = 0.0;
 
                                 "".to_string()
@@ -1865,7 +1865,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             image_receiver.try_recv()
                         {
                             log::info!(
-                                "Probe: [{}] Received jpeg image of {} bytes repeated[{}] perceptual hash[{:?}] hamming difference[{}].",
+                                "Probe: [{}] Received jpeg image of {} bytes repeated[{}] perceptual hash[{:016X}] hamming difference[{}].",
                                 pts,
                                 image_data.len(),
                                 duplicates,
