@@ -5,6 +5,8 @@ set -e
 O0PENCV_VERSION=4.5.5
 CMAKE=cmake
 
+brew install cmake
+
 run_with_scl() {
     OS="$(uname -s)"
     if [ "$OS" = "Linux" ]; then

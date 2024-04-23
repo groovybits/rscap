@@ -102,7 +102,7 @@ if [ "$OS" = "Linux" ]; then
     fi
     cd opencv/build
 
-    run_with_scl_llvm cmake3 -D CMAKE_BUILD_TYPE=RELEASE \
+    run_with_scl_llvm $CMAKE -D CMAKE_BUILD_TYPE=RELEASE \
         -D CMAKE_INSTALL_PREFIX=$PREFIX \
         -D INSTALL_C_EXAMPLES=OFF \
         -D INSTALL_PYTHON_EXAMPLES=OFF \
@@ -155,6 +155,7 @@ else
     brew install wget
     brew install opencv
     brew install llvm
+    brew install cmake
     export PATH="/usr/local/opt/bison/bin:$PATH"
 fi
 
@@ -307,6 +308,11 @@ else
     brew install x264
 fi
 
+CMAKE=cmake3
+if [ "$OS" = "Darwin" ]; then
+    CMAKE=cmake
+fi
+
 # libx265
 if [ "$OS" = "Linux" ]; then
     if [ ! -f "x265-installed.done" ] ; then
@@ -325,7 +331,7 @@ if [ "$OS" = "Linux" ]; then
         cd build
 
         # Use cmake3 to configure the build, respecting the PREFIX variable for installation
-        run_with_scl cmake3 -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=$PREFIX -DENABLE_SHARED:bool=on ../source
+        run_with_scl $CMAKE -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=$PREFIX -DENABLE_SHARED:bool=on ../source
 
         # Compile and install
         run_with_scl make
