@@ -8,7 +8,12 @@ if [ "$1" != "" ]; then
     FEATURES="--features $1"
 fi
 
-BUILD=release-with-debug
+if [ "$BUILD" != "" ]; then
+    echo "Using build profile: $BUILD"
+else
+    echo "Using default build profile."
+    BUILD=release-with-debug
+fi
 PREFIX=/opt/rsprobe
 
 LD_LIBRARY_PATH=$PREFIX/lib:$PREFIX/lib64:$LD_LIBRARY_PATH

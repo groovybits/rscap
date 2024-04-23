@@ -510,11 +510,10 @@ cargo clean
 CUR_DIR=$(pwd)
 echo "Building RsCap in $CUR_DIR ..."
 BUILD=release sh ./scripts/compile.sh gst
-#run_with_scl cargo build --features gst --release
 
 # Copy RsCap binaries to the installation directory
 echo "Copying RsCap binaries to the installation directory..."
-cp -f target/release/probe $PREFIX/bin/
+cp -f target/$BUILD/probe $PREFIX/bin/
 cp -f scripts/probe.sh $PREFIX/bin/
 cp -f scripts/setup_env.sh $PREFIX/bin/
 
