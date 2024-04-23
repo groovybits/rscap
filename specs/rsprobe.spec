@@ -66,9 +66,6 @@ else
 fi
 cd opencv/build
 
-run_with_scl pip3.8 install numpy
-pip3 install numpy
-
 run_with_scl_llvm cmake3 -D CMAKE_BUILD_TYPE=RELEASE \
     -D CMAKE_INSTALL_PREFIX=$PREFIX \
     -D INSTALL_C_EXAMPLES=OFF \
