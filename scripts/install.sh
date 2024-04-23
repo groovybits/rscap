@@ -85,16 +85,15 @@ if [ "$OS" = "Linux" ]; then
     $SUDO yum install -y llvm-toolset-7.0-llvm-devel llvm-toolset-7.0-clang
     $SUDO yum install -y rh-python38 rh-python38-python-pip
 
+    run_with_scl $SUDO pip3.8 install meson
+    run_with_scl $SUDO pip3.8 install ninja
 fi
 
 # OpenCV installation
 sh ../scripts/install_opencv.sh
 
 # Ensure Meson and Ninja are installed and use the correct Ninja
-if [ "$OS" = "Linux" ]; then
-    run_with_scl $SUDO pip3.8 install meson
-    run_with_scl $SUDO pip3.8 install ninja
-else
+if [ "$OS" = "Darwin" ]; then
     brew install meson
     brew install ninja
     brew install pkg-config
@@ -439,7 +438,7 @@ if [ ! -f "gst-plugins-good-installed.done" ] ; then
 fi
 touch gst-plugins-good-installed.done
 
-if [ "$OS" == "Linux ]; then
+if [ "$OS" == "Linux" ]; then
     export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
 else
     export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib -C link-args=-Wl,-rpath,$PREFIX/lib64"
