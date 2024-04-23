@@ -7,7 +7,7 @@ CLEAN=1
 run_with_scl() {
     OS="$(uname -s)"
     if [ "$OS" = "Linux" ]; then
-        scl enable devtoolset-11 rh-python38 -- "$@"
+        scl enable devtoolset-11 rh-python38 llvm-toolset-7.0 -- "$@"
     else
         "$@"
     fi
@@ -64,7 +64,7 @@ if [ "$OS" = "Linux" ]; then
     sudo yum-config-manager --disable epel
     sudo yum install --enablerepo=epel* -y zvbi-devel
     sudo yum install -y git
-    sudo yum install -y cmake3 git
+    sudo yum install -y cmake3 git llvm-toolset-7.0-clang-devel
     sudo yum install -y rh-python38 rh-python38-python-pip
 else
     export CXXFLAGS="-stdlib=libc++"
@@ -92,6 +92,8 @@ else
     brew install pkg-config
     brew install bison
     brew install wget
+    brew install opencv
+    brew install llvm
     export PATH="/usr/local/opt/bison/bin:$PATH"
 fi
 

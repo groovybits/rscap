@@ -45,7 +45,7 @@ install_rust() {
 # Function to run a command within the SCL environment for CentOS
 run_with_scl() {
     export PKG_CONFIG_PATH=/opt/rsprobe/lib64/pkgconfig:/opt/rsprobe/lib/pkgconfig:$PKG_CONFIG_PATH
-    scl enable devtoolset-11 -- "$@"
+    scl enable devtoolset-11 rh-python38 llvm-toolset-7.0 -- "$@"
 }
 
 # Detect the operating system

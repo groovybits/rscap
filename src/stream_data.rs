@@ -4,12 +4,9 @@
  * Data structure for the stream data
 */
 
-use crc::{Crc, CRC_32_ISO_HDLC};
-use std::fs::OpenOptions;
 use crate::current_unix_timestamp_ms;
 use ahash::AHashMap;
-#[cfg(feature = "gst")]
-use gstreamer_video::VideoCaptionType;
+use crc::{Crc, CRC_32_ISO_HDLC};
 #[cfg(feature = "gst")]
 use gst_app::{AppSink, AppSrc};
 #[cfg(feature = "gst")]
@@ -23,13 +20,24 @@ use gstreamer_app as gst_app;
 #[cfg(feature = "gst")]
 use gstreamer_video::video_meta::VideoCaptionMeta;
 #[cfg(feature = "gst")]
+use gstreamer_video::VideoCaptionType;
+#[cfg(feature = "gst")]
 use gstreamer_video::VideoInfo;
+#[cfg(feature = "gst")]
+use image::buffer::ConvertBuffer;
+#[cfg(feature = "gst")]
+use image::Luma;
 #[cfg(feature = "gst")]
 use image::{ImageBuffer, Rgb};
 use lazy_static::lazy_static;
 use log::{debug, error, info};
+#[cfg(feature = "gst")]
+use opencv::img_hash::PHash;
+#[cfg(feature = "gst")]
+use opencv::{core::Mat, prelude::*};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::fs::OpenOptions;
 #[cfg(feature = "gst")]
 use std::io;
 #[cfg(feature = "gst")]
@@ -54,12 +62,12 @@ lazy_static! {
 
 // CEA-608 character set mapping
 const CEA608_CHAR_MAP: &[&str] = &[
-    " ", "!", "\"", "#", "$", "%", "&", "'", "(", ")", "á", "+", ",", "-", ".", "/",
-    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", ":", ";", "<", "=", ">", "?",
-    "@", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O",
-    "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "[", "é", "]", "í", "ó",
-    "ú", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o",
-    "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "ç", "÷", "Ñ", "ñ", "■",
+    " ", "!", "\"", "#", "$", "%", "&", "'", "(", ")", "á", "+", ",", "-", ".", "/", "0", "1", "2",
+    "3", "4", "5", "6", "7", "8", "9", ":", ";", "<", "=", ">", "?", "@", "A", "B", "C", "D", "E",
+    "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X",
+    "Y", "Z", "[", "é", "]", "í", "ó", "ú", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k",
+    "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "ç", "÷", "Ñ", "ñ",
+    "■",
 ];
 
 // CEA-608 control codes
@@ -186,7 +194,10 @@ fn decode_cea608(data: &[u8]) -> Vec<Caption> {
                 }
                 _ => {
                     // Unhandled control code or invalid data
-                    log::debug!("Unhandled CEA-608 control code or invalid data: {:04X}", cc_data);
+                    log::debug!(
+                        "Unhandled CEA-608 control code or invalid data: {:04X}",
+                        cc_data
+                    );
                 }
             }
         }
@@ -195,7 +206,7 @@ fn decode_cea608(data: &[u8]) -> Vec<Caption> {
     }
 
     captions
-    }
+}
 
 #[cfg(feature = "gst")]
 fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
@@ -330,7 +341,7 @@ pub fn pull_images(
     appsink: AppSink,
     captionssink: AppSink,
     audio_sink: AppSink,
-    image_sender: mpsc::Sender<(Vec<u8>, u64)>,
+    image_sender: mpsc::Sender<(Vec<u8>, u64, u64)>,
     save_images: bool,
     sample_interval: u64,
     image_height: u32,
@@ -345,6 +356,9 @@ pub fn pull_images(
         let mut last_processed_pts = 0;
         let mut filmstrip_images = Vec::new();
         let save_captions = false;
+        let mut prev_hash = None;
+        let mut image_same = 0;
+        let frozen_frame_threshold = 30; // Number of frames to detect frozen picture
 
         // create file if it doesn't exist, else append to it
         let mut file = if save_captions {
@@ -487,6 +501,53 @@ pub fn pull_images(
                         )
                         .expect("Failed to create ImageBuffer");
 
+                        // Convert the RGB image to grayscale (GRAY8)
+                        let gray_image: ImageBuffer<Luma<u8>, Vec<u8>> = image.convert();
+
+                        // Convert the grayscale image to a Vec<u8>
+                        let gray_data = gray_image.into_raw();
+
+                        // Create a perceptual hash from the grayscale image using the opencv img_hash module
+                        let mut current_hash = Mat::default();
+                        {
+                            let gray_mat = Mat::from_slice(&gray_data).unwrap();
+                            let mut hasher = PHash::create().unwrap();
+                            hasher.compute(&gray_mat, &mut current_hash).unwrap();
+                        }
+
+                        // Compare with the previous hash value
+                        if let Some(ref prev_hash) = prev_hash {
+                            let hasher = PHash::create().unwrap();
+                            let hamming_distance =
+                                hasher.compare(prev_hash, &current_hash).unwrap();
+                            log::info!("Hamming Distance: {}", hamming_distance);
+
+                            // Check if the current frame is the same as the previous frame
+                            if hamming_distance == 0.0 {
+                                image_same += 1;
+
+                                // Check if the number of consecutive duplicate frames exceeds the threshold
+                                if image_same >= frozen_frame_threshold {
+                                    log::warn!(
+                                        "Frozen frame detected! Consecutive duplicate frames: {}",
+                                        image_same
+                                    );
+                                    // Perform any necessary actions for frozen frames
+                                }
+                            } else {
+                                // Reset the duplicate frame counter if the frames are different
+                                image_same = 0;
+                            }
+
+                            // Trigger alerts or perform actions based on the hamming distance
+                            if hamming_distance > 10.0 {
+                                log::warn!("Significant perceptual difference detected!");
+                            }
+                        }
+
+                        // Update the previous hash for the next iteration
+                        prev_hash = Some(current_hash);
+
                         // Save the image as a JPEG with timecode
                         if save_images {
                             let filename = format!("images/frame_{:04}.jpg", frame_count);
@@ -534,7 +595,8 @@ pub fn pull_images(
                                 .expect("JPEG encoding failed");
 
                             // Send the filmstrip over the channel
-                            if let Err(err) = image_sender.send((jpeg_data, pts)).await {
+                            if let Err(err) = image_sender.send((jpeg_data, pts, image_same)).await
+                            {
                                 log::error!("Failed to send image data through channel: {}", err);
                                 break;
                             }
@@ -1073,7 +1135,12 @@ impl Tr101290Errors {
 }
 
 // TR 101 290 Priority 1 Check
-pub fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors, pid: u16, stream_data: &mut StreamData) {
+pub fn tr101290_p1_check(
+    packet: &[u8],
+    errors: &mut Tr101290Errors,
+    pid: u16,
+    stream_data: &mut StreamData,
+) {
     // TS sync byte error
     if packet[0] != 0x47 {
         errors.ts_sync_byte_errors += 1;
@@ -1122,7 +1189,11 @@ pub fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors, pid: u16, s
     }
 
     // PMT error
-    if pid == stream_data.pmt_pid && stream_data.pmt_pid != 0 && stream_data.pmt_pid != 0x1FFF && stream_data.pmt_pid != 0xFFFF {
+    if pid == stream_data.pmt_pid
+        && stream_data.pmt_pid != 0
+        && stream_data.pmt_pid != 0x1FFF
+        && stream_data.pmt_pid != 0xFFFF
+    {
         let section_syntax_indicator = (packet[1] & 0x80) != 0;
         let section_length = (((packet[1] & 0x0F) as u16) << 8) | packet[2] as u16;
         if section_syntax_indicator && packet.len() >= 4 && section_length >= 13 {
@@ -1135,11 +1206,11 @@ pub fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors, pid: u16, s
                 let last_section_number = packet[8];
                 let program_info_length = (((packet[10] & 0x0F) as u16) << 8) | packet[11] as u16;
 
-                if program_number == stream_data.program_number &&
-                   current_next_indicator &&
-                   section_number == 0 &&
-                   last_section_number == 0 &&
-                   program_info_length + 12 <= section_length
+                if program_number == stream_data.program_number
+                    && current_next_indicator
+                    && section_number == 0
+                    && last_section_number == 0
+                    && program_info_length + 12 <= section_length
                 {
                     // PMT is valid, don't increment the error counter
                 } else {
@@ -1154,7 +1225,11 @@ pub fn tr101290_p1_check(packet: &[u8], errors: &mut Tr101290Errors, pid: u16, s
     }
 
     // PID map error
-    if pid > 0 && pid < 0x1FFF && pid != stream_data.pmt_pid && !PID_MAP.read().unwrap().contains_key(&pid) {
+    if pid > 0
+        && pid < 0x1FFF
+        && pid != stream_data.pmt_pid
+        && !PID_MAP.read().unwrap().contains_key(&pid)
+    {
         errors.pid_map_errors += 1;
     }
 }
@@ -1182,7 +1257,8 @@ pub fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors, stream_data
                     packet[payload_start - 1],
                 ]);
                 let crc32_calculator = Crc::<u32>::new(&CRC_32_ISO_HDLC);
-                let calculated_crc32 = crc32_calculator.checksum(&packet[payload_start..packet.len() - 4]);
+                let calculated_crc32 =
+                    crc32_calculator.checksum(&packet[payload_start..packet.len() - 4]);
                 if crc32 != calculated_crc32 {
                     errors.crc_errors += 1;
                 }
@@ -1205,7 +1281,16 @@ pub fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors, stream_data
 
     // PCR accuracy error
     if has_pcr {
-        let pcr_base = u64::from_be_bytes([0, 0, packet[6], packet[7], packet[8], packet[9], packet[10] & 0xFE, 0]);
+        let pcr_base = u64::from_be_bytes([
+            0,
+            0,
+            packet[6],
+            packet[7],
+            packet[8],
+            packet[9],
+            packet[10] & 0xFE,
+            0,
+        ]);
         let pcr_ext = (((packet[10] & 0x01) as u64) << 8) | (packet[11] as u64);
         let pcr = pcr_base * 300 + pcr_ext;
         if pcr != 0 {
@@ -1220,12 +1305,21 @@ pub fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors, stream_data
 
     // PCR repetition error
     if has_pcr {
-        let pcr_base = u64::from_be_bytes([0, 0, packet[6], packet[7], packet[8], packet[9], packet[10] & 0xFE, 0]);
+        let pcr_base = u64::from_be_bytes([
+            0,
+            0,
+            packet[6],
+            packet[7],
+            packet[8],
+            packet[9],
+            packet[10] & 0xFE,
+            0,
+        ]);
         let pcr_ext = (((packet[10] & 0x01) as u64) << 8) | (packet[11] as u64);
         let pcr = pcr_base * 300 + pcr_ext;
         if pcr != 0 {
             let max_pcr_repetition_interval = 40_000; // 40 ms in PCR units (27 MHz)
-            let prev_pcr = stream_data.pcr ;
+            let prev_pcr = stream_data.pcr;
             if pcr - prev_pcr > max_pcr_repetition_interval {
                 errors.pcr_repetition_errors += 1;
             }
@@ -1245,7 +1339,16 @@ pub fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors, stream_data
     // PTS error
     let has_pts = (packet[7] & 0x80) != 0;
     if has_pts {
-        let pts_high = u64::from_be_bytes([0, 0, 0, packet[9] & 0x0E, packet[10], packet[11], packet[12], packet[13] & 0xFE]);
+        let pts_high = u64::from_be_bytes([
+            0,
+            0,
+            0,
+            packet[9] & 0x0E,
+            packet[10],
+            packet[11],
+            packet[12],
+            packet[13] & 0xFE,
+        ]);
         let pts_low = (((packet[13] & 0x01) as u64) << 8) | (packet[14] as u64);
         let pts = pts_high | pts_low;
 
@@ -1419,7 +1522,12 @@ pub fn process_packet(
     let mut updated_stream_data = stream_data_packet.clone();
 
     if stream_data_packet.pid != 0x1FFF {
-        tr101290_p1_check(packet, errors, stream_data_packet.pid, &mut updated_stream_data);
+        tr101290_p1_check(
+            packet,
+            errors,
+            stream_data_packet.pid,
+            &mut updated_stream_data,
+        );
         tr101290_p2_check(packet, errors, &mut updated_stream_data);
     }
 
