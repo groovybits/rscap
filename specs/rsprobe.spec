@@ -22,7 +22,7 @@ run_with_scl() {
     scl enable rh-python38 devtoolset-11 -- "$@"
 }
 run_with_scl_llvm() {
-    scl enable rh-python38 devtoolset-11 llvm-toolset-7.0 -- "$@"
+    scl enable devtoolset-11 llvm-toolset-7.0 -- "$@"
 }
 
 # Define versions for dependencies including GStreamer
@@ -129,6 +129,7 @@ fi
 cd opencv/build
 
 run_with_scl pip3.8 install numpy
+pip3 install numpy
 
 run_with_scl_llvm cmake3 -D CMAKE_BUILD_TYPE=RELEASE \
     -D CMAKE_INSTALL_PREFIX=$PREFIX \

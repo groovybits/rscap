@@ -16,7 +16,7 @@ run_with_scl() {
 run_with_scl_llvm() {
     OS="$(uname -s)"
     if [ "$OS" = "Linux" ]; then
-        scl enable devtoolset-11 rh-python38 llvm-toolset-7.0 -- "$@"
+        scl enable devtoolset-11 llvm-toolset-7.0 -- "$@"
     else
         "$@"
     fi
@@ -365,7 +365,7 @@ fi
     fi
     touch ffmpeg-installed.done
 #else
-#    brew install ffmpeg
+#    brew install ffmpeg@6
 #fi
 
 # Install Gstreamer core
