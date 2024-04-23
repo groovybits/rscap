@@ -10,6 +10,14 @@ Capture MpegTS off a network and analyze for broadcast monitoring purposes. Meas
 
 Gstreamer support is available with the `--features gst` flag (`make build_gst`) for using Gstreamer for stream demuxing/decoding. Currently, `--extract-images` will extract images from the stream and save them to disk or send them off to a Kafka feed as base64 with JSON metadata. See [scripts/probe.sh](scripts/probe.sh) for examples of how to use RsProbe in a common use case.
 
+## Features
+
+- MpegTS PCap stream capture and analysis off network UDP multicast feeds.
+- Extract images and metrics from the stream.
+- Send metrics to Kafka for long-term storage.
+- OpenCV support for perceptual image fingerprints to detect freeze frames.
+- Gstreamer support for stream demuxing and decoding + image extraction.
+
 ## The Probe Client
 
 The [src/bin/probe.rs](src/bin/probe.rs) is the main entry point for the probe client. It captures the MpegTS stream and extracts metrics and assets from the stream. The probe client is the main entry point for the project and is the main executable for the project.
