@@ -73,7 +73,9 @@ export PATH=$PREFIX/bin:$PATH
 if [ "$OS" = "Linux" ]; then
     # Ensure the system is up to date and has the basic build tools
     $SUDO yum groupinstall -y "Development Tools"
-    $SUDO yum install -y bison flex python3 wget libffi-devel util-linux libmount-devel libxml2-devel glib2-devel cairo-devel ladspa-devel pango-devel cairo-gobject-devel cairo-gobject
+    $SUDO yum install -y bison flex python3 wget libffi-devel util-linux \
+        libmount-devel libxml2-devel glib2-devel cairo-devel \
+        ladspa-devel pango-devel cairo-gobject-devel cairo-gobject
     $SUDO yum install -y centos-release-scl-rh epel-release
     $SUDO yum install -y yum-utils
     $SUDO yum-config-manager --disable epel
