@@ -501,9 +501,12 @@ touch gst-plugins-rs-installed.done
 
 # RsCap installation
 echo
+echo "------------------------------------------------------------"
+echo "Cleaning RsCap..."
+cargo clean
 echo "Building RsCap..."
-run_with_scl cargo clean
-run_with_scl cargo build --features gst --release
+sh BUILD=release scripts/compile.sh gst
+#run_with_scl cargo build --features gst --release
 
 # Copy RsCap binaries to the installation directory
 echo "Copying RsCap binaries to the installation directory..."
