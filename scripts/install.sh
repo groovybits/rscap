@@ -87,6 +87,10 @@ if [ "$OS" = "Linux" ]; then
 
     run_with_scl $SUDO pip3.8 install meson
     run_with_scl $SUDO pip3.8 install ninja
+
+    CPUS=$(nproc)
+elif [ "$OS" == "Darwin" ]; then
+    CPUS=$(sysctl -n hw.ncpu)
 fi
 
 # OpenCV installation
@@ -169,7 +173,7 @@ if [ "$OS" = "Linux" ]; then
         fi
         cd libffi-$LIBFFI_VERSION
         run_with_scl ./configure --prefix=$PREFIX
-        run_with_scl make
+        run_with_scl make -j $CPUS
         run_with_scl make install
         cd ..
     fi
@@ -190,7 +194,7 @@ if [ "$(uname)" = "Darwin" ]; then
         git checkout v$LIBZVBI_VERSION
         run_with_scl sh autogen.sh
         run_with_scl ./configure --prefix=$PREFIX
-        run_with_scl make
+        run_with_scl make -j $CPUS
         run_with_scl make install
         cd ..
     fi
@@ -236,7 +240,7 @@ if [ "$OS" = "Linux" ]; then
         # Compile and install
         ./autogen.sh
         ./configure --prefix=$PREFIX
-        make
+        make -j $CPUS
         make install
         cd ..
     fi
@@ -264,7 +268,7 @@ if [ "$OS" = "Linux" ]; then
 
         # Compile
         run_with_scl ./configure --prefix=$PREFIX --enable-shared --enable-static --enable-pic
-        run_with_scl make
+        run_with_scl make -j $CPUS
         make install
         cd ..
     fi
@@ -294,7 +298,7 @@ if [ "$OS" = "Linux" ]; then
         run_with_scl cmake3 -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=$PREFIX -DENABLE_SHARED:bool=on ../source
 
         # Compile and install
-        run_with_scl make
+        run_with_scl make -j $CPUS
         make install
 
         # Navigate back to the initial directory
@@ -327,7 +331,7 @@ fi
             --enable-libx265 --enable-libzvbi \
             --disable-vulkan \
             --extra-cflags="-I$PREFIX/include" --extra-ldflags="-L$PREFIX/lib"
-        run_with_scl make
+        run_with_scl make -j $CPUS
         make install
         cd ..
     fi

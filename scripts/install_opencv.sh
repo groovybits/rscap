@@ -5,6 +5,13 @@ set -e
 
 OS="$(uname -s)"
 
+CPUS=
+if [ "$OS" == "Linux" ]; then
+    CPUS=$(nproc)
+else
+    CPUS=$(sysctl -n hw.ncpu)
+fi
+
 O0PENCV_VERSION=4.5.5
 CMAKE=cmake
 PREFIX=/opt/rsprobe
@@ -93,7 +100,7 @@ run_with_scl $CMAKE -D CMAKE_BUILD_TYPE=RELEASE \
     -D BUILD_EXAMPLES=OFF ..
 
 echo "Configured OpenCV"
-run_with_scl make -j $(nproc)
+run_with_scl make -j $CPUS
 echo "Built OpenCV"
 make install
 echo "OpenCV installed to $PREFIX"
