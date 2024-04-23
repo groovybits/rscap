@@ -44,7 +44,7 @@ cd %{_builddir}
 GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/rscap.git rsprobe
 cd rsprobe
 git checkout $RSCAP_VERSION
-sh scripts/install_opencv.sh %{_builddir}/%{prefix}
+sh scripts/install_opencv.sh %{_builddir}%{prefix}
 cd ..
 
 # Define the PATH to include the Rust binaries
