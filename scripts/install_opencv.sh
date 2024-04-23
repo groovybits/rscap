@@ -74,11 +74,12 @@ cd opencv/build
 CMAKE_C_COMPILER_VAR=
 CMAKE_CXX_COMPILER_VAR=
 if [ "$OS" == "Linux" ]; then
-     CMAKE_C_COMPILER_VAR="-D CMAKE_C_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang"
-     CMAKE_CXX_COMPILER_VAR="-D CMAKE_CXX_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang++"
+     CMAKE_C_COMPILER_VAR=-DCMAKE_C_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang
+     CMAKE_CXX_COMPILER_VAR=-DCMAKE_CXX_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang++
 fi
 
-run_with_scl $CMAKE -D CMAKE_BUILD_TYPE=RELEASE \
+run_with_scl $CMAKE \
+    -D CMAKE_BUILD_TYPE=RELEASE \
     -D CMAKE_INSTALL_PREFIX=$PREFIX \
     -D INSTALL_C_EXAMPLES=OFF \
     -D INSTALL_PYTHON_EXAMPLES=OFF \
@@ -86,18 +87,16 @@ run_with_scl $CMAKE -D CMAKE_BUILD_TYPE=RELEASE \
     -DBUILD_opencv_imgproc=ON \
     -DBUILD_opencv_img_hash=ON \
     -DBUILD_opencv_imgcodecs=ON \
-    -DBUILD_opencv_highgui=ON \
-    $CMAKE_C_COMPILER_VAR \
-    $CMAKE_CXX_COMPILER_VAR \
-    -D WITH_TBB=ON \
-    -D WITH_V4L=OFF \
-    -D WITH_QT=OFF \
-    -D WITH_OPENGL=ON \
-    -D OPENCV_EXTRA_MODULES_PATH=../../opencv_contrib/modules \
-    -D WITH_GSTREAMER=OFF \
-    -D WITH_FFMPEG=OFF \
-    -D OPENCV_GENERATE_PKGCONFIG=ON \
-    -D BUILD_EXAMPLES=OFF ..
+    -DBUILD_opencv_highgui=ON $CMAKE_C_COMPILER_VAR $CMAKE_CXX_COMPILER_VAR \
+    -DWITH_TBB=ON \
+    -DWITH_V4L=OFF \
+    -DWITH_QT=OFF \
+    -DWITH_OPENGL=ON \
+    -DOPENCV_EXTRA_MODULES_PATH=../../opencv_contrib/modules \
+    -DWITH_GSTREAMER=OFF \
+    -DWITH_FFMPEG=OFF \
+    -DOPENCV_GENERATE_PKGCONFIG=ON \
+    -DBUILD_EXAMPLES=OFF ..
 
 echo "Configured OpenCV"
 run_with_scl make -j $CPUS

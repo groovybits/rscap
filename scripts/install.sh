@@ -477,14 +477,20 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   cd gst-plugin-rs
 
   # Closed Caption
+  echo
+  echo "Building gst-plugin-closedcaption..."
   run_with_scl cargo cbuild --release --package gst-plugin-closedcaption
   run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64
 
   # Audio
+  echo
+  echo "Building gst-plugin-audiofx..."
   run_with_scl cargo cbuild --release --package gst-plugin-audiofx
   run_with_scl cargo cinstall --release --package gst-plugin-audiofx --prefix=$PREFIX --libdir=$PREFIX/lib64
 
   # Video
+  echo
+  echo "Building gst-plugin-videofx..."
   run_with_scl cargo cbuild --release --package gst-plugin-videofx
   run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=$PREFIX --libdir=$PREFIX/lib64
 
@@ -494,15 +500,19 @@ fi
 touch gst-plugins-rs-installed.done
 
 # RsCap installation
-cd ..
+echo
+echo "Building RsCap..."
 run_with_scl cargo clean
 run_with_scl cargo build --features gst --release
 
 # Copy RsCap binaries to the installation directory
+echo "Copying RsCap binaries to the installation directory..."
 cp -f target/release/probe $PREFIX/bin/
 cp -f scripts/probe.sh $PREFIX/bin/
 cp -f scripts/setup_env.sh $PREFIX/bin/
 
+echo "------------------------------------------------------------"
+echo "RsCap installation completed."
 ls -altr $PREFIX/bin/probe
 
 probe -V
