@@ -144,7 +144,7 @@ if [ "$OS" = "Linux" ]; then
     wget --no-check-certificate https://download.gnome.org/sources/glib/$GLIB_MAJOR_VERSION/glib-$GLIB_VERSION.tar.xz
     tar xf glib-$GLIB_VERSION.tar.xz
     cd glib-$GLIB_VERSION
-    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+    run_with_scl meson setup _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
     run_with_scl ninja -C _build
     run_with_scl ninja -C _build install
     cd ..
@@ -222,7 +222,7 @@ if [ "$OS" = "Linux" ]; then
             tar xf orc-$ORC_VERSION.tar.xz
         fi
         cd orc-$ORC_VERSION
-        run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+        run_with_scl meson setup _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
         run_with_scl ninja -C _build
         run_with_scl ninja -C _build install
         cd ..
@@ -359,7 +359,7 @@ if [ ! -f "gstreamer-installed.done" ] ; then
         tar xf gstreamer-$GST_VERSION.tar.xz
     fi
     cd gstreamer-$GST_VERSION
-    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+    run_with_scl meson setup _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
     run_with_scl ninja -C _build
     ninja -C _build install
     cd ..
@@ -379,7 +379,7 @@ if [ ! -f "gst-plugins-base-installed.done" ] ; then
         tar xf gst-plugins-base-$GST_VERSION.tar.xz
     fi
     cd gst-plugins-base-$GST_VERSION
-    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+    run_with_scl meson setup _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
     run_with_scl ninja -C _build
     run_with_scl ninja -C _build install
     cd ..
@@ -399,7 +399,7 @@ if [ ! -f "gst-plugins-bad-installed.done" ] ; then
         tar xf gst-plugins-bad-$GST_VERSION.tar.xz
     fi
     cd gst-plugins-bad-$GST_VERSION
-    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE # -Dopenexr=disabled -Dopencv=disabled
+    run_with_scl meson setup _build -Dopencv=disabled --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE # -Dopenexr=disabled -Dopencv=disabled
     run_with_scl ninja -C _build
     run_with_scl ninja -C _build install
     cd ..
@@ -426,7 +426,7 @@ if [ ! -f "gst-libav-installed.done" ] ; then
         tar xf gst-libav-$GST_VERSION.tar.xz
     fi
     cd gst-libav-$GST_VERSION
-    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
+    run_with_scl meson setup _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
     run_with_scl ninja -C _build
     run_with_scl ninja -C _build install
     cd ..
@@ -446,7 +446,7 @@ if [ ! -f "gst-plugins-good-installed.done" ] ; then
         tar xf gst-plugins-good-$GST_VERSION.tar.xz
     fi
     cd gst-plugins-good-$GST_VERSION
-    run_with_scl meson _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+    run_with_scl meson setup _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
     run_with_scl ninja -C _build
     run_with_scl ninja -C _build install
     cd ..

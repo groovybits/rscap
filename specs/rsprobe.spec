@@ -71,7 +71,7 @@ echo "------------------------------------------------------------"
 wget --no-check-certificate https://download.gnome.org/sources/glib/$GLIB_MAJOR_VERSION/glib-$GLIB_VERSION.tar.xz
 tar xf glib-$GLIB_VERSION.tar.xz
 cd glib-$GLIB_VERSION
-run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
+run_with_scl meson setup _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
 run_with_scl ninja -C _build
 run_with_scl ninja -C _build install
 cd ..
@@ -94,7 +94,7 @@ echo "---"
 wget https://gstreamer.freedesktop.org/src/orc/orc-$ORC_VERSION.tar.xz
 tar xf orc-$ORC_VERSION.tar.xz
 cd orc-$ORC_VERSION
-run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
+run_with_scl meson setup _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
 run_with_scl ninja -C _build
 run_with_scl ninja -C _build install
 cd ..
@@ -173,7 +173,7 @@ echo "---"
 wget https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-$GST_VERSION.tar.xz
 tar xf gstreamer-$GST_VERSION.tar.xz
 cd gstreamer-$GST_VERSION
-run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
+run_with_scl meson setup _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
 run_with_scl ninja -C _build
 run_with_scl ninja -C _build install
 cd ..
@@ -188,7 +188,7 @@ echo "---"
 wget https://gstreamer.freedesktop.org/src/gst-plugins-base/gst-plugins-base-$GST_VERSION.tar.xz
 tar xf gst-plugins-base-$GST_VERSION.tar.xz
 cd gst-plugins-base-$GST_VERSION
-run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
+run_with_scl meson setup _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
 run_with_scl ninja -C _build
 run_with_scl ninja -C _build install
 cd ..
@@ -202,7 +202,7 @@ echo "---"
 wget https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-$GST_VERSION.tar.xz
 tar xf gst-plugins-bad-$GST_VERSION.tar.xz
 cd gst-plugins-bad-$GST_VERSION
-run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
+run_with_scl meson setup _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
 run_with_scl ninja -C _build
 run_with_scl ninja -C _build install
 cd ..
@@ -218,7 +218,7 @@ echo "PWD: $PWD"
 wget https://gstreamer.freedesktop.org/src/gst-libav/gst-libav-$GST_VERSION.tar.xz
 tar xf gst-libav-$GST_VERSION.tar.xz
 cd gst-libav-$GST_VERSION
-run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
+run_with_scl meson setup _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
 run_with_scl ninja -C _build
 run_with_scl ninja -C _build install
 cd ..
@@ -232,7 +232,7 @@ echo "---"
 wget https://gstreamer.freedesktop.org/src/gst-plugins-good/gst-plugins-good-$GST_VERSION.tar.xz
 tar xf gst-plugins-good-$GST_VERSION.tar.xz
 cd gst-plugins-good-$GST_VERSION
-run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
+run_with_scl meson setup _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
 run_with_scl ninja -C _build
 run_with_scl ninja -C _build install
 cd ..
