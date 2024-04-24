@@ -257,15 +257,15 @@ cd gst-plugin-rs
 git checkout $GST_PLUGINS_RS_VERSION
 
 # Closed Caption
-run_with_scl cargo cbuild --release --package gst-plugin-closedcaption --silent
+run_with_scl cargo cbuild --release --package gst-plugin-closedcaption --quiet
 run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=%{_builddir}%{prefix} --libdir=%{_builddir}%{prefix}/lib64 --silent
 
 # Audio
-run_with_scl cargo cbuild --release --package gst-plugin-audiofx --silent
+run_with_scl cargo cbuild --release --package gst-plugin-audiofx --quiet
 run_with_scl cargo cinstall --release --package gst-plugin-audiofx --prefix=%{_builddir}%{prefix} --libdir=%{_builddir}%{prefix}/lib64 --silent
 
 # Video
-run_with_scl cargo cbuild --release --package gst-plugin-videofx --silent
+run_with_scl cargo cbuild --release --package gst-plugin-videofx --quiet
 run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=%{_builddir}%{prefix} --libdir=%{_builddir}%{prefix}/lib64 --silent
 
 cd ..
