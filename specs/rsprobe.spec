@@ -1,10 +1,10 @@
 Name:           rsprobe
-Version:        0.6.5
+Version:        0.6.9
 Release:        1%{?dist}
 Summary:        MpegTS Stream Analysis Probe with Kafka and GStreamer
 License:        MIT
 URL:            https://github.com/groovybits/rscap
-BuildRequires:  epel-release, centos-release-scl-rh, gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3, libxml2-devel, pango-devel, cairo-devel, zvbi-devel, ladspa-devel, cairo-gobject-devel, cairo-gobject, rh-python38, rh-python38-python-pip
+BuildRequires:  epel-release, centos-release-scl-rh, gcc, gcc-c++, make, python3, wget, libffi-devel, util-linux, libmount-devel, bison, flex, git, cmake3, libxml2-devel, pango-devel, cairo-devel, zvbi-devel, ladspa-devel, cairo-gobject-devel, cairo-gobject, rh-python38, rh-python38-python-pip, llvm-toolset-7.0-clang-devel, libstdc++-devel, llvm, llvm-devel, libjpeg-turbo-devel, libtiff-devel, llvm-toolset-7.0-llvm-devel, llvm-toolset-7.0-clang
 Requires:       orc, libffi
 Prefix:        /opt/rsprobe
 
@@ -21,6 +21,9 @@ Capture probe analyzing MpegTS UDP Streams and sending status to Kafka with thum
 run_with_scl() {
     scl enable rh-python38 devtoolset-11 -- "$@"
 }
+run_with_scl_llvm() {
+    scl enable devtoolset-11 llvm-toolset-7.0 -- "$@"
+}
 
 # Define versions for dependencies including GStreamer
 RSCAP_VERSION=%{version}
@@ -36,6 +39,13 @@ ORC_VERSION=0.4.31
 # Create builddir
 mkdir -p %{_builddir}%{prefix}
 cd %{_builddir}
+
+# Clone RsProbe repository and checkout the specific tag
+GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/rscap.git %{_builddir}/rsprobe
+cd %{_builddir}/rsprobe
+git checkout $RSCAP_VERSION
+sh scripts/install_opencv.sh %{_builddir}%{prefix}
+cd ..
 
 # Define the PATH to include the Rust binaries
 export PATH=%{_builddir}%{prefix}/bin:$PATH
@@ -61,7 +71,7 @@ echo "------------------------------------------------------------"
 wget --no-check-certificate https://download.gnome.org/sources/glib/$GLIB_MAJOR_VERSION/glib-$GLIB_VERSION.tar.xz
 tar xf glib-$GLIB_VERSION.tar.xz
 cd glib-$GLIB_VERSION
-run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
+run_with_scl meson setup _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
 run_with_scl ninja -C _build
 run_with_scl ninja -C _build install
 cd ..
@@ -84,7 +94,7 @@ echo "---"
 wget https://gstreamer.freedesktop.org/src/orc/orc-$ORC_VERSION.tar.xz
 tar xf orc-$ORC_VERSION.tar.xz
 cd orc-$ORC_VERSION
-run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
+run_with_scl meson setup _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
 run_with_scl ninja -C _build
 run_with_scl ninja -C _build install
 cd ..
@@ -100,11 +110,12 @@ tar -xzf nasm-$NASM_VERSION.tar.gz
 cd nasm-$NASM_VERSION
 ./autogen.sh
 ./configure --prefix=%{_builddir}%{prefix}
-make
-make install
+make -j $(nproc) --silent
+make install --silent
 cd ..
 rm -rf nasm-$NASM_VERSION
 rm -f nasm-$NASM_VERSION.tar.gz
+
 
 # libx264
 echo "---"
@@ -113,8 +124,8 @@ echo "---"
 GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"  git clone https://code.videolan.org/videolan/x264.git
 cd x264
 run_with_scl ./configure --prefix=%{_builddir}%{prefix} --enable-shared --enable-static --enable-pic --libdir=%{_builddir}%{prefix}/lib64 --includedir=%{_builddir}%{prefix}/include --extra-ldflags="-L%{_builddir}%{prefix}/lib64"
-run_with_scl make
-make install
+run_with_scl make -j $(nproc) --silent
+make install --silent
 ldconfig
 cd ..
 rm -rf x264
@@ -127,9 +138,9 @@ GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"  git clone https://github.com/
 cd x265
 mkdir -p build
 cd build
-run_with_scl cmake3 -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=%{_builddir}%{prefix} -DCMAKE_INSTALL_LIBDIR=lib64 -DCMAKE_BUILD_TYPE=Release -DENABLE_SHARED:bool=on --libdir=%{_builddir}%{prefix}/lib64 --includedir=%{_buildidr}%{prefix}/include --extra-ldflags="-L%{_builddir}%{prefix}/lib64" ../source
-run_with_scl make
-make install
+run_with_scl cmake3 -G "Unix Makefiles" -DCMAKE_INSTALL_PREFIX=%{_builddir}%{prefix} -DCMAKE_INSTALL_LIBDIR=lib64 -DCMAKE_BUILD_TYPE=Release -DENABLE_SHARED:bool=on --libdir=%{_builddir}%{prefix}/lib64 --includedir=%{_buildidr}%{prefix}/include --extra-ldflags="-L%{_builddir}%{prefix}/lib64" ../source --log-level=ERROR
+run_with_scl make -j $(nproc) --silent
+make install --silent
 ldconfig
 cd ../..
 rm -rf x265
@@ -147,8 +158,8 @@ run_with_scl ./configure --prefix=%{_builddir}%{prefix} \
     --enable-libx265 --enable-libzvbi \
     --extra-cflags="-I%{_builddir}%{prefix}/include" --extra-ldflags="-L%{_builddir}%{prefix}/lib" \
     --libdir=%{_builddir}%{prefix}/lib64
-run_with_scl make
-make install
+run_with_scl make -j $(nproc) --silent
+make install --silent
 ldconfig
 cd ..
 rm -rf ffmpeg-$FFMPEG_VERSION
@@ -162,7 +173,7 @@ echo "---"
 wget https://gstreamer.freedesktop.org/src/gstreamer/gstreamer-$GST_VERSION.tar.xz
 tar xf gstreamer-$GST_VERSION.tar.xz
 cd gstreamer-$GST_VERSION
-run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
+run_with_scl meson setup _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
 run_with_scl ninja -C _build
 run_with_scl ninja -C _build install
 cd ..
@@ -177,7 +188,7 @@ echo "---"
 wget https://gstreamer.freedesktop.org/src/gst-plugins-base/gst-plugins-base-$GST_VERSION.tar.xz
 tar xf gst-plugins-base-$GST_VERSION.tar.xz
 cd gst-plugins-base-$GST_VERSION
-run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
+run_with_scl meson setup _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
 run_with_scl ninja -C _build
 run_with_scl ninja -C _build install
 cd ..
@@ -191,7 +202,7 @@ echo "---"
 wget https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-$GST_VERSION.tar.xz
 tar xf gst-plugins-bad-$GST_VERSION.tar.xz
 cd gst-plugins-bad-$GST_VERSION
-run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
+run_with_scl meson setup _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
 run_with_scl ninja -C _build
 run_with_scl ninja -C _build install
 cd ..
@@ -207,7 +218,7 @@ echo "PWD: $PWD"
 wget https://gstreamer.freedesktop.org/src/gst-libav/gst-libav-$GST_VERSION.tar.xz
 tar xf gst-libav-$GST_VERSION.tar.xz
 cd gst-libav-$GST_VERSION
-run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
+run_with_scl meson setup _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
 run_with_scl ninja -C _build
 run_with_scl ninja -C _build install
 cd ..
@@ -221,7 +232,7 @@ echo "---"
 wget https://gstreamer.freedesktop.org/src/gst-plugins-good/gst-plugins-good-$GST_VERSION.tar.xz
 tar xf gst-plugins-good-$GST_VERSION.tar.xz
 cd gst-plugins-good-$GST_VERSION
-run_with_scl meson _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
+run_with_scl meson setup _build --prefix=%{_builddir}%{prefix} --buildtype=release --native-file $MESON_NATIVE_FILE --pkg-config-path=$PKG_CONFIG_PATH
 run_with_scl ninja -C _build
 run_with_scl ninja -C _build install
 cd ..
@@ -275,27 +286,26 @@ echo "------------------------------------------------------------"
 echo "Building RsProbe..."
 echo "------------------------------------------------------------"
 
-# Clone RsProbe repository and checkout the specific tag
-rm -rf rsprobe
-GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/rscap.git rsprobe
-cd rsprobe
+cd %{_builddir}/rsprobe
 
 # Set RUSTFLAGS for RPATH
 export RUSTFLAGS="-C link-args=-Wl,-rpath,%{prefix}/lib:%{prefix}/lib64"
 
 ## Build RsProbe
-git checkout $RSCAP_VERSION
-run_with_scl cargo build --features gst --release
+echo "Running scripts/compile.sh gst"
+export BUILD_TYPE=release
+BUILD=$BUILD_TYPE ./scripts/compile.sh gst
 
 # Copy RsProbe binaries to the installation directory
-cp target/release/probe %{_builddir}%{prefix}/bin/
+echo "Copying RsProbe binaries to %{_builddir}%{prefix}/bin"
+cp target/$BUILD_TYPE/probe %{_builddir}%{prefix}/bin/
 cp scripts/probe.sh %{_builddir}%{prefix}/bin
 cp scripts/setup_env.sh %{_builddir}%{prefix}/bin
 
 cd ..
 
-# cleanup rsprobe
-rm -rf rsprobe
+echo "------------------------------------------------------------"
+echo "RsProbe built and installed."
 
 # Remove unnecessary build dependencies
 rm -rf %{_builddir}%{prefix}/cargo

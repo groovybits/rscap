@@ -1,0 +1,16 @@
+services:
+  rsprobe:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - RUST_LOG=error
+      - SOURCE_DEVICE=eth0
+      - SOURCE_IP=224.0.0.200
+      - SOURCE_PORT=10001
+      - KAFKA_KEY=
+      - KAFKA_TOPIC=rsprobe
+      - KAFKA_BROKER=localhost:9092
+      - EXTRACT_IMAGES=true
+    network_mode: host
+

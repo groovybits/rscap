@@ -1,4 +1,4 @@
-.PHONY: all clean probe_run build build_gst install
+.PHONY: all clean probe_run build build_gst docker docker_up docker_down install
 
 all: build
 
@@ -6,14 +6,22 @@ clean:
 	cargo clean
 
 probe_run:
-	scripts/probe.sh
+	sh scripts/probe.sh
 
 build:
-	scripts/compile.sh
+	sh scripts/compile.sh
 
 build_gst:
-	scripts/compile.sh gst
+	sh scripts/compile.sh gst
+
+docker:
+	docker compose build
+
+docker_up:
+	docker compose up
+
+docker_down:
+	docker compose down
 
 install:
-	scripts/install.sh
-
+	sh scripts/install.sh

@@ -8,14 +8,19 @@ if [ "$1" != "" ]; then
     FEATURES="--features $1"
 fi
 
-BUILD=release-with-debug
+if [ "$BUILD" == "" ]; then
+    echo "Using default build profile."
+    BUILD=release-with-debug
+else
+    echo "Using build profile: $BUILD"
+fi
 PREFIX=/opt/rsprobe
 
 LD_LIBRARY_PATH=$PREFIX/lib:$PREFIX/lib64:$LD_LIBRARY_PATH
 export LD_LIBRARY_PATH
 
 # Assuming your pkg-config files are in /opt/rsprobe/lib64/pkgconfig
-PKG_CONFIG_PATH=/opt/rsprobe/lib64/pkgconfig:$PKG_CONFIG_PATH
+PKG_CONFIG_PATH=/opt/rsprobe/lib64/pkgconfig:/opt/rsprobe/lib/pkgconfig:$PKG_CONFIG_PATH
 export PKG_CONFIG_PATH
 
 # Function to prompt for installation
@@ -45,7 +50,7 @@ install_rust() {
 # Function to run a command within the SCL environment for CentOS
 run_with_scl() {
     export PKG_CONFIG_PATH=/opt/rsprobe/lib64/pkgconfig:/opt/rsprobe/lib/pkgconfig:$PKG_CONFIG_PATH
-    scl enable devtoolset-11 -- "$@"
+    scl enable devtoolset-11 rh-python38 llvm-toolset-7.0 -- "$@"
 }
 
 # Detect the operating system
@@ -61,6 +66,8 @@ fi
 
 # CentOS 7 specific setup
 if [ "$OS" = "Linux" ]; then
+    export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
+
     if [ -f /etc/centos-release ]; then
         . /etc/os-release
         if [ "$VERSION_ID" = "7" ]; then
@@ -91,6 +98,8 @@ if [ "$OS" = "Linux" ]; then
     fi
     # Add elif blocks here for other specific Linux distributions
 elif [ "$OS" = "Darwin" ]; then
+    export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib -Wl,-rpath,$PREFIX/lib64"
+
     echo "macOS detected."
     # Brew RPMs
     # check if brew binary exists
@@ -110,20 +119,20 @@ elif [ "$OS" = "Darwin" ]; then
         xcode-select --install
         # Note: The user will need to continue the installation process manually if required.
     fi
-    brew install capnp zeromq
     export CXXFLAGS="-stdlib=libc++"
     export LDFLAGS="-lc++"
     # macOS specific setup
     # Build on macOS
     echo "Building project (macOS)..."
     if [ "$BUILD" = "release" ]; then
-        cargo build $FEATURES --profile=release-with-debug
-    elif [ "$BUILD" == "release-with-debug" ]; then
         cargo build $FEATURES --release
+    elif [ "$BUILD" == "release-with-debug" ]; then
+        cargo build $FEATURES --profile=release-with-debug
     else
         cargo build $FEATURES
     fi
 else
+    export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
     echo "Generic Unix-like OS detected."
     # Generic Unix/Linux setup
     # Build for generic Unix/Linux
