@@ -247,8 +247,8 @@ export RUSTC=%{_builddir}%{prefix}/bin/rustc
 # gstreamer rust plugins
 GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/cargo-c.git
 cd cargo-c
-#run_with_scl cargo install cargo-c --root=%{_builddir}%{prefix} --quiet
-run_with_scl cargo install --path=. --root=%{_builddir}%{prefix} --quiet
+#run_with_scl cargo install cargo-c --root=%{_builddir}%{prefix}
+run_with_scl cargo install --path=. --root=%{_builddir}%{prefix}
 cd ../
 
 rm -rf gst-plugin-rs
@@ -257,16 +257,16 @@ cd gst-plugin-rs
 git checkout $GST_PLUGINS_RS_VERSION
 
 # Closed Caption
-run_with_scl cargo cbuild --release --package gst-plugin-closedcaption --quiet
-run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=%{_builddir}%{prefix} --libdir=%{_builddir}%{prefix}/lib64 --silent
+run_with_scl cargo cbuild --release --package gst-plugin-closedcaption
+run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=%{_builddir}%{prefix} --libdir=%{_builddir}%{prefix}/lib64
 
 # Audio
-run_with_scl cargo cbuild --release --package gst-plugin-audiofx --quiet
-run_with_scl cargo cinstall --release --package gst-plugin-audiofx --prefix=%{_builddir}%{prefix} --libdir=%{_builddir}%{prefix}/lib64 --silent
+run_with_scl cargo cbuild --release --package gst-plugin-audiofx
+run_with_scl cargo cinstall --release --package gst-plugin-audiofx --prefix=%{_builddir}%{prefix} --libdir=%{_builddir}%{prefix}/lib64
 
 # Video
-run_with_scl cargo cbuild --release --package gst-plugin-videofx --quiet
-run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=%{_builddir}%{prefix} --libdir=%{_builddir}%{prefix}/lib64 --silent
+run_with_scl cargo cbuild --release --package gst-plugin-videofx
+run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=%{_builddir}%{prefix} --libdir=%{_builddir}%{prefix}/lib64
 
 cd ..
 rm -rf gst-plugin-rs

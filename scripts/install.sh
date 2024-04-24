@@ -468,7 +468,7 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/cargo-c.git
   cd cargo-c
   #run_with_scl cargo install cargo-c --root=$PREFIX --quiet
-  run_with_scl cargo install --path=. --root=$PREFIX --quiet
+  run_with_scl cargo install --path=. --root=$PREFIX
   cd ../
 
   # Download gst-plugins-rs source code
@@ -485,20 +485,20 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   # Closed Caption
   echo
   echo "Building gst-plugin-closedcaption..."
-  run_with_scl cargo cbuild --release --package gst-plugin-closedcaption --quiet
-  run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64 --silent
+  run_with_scl cargo cbuild --release --package gst-plugin-closedcaption
+  run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64
 
   # Audio
   echo
   echo "Building gst-plugin-audiofx..."
-  run_with_scl cargo cbuild --release --package gst-plugin-audiofx --quiet
-  run_with_scl cargo cinstall --release --package gst-plugin-audiofx --prefix=$PREFIX --libdir=$PREFIX/lib64 --silent
+  run_with_scl cargo cbuild --release --package gst-plugin-audiofx
+  run_with_scl cargo cinstall --release --package gst-plugin-audiofx --prefix=$PREFIX --libdir=$PREFIX/lib64
 
   # Video
   echo
   echo "Building gst-plugin-videofx..."
-  run_with_scl cargo cbuild --release --package gst-plugin-videofx --quiet
-  run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=$PREFIX --libdir=$PREFIX/lib64 --silent
+  run_with_scl cargo cbuild --release --package gst-plugin-videofx
+  run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=$PREFIX --libdir=$PREFIX/lib64
 
   cd ..
 fi
@@ -510,7 +510,7 @@ echo "Changing to RsCap directory... 'cd ../'"
 cd ..
 echo "------------------------------------------------------------"
 echo "Cleaning RsCap..."
-cargo clean --quiet
+cargo clean
 CUR_DIR=$(pwd)
 echo "Building RsCap in $CUR_DIR ..."
 export BUILD_TYPE=release
