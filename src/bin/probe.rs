@@ -494,7 +494,7 @@ async fn send_to_kafka(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.7.1",
+    version = "0.7.3",
     about = "MpegTS Stream Analysis Probe with Kafka and GStreamer"
 )]
 struct Args {
@@ -1539,7 +1539,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
                     // Inside the loop
                     for (_probe_id, probe_data) in averaged_probe_data.iter() {
-                        if !force_kafka_send || batch_pos != batch_end {
+                        if !force_kafka_send && batch_pos != batch_end {
                             continue;
                         }
                         let json_data = serde_json::to_string(probe_data)
