@@ -37,6 +37,7 @@ use opencv::img_hash::PHash;
 use opencv::{core::Mat, prelude::*};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+#[cfg(feature = "gst")]
 use std::fs::OpenOptions;
 #[cfg(feature = "gst")]
 use std::io;
@@ -70,6 +71,7 @@ pub struct ImageData {
 }
 
 // CEA-608 character set mapping
+/*
 const CEA608_CHAR_MAP: &[&str] = &[
     " ", "!", "\"", "#", "$", "%", "&", "'", "(", ")", "á", "+", ",", "-", ".", "/", "0", "1", "2",
     "3", "4", "5", "6", "7", "8", "9", ":", ";", "<", "=", ">", "?", "@", "A", "B", "C", "D", "E",
@@ -216,6 +218,7 @@ fn decode_cea608(data: &[u8]) -> Vec<Caption> {
 
     captions
 }
+*/
 
 #[cfg(feature = "gst")]
 fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
@@ -406,13 +409,14 @@ pub fn pull_images(
                                     if save_captions {
                                         file.as_mut().unwrap().write_all(&caption_data).unwrap();
                                     }
+                                    log::info!("Received CEA708 caption data: {:?}", caption_data);
 
-                                    let caption = decode_cea608(&caption_data);
-                                    if caption.len() > 0 {
+                                    //let caption = decode_cea608(&caption_data);
+                                    /*if caption.len() > 0 {
                                         log::info!("Decoded VBI caption: {:?}", caption);
                                     } else {
                                         log::debug!("No caption data found in {:?}", caption_data);
-                                    }
+                                        }*/
                                 }
                                 _ => {
                                     log::warn!("Unsupported caption type: {:?}", caption_type);
