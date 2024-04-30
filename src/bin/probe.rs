@@ -1556,6 +1556,8 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             let retry_attempts = 3;
                             let retry_delay = Duration::from_millis(100);
 
+                            force_kafka_send = false;
+
                             if let Err(e) = send_to_kafka(
                                 &producer_local,
                                 &kafka_topic_clone,
