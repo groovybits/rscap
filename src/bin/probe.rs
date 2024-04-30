@@ -1539,7 +1539,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
                     // Inside the loop
                     for (_probe_id, probe_data) in averaged_probe_data.iter() {
-                        if !force_kafka_send || batch_pos != batch_end {
+                        if !force_kafka_send && batch_pos != batch_end {
                             continue;
                         }
                         let json_data = serde_json::to_string(probe_data)
@@ -1555,8 +1555,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             let timeout = Duration::from_secs(30);
                             let retry_attempts = 3;
                             let retry_delay = Duration::from_millis(100);
-
-                            force_kafka_send = false;
 
                             if let Err(e) = send_to_kafka(
                                 &producer_local,
