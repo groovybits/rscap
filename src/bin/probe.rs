@@ -1071,10 +1071,15 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                 }
 
                 // Process and send messages
+                let batch_end = batch.len();
+                let mut batch_pos = 0;
                 for stream_data in batch.iter() {
+                    batch_pos += 1;
+                    let mut force_kafka_send = false;
                     let mut base64_image = String::new();
 
-                    if images.len() > 0 {
+                    // Check if we have any images to send on the final pid stream grouping
+                    if images.len() > 0 && batch_pos == batch_end {
                         // Define default ImageData in case `images.pop()` returns None
                         let default_image_data: ImageData = ImageData {
                             image: Vec::new(),
@@ -1320,6 +1325,8 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                     "log_message".to_string(),
                                     serde_json::json!(log_message),
                                 );
+                                // set force_kafka_send to true to force sending the log_message to kafka
+                                force_kafka_send = true;
                             } else {
                                 flattened_data
                                     .insert("log_message".to_string(), serde_json::json!(""));
@@ -1532,6 +1539,9 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
                     // Inside the loop
                     for (_probe_id, probe_data) in averaged_probe_data.iter() {
+                        if !force_kafka_send || batch_pos != batch_end {
+                            continue;
+                        }
                         let json_data = serde_json::to_string(probe_data)
                             .expect("Failed to serialize probe data for Kafka");
 
