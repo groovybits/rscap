@@ -1591,30 +1591,21 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
     // Initialize the pipeline
     #[cfg(feature = "gst")]
-    let (pipeline, appsrc, appsink, captionssink, audiosink) = if args.extract_images {
-        match initialize_pipeline(
-            &args.input_codec,
-            args.image_height,
-            args.gst_queue_buffers,
-            !args.scale_images_after_gstreamer,
-            &args.image_framerate,
-        ) {
-            Ok((pipeline, appsrc, appsink, captionssink, audiosink)) => {
-                (pipeline, appsrc, appsink, captionssink, audiosink)
-            }
-            Err(err) => {
-                eprintln!("Failed to initialize the pipeline: {}", err);
-                return;
-            }
+    let (pipeline, appsrc, appsink, captionssink, audiosink) = match initialize_pipeline(
+        &args.input_codec,
+        args.image_height,
+        args.gst_queue_buffers,
+        !args.scale_images_after_gstreamer,
+        &args.image_framerate,
+        args.extract_images,
+    ) {
+        Ok((pipeline, appsrc, appsink, captionssink, audiosink)) => {
+            (pipeline, appsrc, appsink, captionssink, audiosink)
         }
-    } else {
-        (
-            gstreamer::Pipeline::new(),
-            gstreamer_app::AppSrc::builder().build(),
-            gstreamer_app::AppSink::builder().build(),
-            gstreamer_app::AppSink::builder().build(),
-            gstreamer_app::AppSink::builder().build(),
-        )
+        Err(err) => {
+            eprintln!("Failed to initialize the pipeline: {}", err);
+            return;
+        }
     };
 
     // Start the pipeline

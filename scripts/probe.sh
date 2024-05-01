@@ -47,7 +47,7 @@ else
 fi
 
 EXTRACT_IMAGES_ARG=
-EXTRACT_IMAGES_ARG=--extract-images
+#EXTRACT_IMAGES_ARG=--extract-images
 
 echo "Using $PROBE_BIN"
 
