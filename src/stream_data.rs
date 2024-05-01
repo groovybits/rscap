@@ -235,6 +235,7 @@ pub fn initialize_pipeline(
     buffer_count: u32,
     scale: bool,
     framerate: &str,
+    extract_images: bool,
 ) -> Result<
     (
         gst::Pipeline,
