@@ -1047,6 +1047,8 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         0x27 => "video",
                         0x28 => "video",
                         0x29 => "video",
+                        0x81 => "audio",
+                        0x87 => "audio",
                         0x86 => "scte35",
                         0xFF => "padding",
                         _ => "data",
