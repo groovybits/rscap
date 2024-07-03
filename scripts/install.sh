@@ -286,7 +286,7 @@ if [ "$OS" = "Darwin" -o "$distro_type" = "alma" ]; then
         git checkout v$LIBZVBI_VERSION
         if [ "$distro_type" = "alma" ]; then
             ## Autoconf 27 override HACK
-            mkdir bin
+            mkdir -p $PREFIX/bin
             echo "#!/bin/sh" > $PREFIX/bin/autoconf
             echo "autoconf27" >> $PREFIX/bin/autoconf
             chmod 755 $PREFIX/bin/autoconf
