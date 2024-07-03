@@ -65,7 +65,9 @@ PREFIX=/opt/rsprobe
 if [ "$OS" == "Linux" -a "$distro_type" = "centos" ]; then
     export CMAKE=cmake3
 else
-    brew install cmake
+    if [ "$OS" == "Darwin" ]; then
+        brew install cmake
+    fi
     export CMAKE=cmake
 fi
 
