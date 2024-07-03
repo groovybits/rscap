@@ -303,8 +303,6 @@ if [ "$OS" = "Darwin" -o "$distro_type" = "alma" ]; then
             ## Test hack REMOVE ME
             which autoconf
             autoconf --version
-            ls -altr bin/
-            echo $PATH
             ## End Test hack
         fi
         run_with_scl ./autogen.sh
