@@ -61,7 +61,13 @@ if [ "$OS" = "Linux" ]; then
     $SUDO $PKGMGR groupinstall -yq "Development Tools"
     if [ "$distro_type" = "alma" ]; then
         $SUDO $PKGMGR install -yq cmake
-        $SUDO $PKGMGR install -yq rust cargo
+        #$SUDO $PKGMGR install -yq rust cargo
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+            sudo RUSTUP_INIT_SKIP_PATH_CHECK=yes \
+            CARGO_HOME=/usr RUSTUP_HOME=/usr \
+                sh -s -- -y \
+                    --no-modify-path --default-toolchain stable
+        #source $HOME/.cargo/env
     else
         $SUDO $PKGMGR install -yq cmake3
     fi
