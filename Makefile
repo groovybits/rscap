@@ -3,7 +3,7 @@
 all: build
 
 clean:
-	cargo clean
+	cargo clean --quiet
 
 probe_run:
 	sh scripts/probe.sh

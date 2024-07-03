@@ -88,11 +88,11 @@ if [ "$OS" = "Linux" ]; then
             # Build with SCL
             echo "Building project (CentOS 7)..."
             if [ "$BUILD" = "release" ]; then
-                run_with_scl cargo build $FEATURES --release
+                run_with_scl cargo build $FEATURES --release --quiet
             elif [ "$BUILD" = "release-with-debug" ]; then
-                run_with_scl cargo build $FEATURES --profile=release-with-debug
+                run_with_scl cargo build $FEATURES --profile=release-with-debug --quiet
             else
-                run_with_scl cargo build $FEATURES
+                run_with_scl cargo build $FEATURES --quiet
             fi
         fi
     fi
@@ -125,11 +125,11 @@ elif [ "$OS" = "Darwin" ]; then
     # Build on macOS
     echo "Building project (macOS)..."
     if [ "$BUILD" = "release" ]; then
-        cargo build $FEATURES --release
+        cargo build $FEATURES --release --quiet
     elif [ "$BUILD" == "release-with-debug" ]; then
-        cargo build $FEATURES --profile=release-with-debug
+        cargo build $FEATURES --profile=release-with-debug --quiet
     else
-        cargo build $FEATURES
+        cargo build $FEATURES --quiet
     fi
 else
     export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
@@ -138,11 +138,11 @@ else
     # Build for generic Unix/Linux
     echo "Building project..."
     if [ "$BUILD" = "release" ]; then
-        cargo build $FEATURES --release
+        cargo build $FEATURES --release --quiet
     elif [ "$BUILD" == "release-with-debug" ]; then
-        cargo build $FEATURES --profile=release-with-debug
+        cargo build $FEATURES --profile=release-with-debug --quiet
     else
-        cargo build $FEATURES
+        cargo build $FEATURES --quiet
     fi
 fi
 
