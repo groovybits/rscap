@@ -277,7 +277,6 @@ if [ "$OS" = "Darwin" -o "$distro_type" = "alma" ]; then
             brew install libtool autoconf automake
         else
             $SUDO $PKGMGR install -yq autoconf2.7x
-            alias autoconf=autoconf27
         fi
         echo "---"
         echo "Installing libzvbi..."
@@ -285,7 +284,7 @@ if [ "$OS" = "Darwin" -o "$distro_type" = "alma" ]; then
         GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/zapping-vbi/zvbi.git
         cd zvbi
         git checkout v$LIBZVBI_VERSION
-        run_with_scl sh autogen.sh
+        run_with_scl sh alias autoconf=autoconf27 autogen.sh
         run_with_scl ./configure --prefix=$PREFIX
         run_with_scl make -j $CPUS --silent
         run_with_scl make install --silent
