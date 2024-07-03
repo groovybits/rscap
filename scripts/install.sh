@@ -176,7 +176,7 @@ elif [ "$OS" == "Darwin" ]; then
 fi
 
 # OpenCV installation
-if [ "$OS" = "Linux" -a "$os_type" = "alma" ]; then
+if [ "$OS" = "Linux" -a "$distro_type" = "alma" ]; then
     $SUDO $PKGMGR install -yq opencv-core opencv-devel opencv-contrib
 else
     if [ ! -d "opencv" ]; then
