@@ -285,24 +285,32 @@ if [ "$OS" = "Darwin" -o "$distro_type" = "alma" ]; then
         cd zvbi
         git checkout v$LIBZVBI_VERSION
         if [ "$distro_type" = "alma" ]; then
+            export AUTOCONF=/usr/bin/autoconf27
+            export AUTOHEADER=/usr/bin/autoheader27
+            export AUTOM4TE=/usr/bin/autom4te27
+            export ACLOCAL=/usr/bin/aclocal27
+            export AUTOMAKE=/usr/bin/automake27
+            export AUTOPOINT=/usr/bin/autopoint27
+
             ## Autoconf 27 override HACK
             mkdir -p $PREFIX/bin
             echo "#!/bin/sh" > $PREFIX/bin/autoconf
-            echo "autoconf27" >> $PREFIX/bin/autoconf
+            echo "/usr/bin/autoconf27" >> $PREFIX/bin/autoconf
             chmod 755 $PREFIX/bin/autoconf
             ## End HACK
-            if [ ! -d "gettext-0.21" ]; then
-                wget https://ftp.gnu.org/gnu/gettext/gettext-0.21.tar.gz
-                tar -xzf gettext-0.21.tar.gz
-            fi
-            cd gettext-0.21
-            ./configure --prefix=$PREFIX
-            make install --silent
-            cd ..
+
+            #if [ ! -d "gettext-0.21" ]; then
+            #    wget https://ftp.gnu.org/gnu/gettext/gettext-0.21.tar.gz
+            #    tar -xzf gettext-0.21.tar.gz
+            #fi
+            #cd gettext-0.21
+            #./configure --prefix=$PREFIX
+            #make install --silent
+            #cd ..
 
             ## Test hack REMOVE ME
-            which autoconf
-            autoconf --version
+            #which autoconf
+            #autoconf --version
             ## End Test hack
         fi
         run_with_scl ./autogen.sh
