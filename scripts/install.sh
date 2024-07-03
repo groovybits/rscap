@@ -66,7 +66,8 @@ if [ "$OS" = "Linux" ]; then
             sudo RUSTUP_INIT_SKIP_PATH_CHECK=yes \
             CARGO_HOME=/usr RUSTUP_HOME=/usr \
                 sh -s -- -y \
-                    --no-modify-path --default-toolchain stable
+                    --no-modify-path --default-toolchain stable \
+                        && rustup default stable
         #source $HOME/.cargo/env
     else
         $SUDO $PKGMGR install -yq cmake3

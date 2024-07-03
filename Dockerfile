@@ -29,7 +29,7 @@ RUN yum groupinstall -y "Development Tools" && \
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
     RUSTUP_INIT_SKIP_PATH_CHECK=yes \
     CARGO_HOME=/usr RUSTUP_HOME=/usr sh \
-    -s -- -y --no-modify-path --default-toolchain stable
+    -s -- -y --no-modify-path --default-toolchain stable && rustup default stable
 
 ## Install Meson/Ninja and Rscap
 RUN pip3 install meson && scl enable devtoolset-11 rh-python38 -- pip3.8 install meson
