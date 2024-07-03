@@ -284,13 +284,24 @@ if [ "$OS" = "Darwin" -o "$distro_type" = "alma" ]; then
         GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/zapping-vbi/zvbi.git
         cd zvbi
         git checkout v$LIBZVBI_VERSION
-        ## Autoconf 27 override HACK
-        mkdir bin
-        echo "#!/bin/sh" > bin/autoconf
-        echo "autoconf27" >> bin/autoconf
-        chmod 755 bin/autoconf
-        export PATH=`pwd`/bin:$PATH
-        ## End HACK
+        if [ "$distro_type" = "alma" ]; then
+            ## Autoconf 27 override HACK
+            mkdir bin
+            echo "#!/bin/sh" > bin/autoconf
+            echo "autoconf27" >> bin/autoconf
+            chmod 755 bin/autoconf
+            export PATH=`pwd`/bin:$PATH
+            ## End HACK
+            if [ ! -d "gettext-0.21" ]; then
+                wget https://ftp.gnu.org/gnu/gettext/gettext-0.21.tar.gz
+                tar -xzf gettext-0.21.tar.gz
+            fi
+            cd gettext-0.21
+            ./configure
+            make
+            sudo make install
+            cd ..
+        fi
         run_with_scl ./autogen.sh
         run_with_scl ./configure --prefix=$PREFIX
         run_with_scl make -j $CPUS --silent
