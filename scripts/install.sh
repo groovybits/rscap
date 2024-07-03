@@ -148,6 +148,9 @@ if [ "$OS" = "Linux" ]; then
     $SUDO $PKGMGR groupinstall -yq "Development Tools"
     if [ "$distro_type" = "alma" ]; then
         $SUDO $PKGMGR install -yq python3
+        $SUDO pip3 install meson
+        $SUDO pip3 install ninja
+        $SUDO pip3 install numpy
     else
         $SUDO $PKGMGR install -yq bison flex python3 wget libffi-devel util-linux \
             libmount-devel libxml2-devel glib2-devel cairo-devel \
