@@ -288,8 +288,9 @@ if [ "$OS" = "Darwin" -o "$distro_type" = "alma" ]; then
             export AUTOCONF=/usr/bin/autoconf27
             export AUTOHEADER=/usr/bin/autoheader27
             export AUTOM4TE=/usr/bin/autom4te27
-            export ACLOCAL=/usr/bin/aclocal27
-            export AUTOMAKE=/usr/bin/automake27
+            export AUTORECONF=/usr/bin/autoreconf27
+            export AUTOUPDATE=/usr/bin/autoupdate27
+            export AUTOSCAN=/usr/bin/autoscan27
 
             ## Autoconf 27 override HACK
             mkdir -p $PREFIX/bin
