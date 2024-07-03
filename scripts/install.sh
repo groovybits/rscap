@@ -147,7 +147,7 @@ if [ "$OS" = "Linux" ]; then
     # Ensure the system is up to date and has the basic build tools
     $SUDO $PKGMGR groupinstall -yq "Development Tools"
     if [ "$distro_type" = "alma" ]; then
-        $SUDO $PKGMGR install -yq python3 wget zvbi-devel
+        $SUDO $PKGMGR install -yq python3 wget
         $SUDO pip3 install meson
         $SUDO pip3 install ninja
         $SUDO pip3 install numpy
@@ -271,7 +271,7 @@ else
 fi
 
 # Install libzvbi
-if [ "$(uname)" = "Darwin" ]; then
+if [ "$(uname)" = "Darwin" -o "$distro_type" = "alma" ]; then
     if [ ! -f "libzvbi-installed.done" ]; then
         brew install libtool autoconf automake
         echo "---"
