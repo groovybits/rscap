@@ -277,6 +277,7 @@ if [ "$OS" = "Darwin" -o "$distro_type" = "alma" ]; then
             brew install libtool autoconf automake
         else
             $SUDO $PKGMGR install -yq autoconf2.7x
+            alias autoconf=autoconf27
         fi
         echo "---"
         echo "Installing libzvbi..."
