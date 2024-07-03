@@ -147,7 +147,7 @@ if [ "$OS" = "Linux" ]; then
     # Ensure the system is up to date and has the basic build tools
     $SUDO $PKGMGR groupinstall -yq "Development Tools"
     if [ "$distro_type" = "alma" ]; then
-        $SUDO $PKGMGR install -yq python3 wget
+        $SUDO $PKGMGR install -yq python3 wget zvbi-devel
         $SUDO pip3 install meson
         $SUDO pip3 install ninja
         $SUDO pip3 install numpy
