@@ -287,19 +287,25 @@ if [ "$OS" = "Darwin" -o "$distro_type" = "alma" ]; then
         if [ "$distro_type" = "alma" ]; then
             ## Autoconf 27 override HACK
             mkdir bin
-            echo "#!/bin/sh" > bin/autoconf
-            echo "autoconf27" >> bin/autoconf
-            chmod 755 bin/autoconf
-            export PATH=`pwd`/bin:$PATH
+            echo "#!/bin/sh" > $PREFIX/bin/autoconf
+            echo "autoconf27" >> $PREFIX/bin/autoconf
+            chmod 755 $PREFIX/bin/autoconf
             ## End HACK
             if [ ! -d "gettext-0.21" ]; then
                 wget https://ftp.gnu.org/gnu/gettext/gettext-0.21.tar.gz
                 tar -xzf gettext-0.21.tar.gz
             fi
             cd gettext-0.21
-            ./configure --prefix=/usr #$PREFIX
+            ./configure --prefix=$PREFIX
             make install --silent
             cd ..
+
+            ## Test hack REMOVE ME
+            which autoconf
+            autoconf --version
+            ls -altr bin/
+            echo $PATH
+            ## End Test hack
         fi
         run_with_scl ./autogen.sh
         run_with_scl ./configure --prefix=$PREFIX
