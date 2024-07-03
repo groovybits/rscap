@@ -100,9 +100,6 @@ run_with_scl_llvm() {
         "$@"
     fi
 }
-# Detect the operating system
-OS="$(uname -s)"
-echo "Detected OS: $OS"
 
 BUILD_DIR=$(pwd)/build
 if [ ! -d $BUILD_DIR ]; then
@@ -148,21 +145,21 @@ export PATH=$PREFIX/bin:$PATH
 
 if [ "$OS" = "Linux" ]; then
     # Ensure the system is up to date and has the basic build tools
-    $SUDO yum groupinstall -yq "Development Tools"
+    $SUDO $PKGMGR groupinstall -yq "Development Tools"
     if [ "$distro_type" = "alma" ]; then
         $SUDO $PKGMGR install -yq python3
     else
-        $SUDO yum install -yq bison flex python3 wget libffi-devel util-linux \
+        $SUDO $PKGMGR install -yq bison flex python3 wget libffi-devel util-linux \
             libmount-devel libxml2-devel glib2-devel cairo-devel \
             ladspa-devel pango-devel cairo-gobject-devel cairo-gobject
-        $SUDO yum install -yq centos-release-scl-rh epel-release
-        $SUDO yum install -yq yum-utils
+        $SUDO $PKGMGR install -yq centos-release-scl-rh epel-release
+        $SUDO $PKGMGR install -yq yum-utils
         $SUDO yum-config-manager --disable epel
-        $SUDO yum install --enablerepo=epel* -yq zvbi-devel cmake3
-        $SUDO yum install -yq git
-        $SUDO yum install -yq libstdc++-devel
-        $SUDO yum install -yq llvm-toolset-7.0-llvm-devel llvm-toolset-7.0-clang
-        $SUDO yum install -yq rh-python38 rh-python38-python-pip
+        $SUDO $PKGMGR install --enablerepo=epel* -yq zvbi-devel cmake3
+        $SUDO $PKGMGR install -yq git
+        $SUDO $PKGMGR install -yq libstdc++-devel
+        $SUDO $PKGMGR install -yq llvm-toolset-7.0-llvm-devel llvm-toolset-7.0-clang
+        $SUDO $PKGMGR install -yq rh-python38 rh-python38-python-pip
 
         $SUDO pip3 install meson
         $SUDO pip3 install ninja

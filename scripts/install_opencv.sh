@@ -3,7 +3,53 @@
 set -e
 #set -v
 
-OS="$(uname -s)"
+SUDO=""
+if [ -f "/usr/bin/sudo" ]; then
+    SUDO="/usr/bin/sudo"
+fi
+PKGMGR=""
+if [ -f "/usr/bin/dnf" ]; then
+    PKGMGR="/usr/bin/dnf"
+elif [ -f "/usr/bin/yum" ]; then
+    PKGMGR="/usr/bin/yum"
+fi
+
+# Function to get the distribution name from /etc/os-release
+get_distro_name() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        echo "$NAME"
+    elif [ -f /etc/redhat-release ]; then
+        # Older versions of CentOS might use /etc/redhat-release
+        cat /etc/redhat-release
+    else
+        echo "Unknown"
+    fi
+}
+
+OS=$(uname)
+distro_name=""
+distro_type=""
+
+if [ "$OS" = "Linux" ]; then
+    if [ "$PKGMGR" = "" ]; then
+        echo "ERROR: No package manager found, dnf and yum don't exist!!!"
+        exit 1
+    fi
+
+    distro_name=$(get_distro_name)
+    distro_type="unknown"
+
+    if [[ "$distro_name" == *"CentOS"* ]]; then
+        echo "This is a CentOS system."
+        distro_type="centos"
+    elif [[ "$distro_name" == *"AlmaLinux"* ]]; then
+        echo "This is an AlmaLinux system."
+        distro_type="alma"
+    else
+        echo "This is a Linux system, but not CentOS or AlmaLinux."
+    fi
+fi
 
 CPUS=
 if [ "$OS" == "Linux" ]; then
@@ -16,7 +62,7 @@ O0PENCV_VERSION=4.5.5
 CMAKE=cmake
 PREFIX=/opt/rsprobe
 
-if [ "$OS" == "Linux" ]; then
+if [ "$OS" == "Linux" -a "$distro_type" = "centos" ]; then
     export CMAKE=cmake3
 else
     brew install cmake
@@ -25,7 +71,7 @@ fi
 
 run_with_scl() {
     OS="$(uname -s)"
-    if [ "$OS" == "Linux" ]; then
+    if [ "$OS" == "Linux" -a "$distro_type" = "centos" ]; then
         scl enable devtoolset-11 llvm-toolset-7.0 -- "$@"
     else
         "$@"
