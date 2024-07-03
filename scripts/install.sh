@@ -297,9 +297,8 @@ if [ "$OS" = "Darwin" -o "$distro_type" = "alma" ]; then
                 tar -xzf gettext-0.21.tar.gz
             fi
             cd gettext-0.21
-            ./configure
-            make
-            sudo make install
+            ./configure --prefix=$PREFIX
+            make install --silent
             cd ..
         fi
         run_with_scl ./autogen.sh
