@@ -297,7 +297,7 @@ if [ "$OS" = "Darwin" -o "$distro_type" = "alma" ]; then
                 tar -xzf gettext-0.21.tar.gz
             fi
             cd gettext-0.21
-            ./configure --prefix=$PREFIX
+            ./configure --prefix=/usr #$PREFIX
             make install --silent
             cd ..
         fi
