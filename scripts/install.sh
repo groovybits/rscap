@@ -1,6 +1,9 @@
 #!/bin/bash
-set -e
 #set -v
+
+SUDO=$(which sudo || echo "")
+PKGMGR=$(which dnf 2>&1 >/dev/null || which yum 2>&1 >/dev/null || echo "")
+set -e
 
 # Function to get the distribution name from /etc/os-release
 get_distro_name() {
@@ -14,10 +17,6 @@ get_distro_name() {
         echo "Unknown"
     fi
 }
-
-SUDO=$(which sudo || echo "")
-PKGMGR=$(which dnf 2>&1 >/dev/null || which yum 2>&1 >/dev/null || echo "")
-set -e
 
 OS=$(uname)
 distro_name=""
@@ -143,7 +142,7 @@ if [ "$OS" = "Linux" ]; then
     # Ensure the system is up to date and has the basic build tools
     $SUDO yum groupinstall -yq "Development Tools"
     if [ "$distro_type" = "alma" ]; then
-        $SUDO $PKG_MGR install -yq python3
+        $SUDO $PKGMGR install -yq python3
     else
         $SUDO yum install -yq bison flex python3 wget libffi-devel util-linux \
             libmount-devel libxml2-devel glib2-devel cairo-devel \
