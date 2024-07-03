@@ -1,9 +1,17 @@
 #!/bin/bash
 #set -v
-
-SUDO=$(which sudo || echo "")
-PKGMGR=$(which dnf 2>&1 >/dev/null || which yum 2>&1 >/dev/null || echo "")
 set -e
+
+SUDO=""
+if [ -f "/usr/bin/sudo" ]; then
+    SUDO="/usr/bin/sudo"
+fi
+PKGMGR=""
+if [ -f "/usr/bin/dnf" ]; then
+    PKGMGR="/usr/bin/dnf"
+elif [ -f "/usr/bin/yum" ]; then
+    PKGMGR="/usr/bin/yum"
+fi
 
 # Function to get the distribution name from /etc/os-release
 get_distro_name() {
