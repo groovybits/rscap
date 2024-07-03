@@ -121,7 +121,7 @@ cd opencv/build
 
 CMAKE_C_COMPILER_VAR=
 CMAKE_CXX_COMPILER_VAR=
-if [ "$OS" == "Linux" ]; then
+if [ "$OS" == "Linux" -a "$distro_type" = "centos" ]; then
      CMAKE_C_COMPILER_VAR=-DCMAKE_C_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang
      CMAKE_CXX_COMPILER_VAR=-DCMAKE_CXX_COMPILER=/opt/rh/llvm-toolset-7.0/root/usr/bin/clang++
 fi
