@@ -308,6 +308,7 @@ if [ "$OS" = "Darwin" -o "$distro_type" = "alma" ]; then
             make install --silent
             cd ..
         fi
+        touch README
         run_with_scl ./autogen.sh
         run_with_scl ./configure --prefix=$PREFIX
         run_with_scl make -j $CPUS --silent
