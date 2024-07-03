@@ -2,6 +2,73 @@
 set -e
 #set -v
 
+# Function to get the distribution name from /etc/os-release
+get_distro_name() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        echo "$NAME"
+    elif [ -f /etc/redhat-release ]; then
+        # Older versions of CentOS might use /etc/redhat-release
+        cat /etc/redhat-release
+    else
+        echo "Unknown"
+    fi
+}
+
+SUDO=$(which sudo || echo "")
+PKGMGR=$(which dnf 2>&1 >/dev/null || which yum 2>&1 >/dev/null || echo "")
+set -e
+
+OS=$(uname)
+distro_name=""
+distro_type=""
+
+if [ "$OS" = "Linux" ]; then
+    if [ "$PKGMGR" = "" ]; then
+        echo "ERROR: No package manager found, dnf and yum don't exist!!!"
+        exit 1
+    fi
+
+    distro_name=$(get_distro_name)
+    distro_type="unknown"
+
+    if [[ "$distro_name" == *"CentOS"* ]]; then
+        echo "This is a CentOS system."
+        distro_type="centos"
+    elif [[ "$distro_name" == *"AlmaLinux"* ]]; then
+        echo "This is an AlmaLinux system."
+        distro_type="alma"
+    else
+        echo "This is a Linux system, but not CentOS or AlmaLinux."
+    fi
+
+    ## Setup Yum Repos
+    $SUDO $PKGMGR install -yq epel-release
+    if [ "$distro_type" = "alma" ]; then
+        $SUDO $PKGMGR config-manager --set-enabled powertools
+        $SUDO $PKGMGR install -yq almalinux-release-synergy
+    fi
+    $SUDO $PKGMGR install -yq which
+
+    ## Standard Development tools
+    $SUDO $PKGMGR groupinstall -yq "Development Tools"
+    if [ "$distro_type" = "alma" ]; then
+        $SUDO $PKGMGR install -yq cmake
+        $SUDO $PKGMGR install -yq rust cargo
+    else
+        $SUDO $PKGMGR install -yq cmake3
+    fi
+    $SUDO $PKGMGR install -yq zlib-devel openssl-devel
+    $SUDO $PKGMGR install -yq screen
+
+    if [ "$distro_type" = "alma" ]; then
+        ## Alma Release Synergy GRPC and Protobuf
+        $SUDO $PKGMGR install -yq grpc grpc-devel
+        $SUDO $PKGMGR install -yq protobuf-devel protobuf
+        $SUDO $PKGMGR install -yq grpc-plugins
+    fi
+fi
+
 if [ "$CLEAN" == "" ]; then
     CLEAN=1
 else
@@ -11,7 +78,7 @@ fi
 # Function to run a command within the SCL environment for CentOS
 run_with_scl() {
     OS="$(uname -s)"
-    if [ "$OS" = "Linux" ]; then
+    if [ "$OS" = "Linux" -a "$distro_type" = "centos" ]; then
         scl enable devtoolset-11 rh-python38 -- "$@"
     else
         "$@"
@@ -20,7 +87,7 @@ run_with_scl() {
 
 run_with_scl_llvm() {
     OS="$(uname -s)"
-    if [ "$OS" = "Linux" ]; then
+    if [ "$OS" = "Linux" -a "$distro_type" = "centos" ]; then
         scl enable devtoolset-11 llvm-toolset-7.0 -- "$@"
     else
         "$@"
@@ -58,8 +125,6 @@ export PATH=$PREFIX/bin:$PATH
 USER=$(whoami)
 if [ "$USER" == "root" ]; then
     SUDO=
-else
-    SUDO=sudo
 fi
 echo "User $USER executing script"
 if [ ! -d "$PREFIX" ]; then
@@ -76,23 +141,27 @@ export PATH=$PREFIX/bin:$PATH
 
 if [ "$OS" = "Linux" ]; then
     # Ensure the system is up to date and has the basic build tools
-    $SUDO yum groupinstall -y "Development Tools"
-    $SUDO yum install -y bison flex python3 wget libffi-devel util-linux \
-        libmount-devel libxml2-devel glib2-devel cairo-devel \
-        ladspa-devel pango-devel cairo-gobject-devel cairo-gobject
-    $SUDO yum install -y centos-release-scl-rh epel-release
-    $SUDO yum install -y yum-utils
-    $SUDO yum-config-manager --disable epel
-    $SUDO yum install --enablerepo=epel* -y zvbi-devel cmake3
-    $SUDO yum install -y git
-    $SUDO yum install -y libstdc++-devel
-    $SUDO yum install -y llvm-toolset-7.0-llvm-devel llvm-toolset-7.0-clang
-    $SUDO yum install -y rh-python38 rh-python38-python-pip
+    $SUDO yum groupinstall -yq "Development Tools"
+    if [ "$distro_type" = "alma" ]; then
+        $SUDO $PKG_MGR install -yq python3
+    else
+        $SUDO yum install -yq bison flex python3 wget libffi-devel util-linux \
+            libmount-devel libxml2-devel glib2-devel cairo-devel \
+            ladspa-devel pango-devel cairo-gobject-devel cairo-gobject
+        $SUDO yum install -yq centos-release-scl-rh epel-release
+        $SUDO yum install -yq yum-utils
+        $SUDO yum-config-manager --disable epel
+        $SUDO yum install --enablerepo=epel* -yq zvbi-devel cmake3
+        $SUDO yum install -yq git
+        $SUDO yum install -yq libstdc++-devel
+        $SUDO yum install -yq llvm-toolset-7.0-llvm-devel llvm-toolset-7.0-clang
+        $SUDO yum install -yq rh-python38 rh-python38-python-pip
 
-    $SUDO pip3 install meson
-    $SUDO pip3 install ninja
-    run_with_scl $SUDO pip3.8 install meson
-    run_with_scl $SUDO pip3.8 install ninja
+        $SUDO pip3 install meson
+        $SUDO pip3 install ninja
+        run_with_scl $SUDO pip3.8 install meson
+        run_with_scl $SUDO pip3.8 install ninja
+    fi
 
     CPUS=$(nproc)
 elif [ "$OS" == "Darwin" ]; then
@@ -127,7 +196,7 @@ fi
 
 # Explicitly use cmake from $PREFIX/bin for Meson configuration
 echo "[binaries]" > meson-native-file.ini
-if [ "$OS" = "Linux" ]; then
+if [ "$OS" = "Linux" -a "$distro_type" = "centos" ]; then
     echo "cmake = 'cmake3'" >> meson-native-file.ini
 else
     echo "cmake = 'cmake'" >> meson-native-file.ini
