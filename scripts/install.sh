@@ -176,8 +176,12 @@ elif [ "$OS" == "Darwin" ]; then
 fi
 
 # OpenCV installation
-if [ ! -d "opencv" ]; then
-    sh ../scripts/install_opencv.sh $PREFIX
+if [ "$OS" = "Linux" -a "$os_type" = "alma" ]; then
+    $SUDO $PKGMGR install -yq opencv-core opencv-devel opencv-contrib
+else
+    if [ ! -d "opencv" ]; then
+        sh ../scripts/install_opencv.sh $PREFIX
+    fi
 fi
 
 # Ensure Meson and Ninja are installed and use the correct Ninja
