@@ -214,15 +214,17 @@ echo "------------------------------------------------------------"
 
 # Download and build glib on linux
 if [ "$OS" = "Linux" ]; then
-    wget --no-check-certificate https://download.gnome.org/sources/glib/$GLIB_MAJOR_VERSION/glib-$GLIB_VERSION.tar.xz
-    tar xf glib-$GLIB_VERSION.tar.xz
-    cd glib-$GLIB_VERSION
-    run_with_scl meson setup _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
-    run_with_scl ninja -C _build
-    run_with_scl ninja -C _build install
-    cd ..
-    rm -rf glib-$GLIB_VERSION.tar.xz
-    rm -rf cd glib-$GLIB_VERSION
+    if [ "$distro_type" = "centos" ]; then
+        wget --no-check-certificate https://download.gnome.org/sources/glib/$GLIB_MAJOR_VERSION/glib-$GLIB_VERSION.tar.xz
+        tar xf glib-$GLIB_VERSION.tar.xz
+        cd glib-$GLIB_VERSION
+        run_with_scl meson setup _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+        run_with_scl ninja -C _build
+        run_with_scl ninja -C _build install
+        cd ..
+        rm -rf glib-$GLIB_VERSION.tar.xz
+        rm -rf cd glib-$GLIB_VERSION
+    fi
 
     # Pcap source
     wget https://www.tcpdump.org/release/libpcap-1.10.4.tar.gz
