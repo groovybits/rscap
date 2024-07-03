@@ -271,9 +271,11 @@ else
 fi
 
 # Install libzvbi
-if [ "$(uname)" = "Darwin" -o "$distro_type" = "alma" ]; then
+if [ "$OS" = "Darwin" -o "$distro_type" = "alma" ]; then
     if [ ! -f "libzvbi-installed.done" ]; then
-        brew install libtool autoconf automake
+        if [ "$OS" = "Darwin" ]; then
+            brew install libtool autoconf automake
+        fi
         echo "---"
         echo "Installing libzvbi..."
         echo "---"
