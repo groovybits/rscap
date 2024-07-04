@@ -387,6 +387,7 @@ if [ "$OS" = "Linux" ]; then
         run_with_scl make -j $CPUS --silent
         make install --silent
         cd ..
+        rm -rf x264
     fi
     touch x264-installed.done
 else
@@ -419,6 +420,7 @@ if [ "$OS" = "Linux" ]; then
 
         # Navigate back to the initial directory
         cd ../..
+        rm -rf x265
     fi
     touch x265-installed.done
 else
@@ -450,6 +452,7 @@ fi
         run_with_scl make -j $CPUS --silent
         make install --silent
         cd ..
+        rm -rf ffmpeg-$FFMPEG_VERSION
     fi
     touch ffmpeg-installed.done
 #else
@@ -597,7 +600,7 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   # Closed Caption
   echo
   echo "Building gst-plugin-closedcaption..."
-  run_with_scl cargo cbuild --release --package gst-plugin-closedcaption
+  run_with_scl cargo cbuild --release --package gst-plugin-closedcaption --jobs 1
   run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64
 
   # Audio
