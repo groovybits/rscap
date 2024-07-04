@@ -582,12 +582,17 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   echo "Installing GStreamer Rust plugins..."
   echo "---"
 
-  # GStreamer Rust plugins
-  #GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/cargo-c.git
-  #cd cargo-c
-  run_with_scl cargo install cargo-c --root=$PREFIX --quiet
-  #run_with_scl cargo install --quiet --path=. --root=$PREFIX
-  #cd ../
+  if [ "$distro_type" = "alma" ]; then
+      echo "Building gst-plugins-rs"
+  else
+      # GStreamer Rust plugins
+      #GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/cargo-c.git
+      #cd cargo-c
+      run_with_scl cargo install cargo-c --root=$PREFIX --quiet
+      #run_with_scl cargo install --quiet --path=. --root=$PREFIX
+      #cd ../
+      echo "Building gst-plugins-rs"
+  fi
 
   # Download gst-plugins-rs source code
   if [ ! -f gst-plugin-rs ]; then
