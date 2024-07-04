@@ -61,14 +61,6 @@ if [ "$OS" = "Linux" ]; then
     $SUDO $PKGMGR groupinstall -yq "Development Tools"
     if [ "$distro_type" = "alma" ]; then
         $SUDO $PKGMGR install -yq cmake
-        #$SUDO $PKGMGR install -yq rust cargo
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-            sudo RUSTUP_INIT_SKIP_PATH_CHECK=yes \
-            CARGO_HOME=/usr RUSTUP_HOME=/usr \
-                sh -s -- -y \
-                    --no-modify-path --default-toolchain stable \
-                        && rustup default stable
-        #source $HOME/.cargo/env
     else
         $SUDO $PKGMGR install -yq cmake3
     fi
@@ -577,20 +569,17 @@ else
     export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib"
 fi
 
+# GStreamer Rust plugins
 if [ ! -f "gst-plugins-rs-installed.done" ]; then
   echo "---"
   echo "Installing GStreamer Rust plugins..."
   echo "---"
 
+  # Cargo-C for Rust
   if [ "$distro_type" = "alma" ]; then
       echo "Building gst-plugins-rs"
   else
-      # GStreamer Rust plugins
-      #GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/cargo-c.git
-      #cd cargo-c
       run_with_scl cargo install cargo-c --root=$PREFIX --quiet
-      #run_with_scl cargo install --quiet --path=. --root=$PREFIX
-      #cd ../
       echo "Building gst-plugins-rs"
   fi
 
