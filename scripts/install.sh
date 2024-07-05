@@ -654,3 +654,50 @@ echo "------------------------------------------------------------"
 echo "Verifying GStreamer installation..."
 echo "------------------------------------------------------------"
 gst-launch-1.0 --version
+
+# Minimize size of installation
+rm -rf $PREFIX/lib/pkgconfig
+rm -rf $PREFIX/lib64/pkgconfig
+rm -rf $PREFIX/include
+rm -rf $PREFIX/cargo
+rm -rf $PREFIX/share
+rm -rf $PREFIX/lib/rustlib
+rm -rf $PREFIX/lib/*.a
+rm -rf $PREFIX/lib64/*.a
+rm -rf $PREFIX/libexec
+rm -rf $PREFIX/etc
+rm -f $PREFIX/lib/librustc_driver-*
+rm -f $PREFIX/lib/libstd-*
+rm -f $PREFIX/lib/libLLVM-*
+rm -f $PREFIX/bin/gtester
+rm -f $PREFIX/bin/gobject-query
+rm -f $PREFIX/bin/gio
+rm -f $PREFIX/bin/gresource
+rm -f $PREFIX/bin/gio-querymodules
+rm -f $PREFIX/bin/glib-compile-schemas
+rm -f $PREFIX/bin/glib-compile-resources
+rm -f $PREFIX/bin/gsettings
+rm -f $PREFIX/bin/gdbus
+rm -f $PREFIX/bin/gapplication
+rm -f $PREFIX/bin/gtester-report
+rm -f $PREFIX/bin/glib-genmarshal
+rm -f $PREFIX/bin/glib-mkenums
+rm -f $PREFIX/bin/gdbus-codegen
+rm -f $PREFIX/bin/glib-gettextize
+rm -f $PREFIX/bin/rust-gdb
+rm -f $PREFIX/bin/rust-gdbgui
+rm -f $PREFIX/bin/rust-lldb
+rm -f $PREFIX/bin/rustc
+rm -f $PREFIX/bin/rustdoc
+rm -f $PREFIX/bin/rust-demangler
+rm -f $PREFIX/bin/cargo*
+rm -f $PREFIX/bin/cargo-fmt
+rm -f $PREFIX/bin/rustfmt
+rm -f $PREFIX/bin/rls
+rm -f $PREFIX/bin/rust-analyzer
+rm -f $PREFIX/bin/cargo-clippy
+rm -f $PREFIX/bin/clippy-driver
+rm -f $PREFIX/bin/orcc
+rm -f $PREFIX/bin/orc-bugreport
+rm -f $PREFIX/bin/nasm
+rm -f $PREFIX/bin/ndisasm
