@@ -247,24 +247,26 @@ fi
 
 # Install libFFI
 if [ "$OS" = "Linux" ]; then
-    if [ ! -f "libffi-installed.done" ] ; then
-        echo "---"
-        echo "Installing libffi..."
-        echo "---"
-        # Download, compile, and install libffi
-        if [ ! -f libffi-$LIBFFI_VERSION.tar.gz ]; then
-            curl ftp://sourceware.org/pub/libffi/libffi-$LIBFFI_VERSION.tar.gz -o libffi-$LIBFFI_VERSION.tar.gz
+    if [ "$distro_type" = "centos" ]; then
+        if [ ! -f "libffi-installed.done" ] ; then
+            echo "---"
+            echo "Installing libffi..."
+            echo "---"
+            # Download, compile, and install libffi
+            if [ ! -f libffi-$LIBFFI_VERSION.tar.gz ]; then
+                curl ftp://sourceware.org/pub/libffi/libffi-$LIBFFI_VERSION.tar.gz -o libffi-$LIBFFI_VERSION.tar.gz
+            fi
+            if [ ! -d libffi-$LIBFFI_VERSION ]; then
+                tar xf libffi-$LIBFFI_VERSION.tar.gz
+            fi
+            cd libffi-$LIBFFI_VERSION
+            run_with_scl ./configure --prefix=$PREFIX
+            run_with_scl make -j $CPUS --silent
+            run_with_scl make install --silent
+            cd ..
         fi
-        if [ ! -d libffi-$LIBFFI_VERSION ]; then
-            tar xf libffi-$LIBFFI_VERSION.tar.gz
-        fi
-        cd libffi-$LIBFFI_VERSION
-        run_with_scl ./configure --prefix=$PREFIX
-        run_with_scl make -j $CPUS --silent
-        run_with_scl make install --silent
-        cd ..
+        touch libffi-installed.done
     fi
-    touch libffi-installed.done
 else
     brew install libffi
 fi
