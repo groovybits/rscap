@@ -25,6 +25,13 @@ RUN yum groupinstall -y "Development Tools" && \
     cairo-gobject rh-python38 rh-python38-python-pip llvm-toolset-7.0-clang-devel libstdc++-devel \
     llvm llvm-devel libjpeg-turbo-devel libtiff-devel llvm-toolset-7.0-llvm-devel llvm-toolset-7.0-clang
 
+## Install the newest Rust Compiler
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+    RUSTUP_INIT_SKIP_PATH_CHECK=yes \
+    CARGO_HOME=/usr RUSTUP_HOME=/usr sh \
+    -s -- -y --no-modify-path --default-toolchain stable && rustup default stable
+
+## Install Meson/Ninja and Rscap
 RUN pip3 install meson && scl enable devtoolset-11 rh-python38 -- pip3.8 install meson
 RUN pip3 install ninja && scl enable devtoolset-11 rh-python38 -- pip3.8 install ninja
 RUN sh ./scripts/install.sh

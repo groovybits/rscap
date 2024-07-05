@@ -1,6 +1,79 @@
 #!/bin/bash
-set -e
 #set -v
+set -e
+
+SUDO=""
+if [ -f "/usr/bin/sudo" ]; then
+    SUDO="/usr/bin/sudo"
+fi
+PKGMGR=""
+if [ -f "/usr/bin/dnf" ]; then
+    PKGMGR="/usr/bin/dnf"
+elif [ -f "/usr/bin/yum" ]; then
+    PKGMGR="/usr/bin/yum"
+fi
+
+# Function to get the distribution name from /etc/os-release
+get_distro_name() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        echo "$NAME"
+    elif [ -f /etc/redhat-release ]; then
+        # Older versions of CentOS might use /etc/redhat-release
+        cat /etc/redhat-release
+    else
+        echo "Unknown"
+    fi
+}
+
+OS=$(uname)
+distro_name=""
+distro_type=""
+
+if [ "$OS" = "Linux" ]; then
+    if [ "$PKGMGR" = "" ]; then
+        echo "ERROR: No package manager found, dnf and yum don't exist!!!"
+        exit 1
+    fi
+
+    distro_name=$(get_distro_name)
+    distro_type="unknown"
+
+    if [[ "$distro_name" == *"CentOS"* ]]; then
+        echo "This is a CentOS system."
+        distro_type="centos"
+    elif [[ "$distro_name" == *"AlmaLinux"* ]]; then
+        echo "This is an AlmaLinux system."
+        distro_type="alma"
+    else
+        echo "This is a Linux system, but not CentOS or AlmaLinux."
+    fi
+
+    ## Setup Yum Repos
+    $SUDO $PKGMGR install -yq epel-release
+    if [ "$distro_type" = "alma" ]; then
+        $SUDO $PKGMGR config-manager --set-enabled powertools
+        $SUDO $PKGMGR install -yq almalinux-release-synergy
+    fi
+    $SUDO $PKGMGR install -yq which
+
+    ## Standard Development tools
+    $SUDO $PKGMGR groupinstall -yq "Development Tools"
+    if [ "$distro_type" = "alma" ]; then
+        $SUDO $PKGMGR install -yq cmake
+    else
+        $SUDO $PKGMGR install -yq cmake3
+    fi
+    $SUDO $PKGMGR install -yq zlib-devel openssl-devel
+    $SUDO $PKGMGR install -yq screen
+
+    if [ "$distro_type" = "alma" ]; then
+        ## Alma Release Synergy GRPC and Protobuf
+        $SUDO $PKGMGR install -yq grpc grpc-devel
+        $SUDO $PKGMGR install -yq protobuf-devel protobuf
+        $SUDO $PKGMGR install -yq grpc-plugins
+    fi
+fi
 
 if [ "$CLEAN" == "" ]; then
     CLEAN=1
@@ -11,7 +84,7 @@ fi
 # Function to run a command within the SCL environment for CentOS
 run_with_scl() {
     OS="$(uname -s)"
-    if [ "$OS" = "Linux" ]; then
+    if [ "$OS" = "Linux" -a "$distro_type" = "centos" ]; then
         scl enable devtoolset-11 rh-python38 -- "$@"
     else
         "$@"
@@ -20,15 +93,12 @@ run_with_scl() {
 
 run_with_scl_llvm() {
     OS="$(uname -s)"
-    if [ "$OS" = "Linux" ]; then
+    if [ "$OS" = "Linux" -a "$distro_type" = "centos" ]; then
         scl enable devtoolset-11 llvm-toolset-7.0 -- "$@"
     else
         "$@"
     fi
 }
-# Detect the operating system
-OS="$(uname -s)"
-echo "Detected OS: $OS"
 
 BUILD_DIR=$(pwd)/build
 if [ ! -d $BUILD_DIR ]; then
@@ -58,8 +128,6 @@ export PATH=$PREFIX/bin:$PATH
 USER=$(whoami)
 if [ "$USER" == "root" ]; then
     SUDO=
-else
-    SUDO=sudo
 fi
 echo "User $USER executing script"
 if [ ! -d "$PREFIX" ]; then
@@ -76,23 +144,30 @@ export PATH=$PREFIX/bin:$PATH
 
 if [ "$OS" = "Linux" ]; then
     # Ensure the system is up to date and has the basic build tools
-    $SUDO yum groupinstall -y "Development Tools"
-    $SUDO yum install -y bison flex python3 wget libffi-devel util-linux \
-        libmount-devel libxml2-devel glib2-devel cairo-devel \
-        ladspa-devel pango-devel cairo-gobject-devel cairo-gobject
-    $SUDO yum install -y centos-release-scl-rh epel-release
-    $SUDO yum install -y yum-utils
-    $SUDO yum-config-manager --disable epel
-    $SUDO yum install --enablerepo=epel* -y zvbi-devel cmake3
-    $SUDO yum install -y git
-    $SUDO yum install -y libstdc++-devel
-    $SUDO yum install -y llvm-toolset-7.0-llvm-devel llvm-toolset-7.0-clang
-    $SUDO yum install -y rh-python38 rh-python38-python-pip
+    $SUDO $PKGMGR groupinstall -yq "Development Tools"
+    if [ "$distro_type" = "alma" ]; then
+        $SUDO $PKGMGR install -yq python3 wget python3.12 python3.12-pip
+        $SUDO pip3.12 install meson
+        $SUDO pip3.12 install ninja
+        $SUDO pip3.12 install numpy
+    else
+        $SUDO $PKGMGR install -yq bison flex python3 wget libffi-devel util-linux \
+            libmount-devel libxml2-devel glib2-devel cairo-devel \
+            ladspa-devel pango-devel cairo-gobject-devel cairo-gobject
+        $SUDO $PKGMGR install -yq centos-release-scl-rh epel-release
+        $SUDO $PKGMGR install -yq yum-utils
+        $SUDO yum-config-manager --disable epel
+        $SUDO $PKGMGR install --enablerepo=epel* -yq zvbi-devel cmake3
+        $SUDO $PKGMGR install -yq git
+        $SUDO $PKGMGR install -yq libstdc++-devel
+        $SUDO $PKGMGR install -yq llvm-toolset-7.0-llvm-devel llvm-toolset-7.0-clang
+        $SUDO $PKGMGR install -yq rh-python38 rh-python38-python-pip
 
-    $SUDO pip3 install meson
-    $SUDO pip3 install ninja
-    run_with_scl $SUDO pip3.8 install meson
-    run_with_scl $SUDO pip3.8 install ninja
+        $SUDO pip3 install meson
+        $SUDO pip3 install ninja
+        run_with_scl $SUDO pip3.8 install meson
+        run_with_scl $SUDO pip3.8 install ninja
+    fi
 
     CPUS=$(nproc)
 elif [ "$OS" == "Darwin" ]; then
@@ -100,8 +175,12 @@ elif [ "$OS" == "Darwin" ]; then
 fi
 
 # OpenCV installation
-if [ ! -d "opencv" ]; then
-    sh ../scripts/install_opencv.sh $PREFIX
+if [ "$OS" = "Linux" -a "$distro_type" = "alma" ]; then
+    $SUDO $PKGMGR install -yq opencv-core opencv-devel opencv-contrib
+else
+    if [ ! -d "opencv" ]; then
+        sh ../scripts/install_opencv.sh $PREFIX
+    fi
 fi
 
 # Ensure Meson and Ninja are installed and use the correct Ninja
@@ -127,7 +206,7 @@ fi
 
 # Explicitly use cmake from $PREFIX/bin for Meson configuration
 echo "[binaries]" > meson-native-file.ini
-if [ "$OS" = "Linux" ]; then
+if [ "$OS" = "Linux" -a "$distro_type" = "centos" ]; then
     echo "cmake = 'cmake3'" >> meson-native-file.ini
 else
     echo "cmake = 'cmake'" >> meson-native-file.ini
@@ -141,15 +220,17 @@ echo "------------------------------------------------------------"
 
 # Download and build glib on linux
 if [ "$OS" = "Linux" ]; then
-    wget --no-check-certificate https://download.gnome.org/sources/glib/$GLIB_MAJOR_VERSION/glib-$GLIB_VERSION.tar.xz
-    tar xf glib-$GLIB_VERSION.tar.xz
-    cd glib-$GLIB_VERSION
-    run_with_scl meson setup _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
-    run_with_scl ninja -C _build
-    run_with_scl ninja -C _build install
-    cd ..
-    rm -rf glib-$GLIB_VERSION.tar.xz
-    rm -rf cd glib-$GLIB_VERSION
+    #if [ "$distro_type" = "centos" ]; then
+        wget --no-check-certificate https://download.gnome.org/sources/glib/$GLIB_MAJOR_VERSION/glib-$GLIB_VERSION.tar.xz
+        tar xf glib-$GLIB_VERSION.tar.xz
+        cd glib-$GLIB_VERSION
+        run_with_scl meson setup _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+        run_with_scl ninja -C _build
+        run_with_scl ninja -C _build install
+        cd ..
+        rm -rf glib-$GLIB_VERSION.tar.xz
+        rm -rf cd glib-$GLIB_VERSION
+    #fi
 
     # Pcap source
     wget https://www.tcpdump.org/release/libpcap-1.10.4.tar.gz
@@ -189,16 +270,45 @@ else
 fi
 
 # Install libzvbi
-if [ "$(uname)" = "Darwin" ]; then
+if [ "$OS" = "Darwin" -o "$distro_type" = "alma" ]; then
     if [ ! -f "libzvbi-installed.done" ]; then
-        brew install libtool autoconf automake
+        if [ "$OS" = "Darwin" ]; then
+            brew install libtool autoconf automake
+        else
+            $SUDO $PKGMGR install -yq autoconf2.7x
+        fi
         echo "---"
         echo "Installing libzvbi..."
         echo "---"
         GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/zapping-vbi/zvbi.git
         cd zvbi
         git checkout v$LIBZVBI_VERSION
-        run_with_scl sh autogen.sh
+        if [ "$distro_type" = "alma" ]; then
+            export AUTOCONF=/usr/bin/autoconf27
+            export AUTOHEADER=/usr/bin/autoheader27
+            export AUTOM4TE=/usr/bin/autom4te27
+            export AUTORECONF=/usr/bin/autoreconf27
+            export AUTOUPDATE=/usr/bin/autoupdate27
+            export AUTOSCAN=/usr/bin/autoscan27
+
+            ## Autoconf 27 override HACK
+            mkdir -p $PREFIX/bin
+            echo "#!/bin/sh" > $PREFIX/bin/autoconf
+            echo "/usr/bin/autoconf27" >> $PREFIX/bin/autoconf
+            chmod 755 $PREFIX/bin/autoconf
+            ## End HACK
+
+            if [ ! -d "gettext-0.21" ]; then
+                wget https://ftp.gnu.org/gnu/gettext/gettext-0.21.tar.gz
+                tar -xzf gettext-0.21.tar.gz
+            fi
+            cd gettext-0.21
+            ./configure --prefix=$PREFIX
+            make install --silent
+            cd ..
+        fi
+        touch README
+        run_with_scl ./autogen.sh
         run_with_scl ./configure --prefix=$PREFIX
         run_with_scl make -j $CPUS --silent
         run_with_scl make install --silent
@@ -277,6 +387,7 @@ if [ "$OS" = "Linux" ]; then
         run_with_scl make -j $CPUS --silent
         make install --silent
         cd ..
+        rm -rf x264
     fi
     touch x264-installed.done
 else
@@ -309,6 +420,7 @@ if [ "$OS" = "Linux" ]; then
 
         # Navigate back to the initial directory
         cd ../..
+        rm -rf x265
     fi
     touch x265-installed.done
 else
@@ -340,6 +452,7 @@ fi
         run_with_scl make -j $CPUS --silent
         make install --silent
         cd ..
+        rm -rf ffmpeg-$FFMPEG_VERSION
     fi
     touch ffmpeg-installed.done
 #else
@@ -459,17 +572,19 @@ else
     export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib"
 fi
 
+# GStreamer Rust plugins
 if [ ! -f "gst-plugins-rs-installed.done" ]; then
   echo "---"
   echo "Installing GStreamer Rust plugins..."
   echo "---"
 
-  # GStreamer Rust plugins
-  GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/cargo-c.git
-  cd cargo-c
-  #run_with_scl cargo install cargo-c --root=$PREFIX --quiet
-  run_with_scl cargo install --path=. --root=$PREFIX
-  cd ../
+  # Cargo-C for Rust
+  if [ "$distro_type" = "alma" ]; then
+      echo "Building gst-plugins-rs"
+  else
+      run_with_scl cargo install cargo-c --root=$PREFIX --quiet
+      echo "Building gst-plugins-rs"
+  fi
 
   # Download gst-plugins-rs source code
   if [ ! -f gst-plugin-rs ]; then
@@ -485,19 +600,19 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   # Closed Caption
   echo
   echo "Building gst-plugin-closedcaption..."
-  run_with_scl cargo cbuild --release --package gst-plugin-closedcaption
+  run_with_scl cargo cbuild --release --package gst-plugin-closedcaption --jobs 1
   run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64
 
   # Audio
-  echo
-  echo "Building gst-plugin-audiofx..."
-  run_with_scl cargo cbuild --release --package gst-plugin-audiofx
-  run_with_scl cargo cinstall --release --package gst-plugin-audiofx --prefix=$PREFIX --libdir=$PREFIX/lib64
+  #echo
+  #echo "Building gst-plugin-audiofx..."
+  #run_with_scl cargo cbuild --release --package gst-plugin-audiofx --jobs 1
+  #run_with_scl cargo cinstall --release --package gst-plugin-audiofx --prefix=$PREFIX --libdir=$PREFIX/lib64
 
   # Video
   echo
   echo "Building gst-plugin-videofx..."
-  run_with_scl cargo cbuild --release --package gst-plugin-videofx
+  run_with_scl cargo cbuild --release --package gst-plugin-videofx --jobs 1
   run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=$PREFIX --libdir=$PREFIX/lib64
 
   cd ..
@@ -510,7 +625,7 @@ echo "Changing to RsCap directory... 'cd ../'"
 cd ..
 echo "------------------------------------------------------------"
 echo "Cleaning RsCap..."
-cargo clean
+cargo clean --quiet
 CUR_DIR=$(pwd)
 echo "Building RsCap in $CUR_DIR ..."
 export BUILD_TYPE=release

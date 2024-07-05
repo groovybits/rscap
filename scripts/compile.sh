@@ -3,6 +3,54 @@
 # Exit immediately if a command exits with a non-zero status.
 set -e
 
+SUDO=""
+if [ -f "/usr/bin/sudo" ]; then
+    SUDO="/usr/bin/sudo"
+fi
+PKGMGR=""
+if [ -f "/usr/bin/dnf" ]; then
+    PKGMGR="/usr/bin/dnf"
+elif [ -f "/usr/bin/yum" ]; then
+    PKGMGR="/usr/bin/yum"
+fi
+
+# Function to get the distribution name from /etc/os-release
+get_distro_name() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        echo "$NAME"
+    elif [ -f /etc/redhat-release ]; then
+        # Older versions of CentOS might use /etc/redhat-release
+        cat /etc/redhat-release
+    else
+        echo "Unknown"
+    fi
+}
+
+OS=$(uname)
+distro_name=""
+distro_type=""
+
+if [ "$OS" = "Linux" ]; then
+    if [ "$PKGMGR" = "" ]; then
+        echo "ERROR: No package manager found, dnf and yum don't exist!!!"
+        exit 1
+    fi
+
+    distro_name=$(get_distro_name)
+    distro_type="unknown"
+
+    if [[ "$distro_name" == *"CentOS"* ]]; then
+        echo "This is a CentOS system."
+        distro_type="centos"
+    elif [[ "$distro_name" == *"AlmaLinux"* ]]; then
+        echo "This is an AlmaLinux system."
+        distro_type="alma"
+    else
+        echo "This is a Linux system, but not CentOS or AlmaLinux."
+    fi
+fi
+
 FEATURES=
 if [ "$1" != "" ]; then
     FEATURES="--features $1"
@@ -50,16 +98,17 @@ install_rust() {
 # Function to run a command within the SCL environment for CentOS
 run_with_scl() {
     export PKG_CONFIG_PATH=/opt/rsprobe/lib64/pkgconfig:/opt/rsprobe/lib/pkgconfig:$PKG_CONFIG_PATH
-    scl enable devtoolset-11 rh-python38 llvm-toolset-7.0 -- "$@"
+    if [ "$distro_type" = "centos" ]; then
+        scl enable devtoolset-11 rh-python38 llvm-toolset-7.0 -- "$@"
+    else
+        "$@"
+    fi
 }
-
-# Detect the operating system
-OS="$(uname -s)"
-echo "Detected OS: $OS"
 
 # Check for Rust and install if missing
 if ! command -v cargo &> /dev/null
 then
+    echo "Installing Rust"
     install_rust
     source ~/.profile
 fi
@@ -68,33 +117,32 @@ fi
 if [ "$OS" = "Linux" ]; then
     export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
 
-    if [ -f /etc/centos-release ]; then
-        . /etc/os-release
-        if [ "$VERSION_ID" = "7" ]; then
-            echo "CentOS 7 detected."
+    if [ "$distro_type" = "centos" ]; then
+        echo "CentOS detected."
 
-            # Check for SCL and install if missing
-            if ! command -v scl &> /dev/null; then
-                if prompt_install "Software Collections (SCL)"; then
-                    echo "Installing Software Collections..."
-                    sudo yum install centos-release-scl -y
-                    sudo yum install devtoolset-11 -y
-                else
-                    echo "SCL installation skipped. Exiting."
-                    exit 1
-                fi
-            fi
-
-            # Build with SCL
-            echo "Building project (CentOS 7)..."
-            if [ "$BUILD" = "release" ]; then
-                run_with_scl cargo build $FEATURES --release
-            elif [ "$BUILD" = "release-with-debug" ]; then
-                run_with_scl cargo build $FEATURES --profile=release-with-debug
+        # Check for SCL and install if missing
+        if ! command -v scl &> /dev/null; then
+            if prompt_install "Software Collections (SCL)"; then
+                echo "Installing Software Collections..."
+                sudo yum install centos-release-scl -y
+                sudo yum install devtoolset-11 -y
             else
-                run_with_scl cargo build $FEATURES
+                echo "SCL installation skipped. Exiting."
+                exit 1
             fi
         fi
+    elif [ "$distro_type" = "alma" ]; then
+        echo "Alma Linux Detected"
+    fi
+
+    # Build with SCL
+    echo "Building project (CentOS 7)..."
+    if [ "$BUILD" = "release" ]; then
+        run_with_scl cargo build $FEATURES --release --quiet
+    elif [ "$BUILD" = "release-with-debug" ]; then
+        run_with_scl cargo build $FEATURES --profile=release-with-debug --quiet
+    else
+        run_with_scl cargo build $FEATURES --quiet
     fi
     # Add elif blocks here for other specific Linux distributions
 elif [ "$OS" = "Darwin" ]; then
@@ -125,11 +173,11 @@ elif [ "$OS" = "Darwin" ]; then
     # Build on macOS
     echo "Building project (macOS)..."
     if [ "$BUILD" = "release" ]; then
-        cargo build $FEATURES --release
+        cargo build $FEATURES --release --quiet
     elif [ "$BUILD" == "release-with-debug" ]; then
-        cargo build $FEATURES --profile=release-with-debug
+        cargo build $FEATURES --profile=release-with-debug --quiet
     else
-        cargo build $FEATURES
+        cargo build $FEATURES --quiet
     fi
 else
     export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
@@ -138,11 +186,11 @@ else
     # Build for generic Unix/Linux
     echo "Building project..."
     if [ "$BUILD" = "release" ]; then
-        cargo build $FEATURES --release
+        cargo build $FEATURES --release --quiet
     elif [ "$BUILD" == "release-with-debug" ]; then
-        cargo build $FEATURES --profile=release-with-debug
+        cargo build $FEATURES --profile=release-with-debug --quiet
     else
-        cargo build $FEATURES
+        cargo build $FEATURES --quiet
     fi
 fi
 
