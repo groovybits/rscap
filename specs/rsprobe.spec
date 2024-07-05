@@ -245,11 +245,7 @@ export CARGO=%{_builddir}%{prefix}/bin/cargo
 export RUSTC=%{_builddir}%{prefix}/bin/rustc
 
 # gstreamer rust plugins
-GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/groovybits/cargo-c.git
-cd cargo-c
-#run_with_scl cargo install cargo-c --root=%{_builddir}%{prefix}
-run_with_scl cargo install --path=. --root=%{_builddir}%{prefix}
-cd ../
+run_with_scl cargo install cargo-c --root=%{_builddir}%{prefix}
 
 rm -rf gst-plugin-rs
 GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"  git clone https://github.com/sdroege/gst-plugin-rs.git
