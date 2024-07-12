@@ -197,9 +197,6 @@ fi
 
 if [ "$OS" = "Linux" ]; then
     echo "Linux Build"
-    #export CXXFLAGS="-stdlib=libc++"
-    #export LDFLAGS="-lc++"
-    #export CXXFLAGS="-std=c++11"
 else
     echo "Mac Build"
 fi
@@ -220,29 +217,29 @@ echo "------------------------------------------------------------"
 
 # Download and build glib on linux
 if [ "$OS" = "Linux" ]; then
-    #if [ "$distro_type" = "centos" ]; then
-        wget --no-check-certificate https://download.gnome.org/sources/glib/$GLIB_MAJOR_VERSION/glib-$GLIB_VERSION.tar.xz
-        tar xf glib-$GLIB_VERSION.tar.xz
-        cd glib-$GLIB_VERSION
-        run_with_scl meson setup _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
-        run_with_scl ninja -C _build
-        run_with_scl ninja -C _build install
-        cd ..
-        rm -rf glib-$GLIB_VERSION.tar.xz
-        rm -rf cd glib-$GLIB_VERSION
-    #fi
+    wget --no-check-certificate https://download.gnome.org/sources/glib/$GLIB_MAJOR_VERSION/glib-$GLIB_VERSION.tar.xz
+    tar xf glib-$GLIB_VERSION.tar.xz
+    cd glib-$GLIB_VERSION
+    run_with_scl meson setup _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+    run_with_scl ninja -C _build
+    run_with_scl ninja -C _build install
+    cd ..
+    rm -rf glib-$GLIB_VERSION.tar.xz
+    rm -rf cd glib-$GLIB_VERSION
 
     # Pcap source
-    wget https://www.tcpdump.org/release/libpcap-1.10.4.tar.gz
-    tar xfz libpcap-1.10.4.tar.gz
+    if [ "$distro_type" = "centos" ]; then
+        wget https://www.tcpdump.org/release/libpcap-1.10.4.tar.gz
+        tar xfz libpcap-1.10.4.tar.gz
 
-    # Pcap build procedure (Linux)
-    cd libpcap-1.10.4
-    run_with_scl ./configure --prefix=$PREFIX --libdir=$PREFIX/lib64 --includedir=$PREFIX/include --exec_prefix=$PREFIX
-    run_with_scl make
-    cd ..
-    rm -rf libpcap-1.10.4.tar.gz
-    rm -rf libpcap-1.10.4
+        # Pcap build procedure (Linux)
+        cd libpcap-1.10.4
+        run_with_scl ./configure --prefix=$PREFIX --libdir=$PREFIX/lib64 --includedir=$PREFIX/include --exec_prefix=$PREFIX
+        run_with_scl make
+        cd ..
+        rm -rf libpcap-1.10.4.tar.gz
+        rm -rf libpcap-1.10.4
+    fi
 fi
 
 # Install libFFI
@@ -322,47 +319,51 @@ fi
 
 # Install ORC
 if [ "$OS" = "Linux" ]; then
-    if [ ! -f "orc-installed.done" ] ; then
-        echo "---"
-        echo "Installing ORC..."
-        echo "---"
-        # Download, compile, and install ORC
-        if [ ! -f orc-$ORC_VERSION.tar.xz ]; then
-            curl https://gstreamer.freedesktop.org/src/orc/orc-$ORC_VERSION.tar.xz -o orc-$ORC_VERSION.tar.xz
+    if [ "$distro_type" = "centos" ]; then
+        if [ ! -f "orc-installed.done" ] ; then
+            echo "---"
+            echo "Installing ORC..."
+            echo "---"
+            # Download, compile, and install ORC
+            if [ ! -f orc-$ORC_VERSION.tar.xz ]; then
+                curl https://gstreamer.freedesktop.org/src/orc/orc-$ORC_VERSION.tar.xz -o orc-$ORC_VERSION.tar.xz
+            fi
+            if [ ! -d orc-$ORC_VERSION ]; then
+                tar xf orc-$ORC_VERSION.tar.xz
+            fi
+            cd orc-$ORC_VERSION
+            run_with_scl meson setup _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
+            run_with_scl ninja -C _build
+            run_with_scl ninja -C _build install
+            cd ..
         fi
-        if [ ! -d orc-$ORC_VERSION ]; then
-            tar xf orc-$ORC_VERSION.tar.xz
-        fi
-        cd orc-$ORC_VERSION
-        run_with_scl meson setup _build --prefix=$PREFIX --buildtype=release --native-file $MESON_NATIVE_FILE
-        run_with_scl ninja -C _build
-        run_with_scl ninja -C _build install
-        cd ..
+        touch orc-installed.done
     fi
-    touch orc-installed.done
 else
     brew install orc
 fi
 
 # Download and compile NASM
 if [ "$OS" = "Linux" ]; then
-    if [ ! -f "nasm-installed.done" ] ; then
-        if [ ! -f nasm-$NASM_VERSION.tar.gz ]; then
-            curl https://www.nasm.us/pub/nasm/releasebuilds/$NASM_VERSION/nasm-$NASM_VERSION.tar.gz -o nasm-$NASM_VERSION.tar.gz
+    if [ "$distro_type" = "centos" ]; then
+        if [ ! -f "nasm-installed.done" ] ; then
+            if [ ! -f nasm-$NASM_VERSION.tar.gz ]; then
+                curl https://www.nasm.us/pub/nasm/releasebuilds/$NASM_VERSION/nasm-$NASM_VERSION.tar.gz -o nasm-$NASM_VERSION.tar.gz
+            fi
+            # Extract
+            if [ ! -d nasm-$NASM_VERSION ]; then
+                tar -xzf nasm-$NASM_VERSION.tar.gz
+            fi
+            cd nasm-$NASM_VERSION
+            # Compile and install
+            ./autogen.sh
+            ./configure --prefix=$PREFIX
+            make -j $CPUS --silent
+            make install --silent
+            cd ..
         fi
-        # Extract
-        if [ ! -d nasm-$NASM_VERSION ]; then
-            tar -xzf nasm-$NASM_VERSION.tar.gz
-        fi
-        cd nasm-$NASM_VERSION
-        # Compile and install
-        ./autogen.sh
-        ./configure --prefix=$PREFIX
-        make -j $CPUS --silent
-        make install --silent
-        cd ..
+        touch nasm-installed.done
     fi
-    touch nasm-installed.done
 else
     brew install nasm
 fi
@@ -520,10 +521,6 @@ if [ ! -f "gst-plugins-bad-installed.done" ] ; then
     cd ..
 fi
 touch gst-plugins-bad-installed.done
-
-echo "---"
-echo "Downloading and compiling NASM (Netwide Assembler)..."
-echo "---"
 
 # GStreamer libav plugins
 if [ ! -f "gst-libav-installed.done" ] ; then
