@@ -70,156 +70,6 @@ pub struct ImageData {
     pub hamming: f64,
 }
 
-// CEA-608 character set mapping
-/*
-const CEA608_CHAR_MAP: &[&str] = &[
-    " ", "!", "\"", "#", "$", "%", "&", "'", "(", ")", "á", "+", ",", "-", ".", "/", "0", "1", "2",
-    "3", "4", "5", "6", "7", "8", "9", ":", ";", "<", "=", ">", "?", "@", "A", "B", "C", "D", "E",
-    "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X",
-    "Y", "Z", "[", "é", "]", "í", "ó", "ú", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k",
-    "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "ç", "÷", "Ñ", "ñ",
-    "■",
-];
-
-// CEA-608 control codes
-const CEA608_CONTROL_RESUME_CAPTION_LOADING: u16 = 0x1420;
-const CEA608_CONTROL_BACKSPACE: u16 = 0x1421;
-const CEA608_CONTROL_DELETE_TO_END_OF_ROW: u16 = 0x1424;
-const CEA608_CONTROL_ROLL_UP_2: u16 = 0x1425;
-const CEA608_CONTROL_ROLL_UP_3: u16 = 0x1426;
-const CEA608_CONTROL_ROLL_UP_4: u16 = 0x1427;
-const CEA608_CONTROL_RESUME_DIRECT_CAPTIONING: u16 = 0x1429;
-const CEA608_CONTROL_TEXT_RESTART: u16 = 0x142A;
-const CEA608_CONTROL_TEXT_RESUME_TEXT_DISPLAY: u16 = 0x142B;
-const CEA608_CONTROL_ERASE_DISPLAYED_MEMORY: u16 = 0x142C;
-const CEA608_CONTROL_CARRIAGE_RETURN: u16 = 0x142D;
-const CEA608_CONTROL_ERASE_NON_DISPLAYED_MEMORY: u16 = 0x142E;
-const CEA608_CONTROL_END_OF_CAPTION: u16 = 0x142F;
-
-// Struct representing a CEA-608 caption
-#[derive(Debug, Clone)]
-struct Caption {
-    text: String,
-    style: String,
-}
-
-// Function to decode CEA-608 data to text
-fn decode_cea608(data: &[u8]) -> Vec<Caption> {
-    let mut captions = Vec::new();
-    let mut current_caption = Caption {
-        text: String::new(),
-        style: String::new(),
-    };
-    current_caption.style = "default".to_string();
-
-    let mut i = 0;
-    while i + 1 < data.len() {
-        let b1 = data[i] as u16;
-        let b2 = data[i + 1] as u16;
-        let cc_data = (b1 << 8) | b2;
-
-        if cc_data >= 0x0100 && cc_data <= 0x017F {
-            // Basic North American character set
-            let c1 = (cc_data & 0x007F) as usize;
-            if c1 < CEA608_CHAR_MAP.len() {
-                current_caption.text.push_str(CEA608_CHAR_MAP[c1]);
-            }
-        } else if cc_data >= 0x1120 && cc_data <= 0x112F {
-            // Special North American character set
-            let c1 = (cc_data & 0x000F) as usize;
-            if c1 < CEA608_CHAR_MAP.len() {
-                current_caption.text.push_str(CEA608_CHAR_MAP[c1 + 0x60]);
-            }
-        } else if cc_data >= 0x1220 && cc_data <= 0x122F {
-            // Extended Western European character set
-            let c1 = (cc_data & 0x000F) as usize;
-            if c1 < CEA608_CHAR_MAP.len() {
-                current_caption.text.push_str(CEA608_CHAR_MAP[c1 + 0x70]);
-            }
-        } else if cc_data >= 0x1320 && cc_data <= 0x132F {
-            // Extended Western European character set
-            let c1 = (cc_data & 0x000F) as usize;
-            if c1 < CEA608_CHAR_MAP.len() {
-                current_caption.text.push_str(CEA608_CHAR_MAP[c1 + 0x90]);
-            }
-        } else {
-            match cc_data {
-                CEA608_CONTROL_RESUME_CAPTION_LOADING => {
-                    // Resume caption loading
-                    // No specific action needed
-                }
-                CEA608_CONTROL_BACKSPACE => {
-                    // Backspace
-                    current_caption.text.pop();
-                }
-                CEA608_CONTROL_DELETE_TO_END_OF_ROW => {
-                    // Delete to end of row
-                    current_caption.text.clear();
-                }
-                CEA608_CONTROL_ROLL_UP_2 => {
-                    // Roll-up captions with 2 rows
-                    // TODO: Implement roll-up caption handling
-                }
-                CEA608_CONTROL_ROLL_UP_3 => {
-                    // Roll-up captions with 3 rows
-                    // TODO: Implement roll-up caption handling
-                }
-                CEA608_CONTROL_ROLL_UP_4 => {
-                    // Roll-up captions with 4 rows
-                    // TODO: Implement roll-up caption handling
-                }
-                CEA608_CONTROL_RESUME_DIRECT_CAPTIONING => {
-                    // Resume direct captioning
-                    // No specific action needed
-                }
-                CEA608_CONTROL_TEXT_RESTART => {
-                    // Text restart
-                    captions.clear();
-                    current_caption.text.clear();
-                }
-                CEA608_CONTROL_TEXT_RESUME_TEXT_DISPLAY => {
-                    // Resume text display
-                    // No specific action needed
-                }
-                CEA608_CONTROL_ERASE_DISPLAYED_MEMORY => {
-                    // Erase displayed memory
-                    captions.clear();
-                }
-                CEA608_CONTROL_CARRIAGE_RETURN => {
-                    // Carriage return
-                    if !current_caption.text.is_empty() {
-                        captions.push(current_caption.clone());
-                        current_caption.text.clear();
-                    }
-                }
-                CEA608_CONTROL_ERASE_NON_DISPLAYED_MEMORY => {
-                    // Erase non-displayed memory
-                    // TODO: Implement non-displayed memory handling
-                }
-                CEA608_CONTROL_END_OF_CAPTION => {
-                    // End of caption
-                    if !current_caption.text.is_empty() {
-                        captions.push(current_caption.clone());
-                        current_caption.text.clear();
-                    }
-                }
-                _ => {
-                    // Unhandled control code or invalid data
-                    log::debug!(
-                        "Unhandled CEA-608 control code or invalid data: {:04X}",
-                        cc_data
-                    );
-                }
-            }
-        }
-
-        i += 2;
-    }
-
-    captions
-}
-*/
-
 #[cfg(feature = "gst")]
 fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
     let pipeline = parse::launch(desc)?
@@ -240,8 +90,6 @@ pub fn initialize_pipeline(
     (
         gst::Pipeline,
         gst_app::AppSrc,
-        gst_app::AppSink,
-        gst_app::AppSink,
         gst_app::AppSink,
     ),
     anyhow::Error,
@@ -274,12 +122,8 @@ pub fn initialize_pipeline(
         )?,
         0x1B => create_pipeline(
               &format!("appsrc name=src ! tsdemux ! \
-                  h264parse ! avdec_h264 ! \
-                  tee name=videotee \
-                  videotee. ! queue ! ccextractor name=cce cce.src ! \
-                  queue ! appsink async=false sync=false name=caption_sink \
-                  videotee. ! queue ! videorate ! video/x-raw,framerate={} ! videoconvert ! video/x-raw,format=RGB {} ! \
-                  appsink sync=false async=false name=sink", framerate, scale_string),
+                  h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate={} ! \
+                  videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
         )?,
         0x24 => create_pipeline(
                 &format!("appsrc name=src ! tsdemux ! capsfilter caps=video/x-h265 ! \
@@ -304,24 +148,11 @@ pub fn initialize_pipeline(
         .ok_or_else(|| anyhow::anyhow!("Failed to get appsink"))?
         .downcast::<gst_app::AppSink>()
         .map_err(|_| anyhow::anyhow!("AppSink casting failed"))?;
-    let caption_sink = pipeline
-        .by_name("caption_sink")
-        .ok_or_else(|| anyhow::anyhow!("Failed to get caption_sink"))?
-        .downcast::<gst_app::AppSink>()
-        .map_err(|_| anyhow::anyhow!("AppSink casting failed"))?;
-    let audio_sink = pipeline
-        .by_name("audio_sink")
-        .ok_or_else(|| anyhow::anyhow!("Failed to get audio_sink"))?
-        .downcast::<gst_app::AppSink>()
-        .map_err(|_| anyhow::anyhow!("AppSink casting failed"))?;
-
-    // read from the caption sink
-    caption_sink.set_property("emit-signals", true);
 
     appsink.set_property("max-buffers", buffer_count);
     appsink.set_property("drop", true);
 
-    Ok((pipeline, appsrc, appsink, caption_sink, audio_sink))
+    Ok((pipeline, appsrc, appsink))
 }
 
 #[cfg(feature = "gst")]
@@ -347,8 +178,6 @@ pub fn process_video_packets(
 #[cfg(feature = "gst")]
 pub fn pull_images(
     appsink: AppSink,
-    captionssink: AppSink,
-    audio_sink: AppSink,
     image_sender: mpsc::Sender<(Vec<u8>, u64, u64, u64, f64)>,
     save_images: bool,
     sample_interval: u64,
@@ -370,88 +199,7 @@ pub fn pull_images(
         let mut image_same = 0;
         let frozen_frame_threshold = 30; // Number of frames to detect frozen picture
 
-        // create file if it doesn't exist, else append to it
-        let mut file = if save_captions {
-            let file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .append(true)
-                .open("captions.raw")
-                .expect("Failed to open captions.raw file.");
-            Some(file)
-        } else {
-            None
-        };
-
         while running.load(Ordering::SeqCst) {
-            // captions sink
-            if get_captions {
-                let captionssample = captionssink.try_pull_sample(gst::ClockTime::ZERO);
-                if let Some(sample) = captionssample {
-                    if let Some(buffer) = sample.buffer() {
-                        // Check if the buffer contains caption data
-                        if let Some(meta) = buffer.meta::<VideoCaptionMeta>() {
-                            let caption_type = meta.caption_type();
-                            let caption_data = meta.data();
-                            log::debug!(
-                                "Received video packet with caption type [{:?}] and data [{:?}]",
-                                caption_type,
-                                caption_data
-                            );
-                            // decode the VBI caption line 21 data and print it
-                            match caption_type {
-                                VideoCaptionType::Cea708Raw => {
-                                    // write out to a file cc.raw
-                                    if save_captions {
-                                        file.as_mut().unwrap().write_all(&caption_data).unwrap();
-                                    }
-                                    log::info!("Received CEA708 caption data: {:?}", caption_data);
-
-                                    //let caption = decode_cea608(&caption_data);
-                                    /*if caption.len() > 0 {
-                                        log::info!("Decoded VBI caption: {:?}", caption);
-                                    } else {
-                                        log::debug!("No caption data found in {:?}", caption_data);
-                                        }*/
-                                }
-                                _ => {
-                                    log::warn!("Unsupported caption type: {:?}", caption_type);
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Drain the caption sink
-                while let Some(sample) = captionssink.try_pull_sample(gst::ClockTime::ZERO) {
-                    if let Some(buffer) = sample.buffer() {
-                        log::debug!("Draining caption sink buffer: {:?}", buffer);
-                    }
-                }
-            }
-
-            // Audio sink
-            let audio_sample = audio_sink.try_pull_sample(gst::ClockTime::ZERO);
-            if let Some(sample) = audio_sample {
-                let buffer = sample.buffer().unwrap();
-                let map = buffer.map_readable().unwrap();
-                let samples = map.as_slice();
-
-                // Calculate audio loudness (you can replace this with your own calculation)
-                let loudness = samples
-                    .iter()
-                    .map(|&s| f32::from(s))
-                    .fold(0.0, |acc, s| acc + s.abs())
-                    / samples.len() as f32;
-
-                // Check if loudness exceeds a threshold and trigger alerts
-                if loudness > -10.0 {
-                    log::warn!("Loudness alert: {:.2} LUFS exceeds threshold", loudness);
-                } else {
-                    log::info!("Audio Loudness: {:.2} LUFS", loudness);
-                }
-            }
-
             let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
             if let Some(sample) = sample {
                 let buffer = sample.buffer().unwrap();

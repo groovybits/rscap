@@ -1593,7 +1593,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
     // Initialize the pipeline
     #[cfg(feature = "gst")]
-    let (pipeline, appsrc, appsink, captionssink, audiosink) = match initialize_pipeline(
+    let (pipeline, appsrc, appsink) = match initialize_pipeline(
         &args.input_codec,
         args.image_height,
         args.gst_queue_buffers,
@@ -1601,8 +1601,8 @@ async fn rsprobe(running: Arc<AtomicBool>) {
         &args.image_framerate,
         args.extract_images,
     ) {
-        Ok((pipeline, appsrc, appsink, captionssink, audiosink)) => {
-            (pipeline, appsrc, appsink, captionssink, audiosink)
+        Ok((pipeline, appsrc, appsink)) => {
+            (pipeline, appsrc, appsink)
         }
         Err(err) => {
             eprintln!("Failed to initialize the pipeline: {}", err);
@@ -1635,8 +1635,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     if args.extract_images {
         pull_images(
             appsink,
-            captionssink,
-            audiosink,
             image_sender,
             args.save_images,
             args.image_sample_rate_ns,
