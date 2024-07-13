@@ -273,18 +273,13 @@ pub fn initialize_pipeline(
                appsink name=sink", framerate, scale_string),
         )?,
         0x1B => create_pipeline(
-              &&format!("appsrc name=src ! tsdemux name=demux demux. ! \
+              &format!("appsrc name=src ! tsdemux ! \
                   h264parse ! avdec_h264 ! \
                   tee name=videotee \
                   videotee. ! queue ! ccextractor name=cce cce.src ! \
                   queue ! appsink async=false sync=false name=caption_sink \
                   videotee. ! queue ! videorate ! video/x-raw,framerate={} ! videoconvert ! video/x-raw,format=RGB {} ! \
-                  appsink sync=false async=false name=sink demux. ! \
-                  queue ! audioconvert ! audio/x-raw,format=F32LE ! \
-                  tee name=audiotee \
-                  audiotee. ! queue ! ebur128level interval=100000000 post-messages=true ! \
-                  fakesink async=false \
-                  audiotee. ! queue ! appsink async=false sync=false name=audio_sink", framerate, scale_string),
+                  appsink sync=false async=false name=sink", framerate, scale_string),
         )?,
         0x24 => create_pipeline(
                 &format!("appsrc name=src ! tsdemux ! capsfilter caps=video/x-h265 ! \
