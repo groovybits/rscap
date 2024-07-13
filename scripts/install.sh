@@ -586,21 +586,21 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   fi
 
   # Download gst-plugins-rs source code
-  if [ ! -f gst-plugin-rs ]; then
-    GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/sdroege/gst-plugin-rs.git
-    cd gst-plugin-rs
-    git checkout $GST_PLUGINS_RS_VERSION
-    cd ..
-  fi
+  #if [ ! -f gst-plugin-rs ]; then
+  #  GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no" git clone https://github.com/sdroege/gst-plugin-rs.git
+  #  cd gst-plugin-rs
+  #  git checkout $GST_PLUGINS_RS_VERSION
+  #  cd ..
+  #fi
 
   # Build gst-plugin-closedcaption
-  cd gst-plugin-rs
+  #cd gst-plugin-rs
 
   # Closed Caption
-  echo
-  echo "Building gst-plugin-closedcaption..."
-  run_with_scl cargo cbuild --release --package gst-plugin-closedcaption --jobs 1
-  run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64
+  #echo
+  #echo "Building gst-plugin-closedcaption..."
+  #run_with_scl cargo cbuild --release --package gst-plugin-closedcaption --jobs 1
+  #run_with_scl cargo cinstall --release --package gst-plugin-closedcaption --prefix=$PREFIX --libdir=$PREFIX/lib64
 
   # Audio
   #echo
@@ -609,12 +609,12 @@ if [ ! -f "gst-plugins-rs-installed.done" ]; then
   #run_with_scl cargo cinstall --release --package gst-plugin-audiofx --prefix=$PREFIX --libdir=$PREFIX/lib64
 
   # Video
-  echo
-  echo "Building gst-plugin-videofx..."
-  run_with_scl cargo cbuild --release --package gst-plugin-videofx --jobs 1
-  run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=$PREFIX --libdir=$PREFIX/lib64
+  #echo
+  #echo "Building gst-plugin-videofx..."
+  #run_with_scl cargo cbuild --release --package gst-plugin-videofx --jobs 1
+  #run_with_scl cargo cinstall --release --package gst-plugin-videofx --prefix=$PREFIX --libdir=$PREFIX/lib64
 
-  cd ..
+  #cd ..
 fi
 touch gst-plugins-rs-installed.done
 
