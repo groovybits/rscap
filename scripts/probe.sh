@@ -1,5 +1,7 @@
 #!/bin/sh
 #
+
+SUDO=$(which sudo)
 if [ -f "scripts/setup_env.sh" ]; then
     source scripts/setup_env.sh
 elif [ -f "/opt/rsprobe/bin/setup_env.sh" ]; then
@@ -58,8 +60,9 @@ $PROBE_BIN -V
 CPU_BIND=0
 MEM_BIND=0
 # NUMACTL="numactl --cpubind=$CPU_BIND --membind=$MEM_BIND"
+#    --kafka-broker $KAFKA_BROKER \
 
-sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
+$SUDO GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     LD_LIBRARY_PATH=$LD_LIBRARY_PATH \
     GST_DEBUG=$GST_DEBUG_LEVEL \
     RUST_BACKTRACE=$BACKTRACE \
@@ -72,5 +75,4 @@ sudo GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     --source-port $SOURCE_PORT \
     --kafka-topic "rsprobe" \
     --output-file $OUTPUT_FILE \
-    --kafka-broker $KAFKA_BROKER \
     $@
