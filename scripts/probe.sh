@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 
-SUDO=$(which sudo)
+SUDO=$(which sudo || echo "")
 if [ -f "scripts/setup_env.sh" ]; then
     source scripts/setup_env.sh
 elif [ -f "/opt/rsprobe/bin/setup_env.sh" ]; then
