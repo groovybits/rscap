@@ -1,7 +1,14 @@
 #!/bin/sh
 #
 
-SUDO=$(which sudo || echo "")
+run_command() {
+    if command -v sudo &>/dev/null; then
+        sudo "$@"
+    else
+        "$@"
+    fi
+}
+
 if [ -f "scripts/setup_env.sh" ]; then
     source scripts/setup_env.sh
 elif [ -f "/opt/rsprobe/bin/setup_env.sh" ]; then
@@ -62,7 +69,7 @@ MEM_BIND=0
 # NUMACTL="numactl --cpubind=$CPU_BIND --membind=$MEM_BIND"
 #    --kafka-broker $KAFKA_BROKER \
 
-$SUDO GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
+run_command GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     LD_LIBRARY_PATH=$LD_LIBRARY_PATH \
     GST_DEBUG=$GST_DEBUG_LEVEL \
     RUST_BACKTRACE=$BACKTRACE \
