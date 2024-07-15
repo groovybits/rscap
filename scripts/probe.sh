@@ -69,7 +69,8 @@ MEM_BIND=0
 # NUMACTL="numactl --cpubind=$CPU_BIND --membind=$MEM_BIND"
 #    --kafka-broker $KAFKA_BROKER \
 
-run_command GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
+#run_command \ #FIXME 
+GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     LD_LIBRARY_PATH=$LD_LIBRARY_PATH \
     GST_DEBUG=$GST_DEBUG_LEVEL \
     RUST_BACKTRACE=$BACKTRACE \
