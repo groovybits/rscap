@@ -661,7 +661,7 @@ rm -rf $PREFIX/share
 rm -rf $PREFIX/lib/rustlib
 rm -rf $PREFIX/lib/*.a
 rm -rf $PREFIX/lib64/*.a
-rm -rf $PREFIX/libexec
+#rm -rf $PREFIX/libexec
 rm -rf $PREFIX/etc
 rm -f $PREFIX/lib/librustc_driver-*
 rm -f $PREFIX/lib/libstd-*
