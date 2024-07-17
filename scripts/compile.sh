@@ -136,7 +136,7 @@ if [ "$OS" = "Linux" ]; then
     fi
 
     # Build with SCL
-    echo "Building project (CentOS 7)..."
+    echo "Building on Linux ($BUILD) with Features [$FEATURES] ..."
     if [ "$BUILD" = "release" ]; then
         run_with_scl cargo build $FEATURES --release --quiet --jobs 1
     elif [ "$BUILD" = "release-with-debug" ]; then
@@ -171,7 +171,7 @@ elif [ "$OS" = "Darwin" ]; then
     export LDFLAGS="-lc++"
     # macOS specific setup
     # Build on macOS
-    echo "Building project (macOS)..."
+    echo "Building on macOS ($BUILD) with Features [$FEATURES]..."
     if [ "$BUILD" = "release" ]; then
         cargo build $FEATURES --release --quiet --jobs 1
     elif [ "$BUILD" == "release-with-debug" ]; then
@@ -184,7 +184,7 @@ else
     echo "Generic Unix-like OS detected."
     # Generic Unix/Linux setup
     # Build for generic Unix/Linux
-    echo "Building project..."
+    echo "Building on Unix ($BUILD) with Features [$FEATURES]..."
     if [ "$BUILD" = "release" ]; then
         cargo build $FEATURES --release --quiet --jobs 1
     elif [ "$BUILD" == "release-with-debug" ]; then
