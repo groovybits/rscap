@@ -646,6 +646,7 @@ BUILD=$BUILD_TYPE ./scripts/compile.sh $GST_FEATURE
 
 # Copy RsCap binaries to the installation directory
 echo "Copying RsCap binaries to the installation directory..."
+mkdir -p $PREFIX/bin
 cp -f target/$BUILD_TYPE/probe $PREFIX/bin/
 cp -f scripts/probe.sh $PREFIX/bin/
 cp -f scripts/setup_env.sh $PREFIX/bin/
