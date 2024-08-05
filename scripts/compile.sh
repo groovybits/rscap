@@ -138,11 +138,11 @@ if [ "$OS" = "Linux" ]; then
     # Build with SCL
     echo "Building on Linux ($BUILD) with Features [$FEATURES] ..."
     if [ "$BUILD" = "release" ]; then
-        run_with_scl cargo build $FEATURES --release --quiet --jobs 1
+        run_with_scl cargo build $FEATURES --release --jobs 1
     elif [ "$BUILD" = "release-with-debug" ]; then
-        run_with_scl cargo build $FEATURES --profile=release-with-debug --quiet --jobs 1
+        run_with_scl cargo build $FEATURES --profile=release-with-debug --jobs 1
     else
-        run_with_scl cargo build $FEATURES --quiet --jobs 1
+        run_with_scl cargo build $FEATURES --jobs 1
     fi
     # Add elif blocks here for other specific Linux distributions
 elif [ "$OS" = "Darwin" ]; then
@@ -173,11 +173,11 @@ elif [ "$OS" = "Darwin" ]; then
     # Build on macOS
     echo "Building on macOS ($BUILD) with Features [$FEATURES]..."
     if [ "$BUILD" = "release" ]; then
-        cargo build $FEATURES --release --quiet --jobs 1
+        cargo build $FEATURES --release --jobs 1
     elif [ "$BUILD" == "release-with-debug" ]; then
-        cargo build $FEATURES --profile=release-with-debug --quiet --jobs 1
+        cargo build $FEATURES --profile=release-with-debug --jobs 1
     else
-        cargo build $FEATURES --quiet --jobs 1
+        cargo build $FEATURES --jobs 1
     fi
 else
     export RUSTFLAGS="-C link-args=-Wl,-rpath,$PREFIX/lib:$PREFIX/lib64"
@@ -186,11 +186,11 @@ else
     # Build for generic Unix/Linux
     echo "Building on Unix ($BUILD) with Features [$FEATURES]..."
     if [ "$BUILD" = "release" ]; then
-        cargo build $FEATURES --release --quiet --jobs 1
+        cargo build $FEATURES --release --jobs 1
     elif [ "$BUILD" == "release-with-debug" ]; then
-        cargo build $FEATURES --profile=release-with-debug --quiet --jobs 1
+        cargo build $FEATURES --profile=release-with-debug --jobs 1
     else
-        cargo build $FEATURES --quiet --jobs 1
+        cargo build $FEATURES --jobs 1
     fi
 fi
 
