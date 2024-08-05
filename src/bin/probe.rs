@@ -34,8 +34,8 @@ use rdkafka::types::RDKafkaErrorCode;
 use rsprobe::get_system_stats;
 use rsprobe::stream_data::process_mpegts_packet;
 use rsprobe::stream_data::{
-    get_pid_map, identify_video_pid, parse_and_store_pat, process_packet, update_pid_map, Codec,
-    ImageData, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
+    cleanup_stale_streams, get_pid_map, identify_video_pid, parse_and_store_pat, process_packet,
+    update_pid_map, Codec, ImageData, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
 };
 #[cfg(feature = "gst")]
 use rsprobe::stream_data::{initialize_pipeline, process_video_packets, pull_images};
@@ -494,7 +494,7 @@ async fn send_to_kafka(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.7.5",
+    version = "0.7.6",
     about = "MpegTS Stream Analysis Probe with Kafka and GStreamer"
 )]
 struct Args {
@@ -1601,9 +1601,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
         &args.image_framerate,
         args.extract_images,
     ) {
-        Ok((pipeline, appsrc, appsink)) => {
-            (pipeline, appsrc, appsink)
-        }
+        Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
         Err(err) => {
             eprintln!("Failed to initialize the pipeline: {}", err);
             return;
@@ -1765,6 +1763,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                     pmt_pid = Some(pid);
                                 }
                                 // Update PID_MAP with new stream types
+                                cleanup_stale_streams();
                                 let program_number_result = update_pid_map(
                                     &packet_chunk,
                                     &pmt_info.packet,
