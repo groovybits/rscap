@@ -494,7 +494,7 @@ async fn send_to_kafka(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.7.5",
+    version = "0.7.6",
     about = "MpegTS Stream Analysis Probe with Kafka and GStreamer"
 )]
 struct Args {

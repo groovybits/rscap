@@ -50,7 +50,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{fmt, sync::Arc, sync::Mutex};
 #[cfg(feature = "gst")]
 use tokio::sync::mpsc;
-#[cfg(feature = "gst")]
 
 const IAT_CAPTURE_WINDOW_SIZE: usize = 100;
 
