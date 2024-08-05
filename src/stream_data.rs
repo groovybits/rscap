@@ -46,11 +46,11 @@ use std::io::Write;
 #[cfg(feature = "gst")]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{fmt, sync::Arc, sync::Mutex};
 #[cfg(feature = "gst")]
 use tokio::sync::mpsc;
 #[cfg(feature = "gst")]
-use tokio::time::Duration;
 
 const IAT_CAPTURE_WINDOW_SIZE: usize = 100;
 
@@ -86,14 +86,7 @@ pub fn initialize_pipeline(
     scale: bool,
     framerate: &str,
     extract_images: bool,
-) -> Result<
-    (
-        gst::Pipeline,
-        gst_app::AppSrc,
-        gst_app::AppSink,
-    ),
-    anyhow::Error,
-> {
+) -> Result<(gst::Pipeline, gst_app::AppSrc, gst_app::AppSink), anyhow::Error> {
     gst::init()?;
 
     let width = (((height as f32 * 16.0 / 9.0) / 16.0).round() * 16.0) as u32;
@@ -1422,6 +1415,38 @@ pub fn process_packet(
 
                 pid_map.insert(pid, stream_data);
             }
+        }
+    }
+}
+
+pub fn cleanup_stale_streams() {
+    let current_time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_millis() as u64;
+
+    let one_minute = 60_000; // 1 minute in milliseconds
+
+    let mut pid_map = PID_MAP.write().unwrap();
+    let stale_pids: Vec<u16> = pid_map
+        .iter()
+        .filter_map(|(&pid, stream_data)| {
+            if current_time.saturating_sub(stream_data.last_arrival_time) > one_minute {
+                Some(pid)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for pid in stale_pids {
+        if let Some(removed_stream) = pid_map.remove(&pid) {
+            info!(
+                "Removed stale stream: PID {}, Program {}, Last seen {} ms ago",
+                pid,
+                removed_stream.program_number,
+                current_time.saturating_sub(removed_stream.last_arrival_time)
+            );
         }
     }
 }
