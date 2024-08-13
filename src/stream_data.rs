@@ -514,12 +514,6 @@ pub fn process_packet(
     let packet: &[u8] = &stream_data_packet.packet[stream_data_packet.packet_start
         ..stream_data_packet.packet_start + stream_data_packet.packet_len];
 
-    let updated_stream_data = stream_data_packet.clone();
-
-    // copy the pts and pcr values back to the original stream_data_packet
-    stream_data_packet.pts = updated_stream_data.pts;
-    stream_data_packet.pcr = updated_stream_data.pcr;
-
     let pid = stream_data_packet.pid;
 
     let mut pid_map = PID_MAP.write().unwrap();
