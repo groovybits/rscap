@@ -71,5 +71,4 @@ GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     --source-port $SOURCE_PORT \
     --kafka-topic "rsprobe" \
     --kafka-broker $KAFKA_BROKER \
-    --output-file $OUTPUT_FILE \
     $@
