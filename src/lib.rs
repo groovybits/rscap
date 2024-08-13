@@ -1,28 +1,7 @@
 pub mod stream_data;
-pub mod watch_file;
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-pub mod system_stats;
-
-pub use system_stats::{get_system_stats, SystemStats};
-
-use serde_json::{json, Value};
-
-/// Enum to determine the type of stats to fetch.
-pub enum StatsType {
-    System,
-}
-
-/// Fetches the requested stats and returns them as a JSON Value.
-pub async fn get_stats_as_json(stats_type: StatsType) -> Value {
-    match stats_type {
-        StatsType::System => {
-            let system_stats = get_system_stats();
-            json!(system_stats)
-        }
-    }
-}
 
 // Function to get the current Unix timestamp in milliseconds
 pub fn current_unix_timestamp_ms() -> Result<u64, &'static str> {

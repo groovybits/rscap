@@ -1,5 +1,5 @@
 [package]
-name = "rs_pid_mapper"
+name = "rsprobe"
 description = "MpegTS Stream Analysis PCAP Probe for PID MAP information"
 keywords = ["broadcast", "mpegts", "pcap"]
 categories = ["command-line-utilities"]

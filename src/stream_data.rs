@@ -6,50 +6,13 @@
 
 use crate::current_unix_timestamp_ms;
 use ahash::AHashMap;
-use crc::{Crc, CRC_32_ISO_HDLC};
-#[cfg(feature = "gst")]
-use gst_app::{AppSink, AppSrc};
-#[cfg(feature = "gst")]
-use gstreamer as gst;
-#[cfg(feature = "gst")]
-use gstreamer::parse;
-#[cfg(feature = "gst")]
-use gstreamer::prelude::*;
-#[cfg(feature = "gst")]
-use gstreamer_app as gst_app;
-#[cfg(feature = "gst")]
-use gstreamer_video::video_meta::VideoCaptionMeta;
-#[cfg(feature = "gst")]
-use gstreamer_video::VideoCaptionType;
-#[cfg(feature = "gst")]
-use gstreamer_video::VideoInfo;
-#[cfg(feature = "gst")]
-use image::buffer::ConvertBuffer;
-#[cfg(feature = "gst")]
-use image::Luma;
-#[cfg(feature = "gst")]
-use image::{ImageBuffer, Rgb};
 use lazy_static::lazy_static;
 use log::{debug, error, info};
-#[cfg(feature = "gst")]
-use opencv::img_hash::PHash;
-#[cfg(feature = "gst")]
-use opencv::{core::Mat, prelude::*};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-#[cfg(feature = "gst")]
-use std::fs::OpenOptions;
-#[cfg(feature = "gst")]
-use std::io;
-#[cfg(feature = "gst")]
-use std::io::Write;
-#[cfg(feature = "gst")]
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fmt, sync::Arc, sync::Mutex};
-#[cfg(feature = "gst")]
-use tokio::sync::mpsc;
 
 const IAT_CAPTURE_WINDOW_SIZE: usize = 100;
 
@@ -58,345 +21,6 @@ lazy_static! {
     static ref IAT_CAPTURE_WINDOW: Mutex<VecDeque<u64>> =
         Mutex::new(VecDeque::with_capacity(IAT_CAPTURE_WINDOW_SIZE));
     static ref IAT_CAPTURE_PEAK: Mutex<u64> = Mutex::new(0);
-}
-
-#[derive(Clone, Debug)]
-pub struct ImageData {
-    pub image: Vec<u8>,
-    pub pts: u64,
-    pub duplicates: u64,
-    pub hash: u64,
-    pub hamming: f64,
-}
-
-#[cfg(feature = "gst")]
-fn create_pipeline(desc: &str) -> Result<gst::Pipeline, anyhow::Error> {
-    let pipeline = parse::launch(desc)?
-        .downcast::<gst::Pipeline>()
-        .expect("Expected a gst::Pipeline");
-    Ok(pipeline)
-}
-
-#[cfg(feature = "gst")]
-pub fn initialize_pipeline(
-    input_codec: &str,
-    height: u32,
-    buffer_count: u32,
-    scale: bool,
-    framerate: &str,
-    extract_images: bool,
-) -> Result<(gst::Pipeline, gst_app::AppSrc, gst_app::AppSink), anyhow::Error> {
-    gst::init()?;
-
-    let width = (((height as f32 * 16.0 / 9.0) / 16.0).round() * 16.0) as u32;
-    let scale_string = if scale {
-        format!("! videoscale ! video/x-raw,width={width},height={height}")
-    } else {
-        String::new()
-    };
-
-    let stream_type_number = if input_codec == "mpeg2" {
-        0x02
-    } else if input_codec == "h264" {
-        0x1B
-    } else if input_codec == "h265" {
-        0x24
-    } else {
-        return Err(anyhow::anyhow!("Unsupported video codec {}", input_codec));
-    };
-
-    // Create a pipeline to extract video frames
-    let pipeline = match stream_type_number {
-        0x02 => create_pipeline(
-           &format!("appsrc name=src ! tsdemux |capsfiter caps=video/mpeg ! \
-               mpeg2dec ! videorate ! video/x-raw,framerate={} ! videoconvert ! video/x-raw,format=RGB {} ! \
-               appsink name=sink", framerate, scale_string),
-        )?,
-        0x1B => create_pipeline(
-              &format!("appsrc name=src ! tsdemux ! \
-                  h264parse ! avdec_h264 ! videorate ! video/x-raw,framerate={} ! \
-                  videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
-        )?,
-        0x24 => create_pipeline(
-                &format!("appsrc name=src ! tsdemux ! capsfilter caps=video/x-h265 ! \
-                    h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate={} ! \
-                    videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
-        )?,
-        _ => {
-            return Err(anyhow::anyhow!(
-                "Unsupported video stream type {}",
-                stream_type_number
-            ))
-        }
-    };
-
-    let appsrc = pipeline
-        .by_name("src")
-        .ok_or_else(|| anyhow::anyhow!("Failed to get appsrc"))?
-        .downcast::<gst_app::AppSrc>()
-        .map_err(|_| anyhow::anyhow!("AppSrc casting failed"))?;
-    let appsink = pipeline
-        .by_name("sink")
-        .ok_or_else(|| anyhow::anyhow!("Failed to get appsink"))?
-        .downcast::<gst_app::AppSink>()
-        .map_err(|_| anyhow::anyhow!("AppSink casting failed"))?;
-
-    appsink.set_property("max-buffers", buffer_count);
-    appsink.set_property("drop", true);
-
-    Ok((pipeline, appsrc, appsink))
-}
-
-#[cfg(feature = "gst")]
-pub fn process_video_packets(
-    appsrc: AppSrc,
-    mut video_packet_receiver: mpsc::Receiver<Vec<u8>>,
-    running: Arc<AtomicBool>,
-) {
-    tokio::spawn(async move {
-        while let Some(packet) = video_packet_receiver.recv().await {
-            if !running.load(Ordering::SeqCst) {
-                break;
-            }
-            let buffer = gst::Buffer::from_slice(packet);
-
-            if let Err(err) = appsrc.push_buffer(buffer) {
-                log::error!("Failed to push buffer to appsrc: {}", err);
-            }
-        }
-    });
-}
-
-#[cfg(feature = "gst")]
-pub fn pull_images(
-    appsink: AppSink,
-    image_sender: mpsc::Sender<(Vec<u8>, u64, u64, u64, f64)>,
-    save_images: bool,
-    sample_interval: u64,
-    image_height: u32,
-    filmstrip_length: usize,
-    jpeg_quality: u8,
-    frame_increment: u8,
-    get_captions: bool,
-    running: Arc<AtomicBool>,
-) {
-    tokio::spawn(async move {
-        let mut frame_count = 0;
-        let mut last_processed_pts = 0;
-        let mut filmstrip_images = Vec::new();
-        let save_captions = false;
-        let mut prev_hash = None;
-        let mut cur_hash = None;
-        let mut hamming: f64 = 0.0;
-        let mut image_same = 0;
-        let frozen_frame_threshold = 30; // Number of frames to detect frozen picture
-
-        while running.load(Ordering::SeqCst) {
-            let sample = appsink.try_pull_sample(gst::ClockTime::ZERO);
-            if let Some(sample) = sample {
-                let buffer = sample.buffer().unwrap();
-                let pts = buffer
-                    .pts()
-                    .map_or(last_processed_pts, |pts| pts.nseconds());
-
-                if last_processed_pts == 0 || pts >= last_processed_pts + sample_interval {
-                    last_processed_pts = pts;
-
-                    let map = buffer.map_readable().unwrap();
-                    let data = map.as_slice().to_vec();
-                    drop(map);
-
-                    // Check if the data length matches the expected dimensions for RGB format
-                    let info = VideoInfo::from_caps(&sample.caps().expect("Sample without caps"))
-                        .expect("Failed to parse caps");
-                    let width = info.width() as usize;
-                    let height = info.height() as usize;
-
-                    // Check if height is the same as our image_height, if not, scale it to image_height while keeping the aspect ratio
-                    let (scaled_width, scaled_height, scaled_data) =
-                        if height != image_height as usize {
-                            let aspect_ratio = width as f32 / height as f32;
-                            let scaled_height = image_height as usize;
-                            let scaled_width = (scaled_height as f32 * aspect_ratio) as usize;
-
-                            let scaled = image::imageops::resize(
-                                &image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(
-                                    width as u32,
-                                    height as u32,
-                                    data,
-                                )
-                                .unwrap(),
-                                scaled_width as u32,
-                                scaled_height as u32,
-                                image::imageops::FilterType::Triangle,
-                            );
-
-                            (scaled_width, scaled_height, scaled.into_raw())
-                        } else {
-                            (width, height, data)
-                        };
-
-                    let expected_length = scaled_width * scaled_height * 3; // 3 bytes per pixel for RGB
-
-                    log::debug!(
-                        "pull_images: Image scaled to {}x{}",
-                        scaled_width,
-                        scaled_height
-                    );
-
-                    if scaled_data.len() == expected_length {
-                        let image = ImageBuffer::<Rgb<u8>, _>::from_raw(
-                            scaled_width as u32,
-                            scaled_height as u32,
-                            scaled_data,
-                        )
-                        .expect("Failed to create ImageBuffer");
-
-                        // Convert the RGB image to grayscale (GRAY8)
-                        let gray_image: ImageBuffer<Luma<u8>, Vec<u8>> = image.convert();
-
-                        // Create a perceptual hash from the grayscale image using the opencv img_hash module
-                        let mut current_hash = Mat::default();
-                        {
-                            let (_width, height) = gray_image.dimensions();
-                            let data = gray_image.into_raw();
-                            let gray_mat_1d = Mat::from_slice(&data).unwrap();
-                            let gray_mat = gray_mat_1d.reshape(1, height as i32).unwrap();
-                            let mut hasher = PHash::create().unwrap();
-                            hasher.compute(&gray_mat, &mut current_hash).unwrap();
-                        }
-
-                        // Compare with the previous hash value
-                        if let Some(ref prev_hash) = prev_hash {
-                            let hasher = PHash::create().unwrap();
-                            let hamming_distance =
-                                hasher.compare(prev_hash, &current_hash).unwrap();
-                            hamming = hamming_distance;
-                            cur_hash = Some(current_hash.clone());
-                            log::debug!("Hamming Distance: {}", hamming_distance);
-
-                            // Check if the current frame is the same as the previous frame
-                            if hamming_distance == 0.0 {
-                                image_same += 1;
-
-                                // Check if the number of consecutive duplicate frames exceeds the threshold
-                                if image_same >= frozen_frame_threshold {
-                                    log::warn!(
-                                        "Frozen frame detected! Consecutive duplicate frames: {}",
-                                        image_same
-                                    );
-                                    // Perform any necessary actions for frozen frames
-                                }
-                            } else {
-                                // Reset the duplicate frame counter if the frames are different
-                                image_same = 0;
-                            }
-
-                            // Trigger alerts or perform actions based on the hamming distance
-                            if hamming_distance > 10.0 {
-                                log::debug!("Significant perceptual difference detected!");
-                            }
-                        }
-
-                        // Update the previous hash for the next iteration
-                        prev_hash = Some(current_hash);
-
-                        // Save the image as a JPEG with timecode
-                        if save_images {
-                            let filename = format!("images/frame_{:04}.jpg", frame_count);
-                            let mut jpeg_data = Vec::new();
-                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
-                                &mut jpeg_data,
-                                jpeg_quality,
-                            );
-                            encoder
-                                .encode_image(&image)
-                                .expect("Failed to encode image to JPEG");
-                            std::fs::write(&filename, &jpeg_data)
-                                .expect("Failed to save JPEG image");
-                        }
-                        frame_count += 1;
-
-                        print!("*");
-                        // flush stdout
-                        io::stdout().flush().unwrap();
-
-                        filmstrip_images.push(image);
-
-                        if filmstrip_length <= 1 || filmstrip_images.len() >= filmstrip_length {
-                            // Create a new image buffer for the filmstrip
-                            let filmstrip_width = (scaled_width * filmstrip_length) as u32;
-                            let mut filmstrip = ImageBuffer::<Rgb<u8>, Vec<u8>>::new(
-                                filmstrip_width,
-                                scaled_height as u32,
-                            );
-
-                            // Concatenate the images into the filmstrip
-                            for (i, img) in filmstrip_images.iter().enumerate() {
-                                let x_offset = i as u32 * scaled_width as u32;
-                                image::imageops::overlay(&mut filmstrip, img, x_offset.into(), 0);
-                            }
-
-                            // Encode the filmstrip to a JPEG vector
-                            let mut jpeg_data = Vec::new();
-                            let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(
-                                &mut jpeg_data,
-                                jpeg_quality,
-                            );
-                            encoder
-                                .encode_image(&filmstrip)
-                                .expect("JPEG encoding failed");
-
-                            // Send the filmstrip over the channel
-                            let hash_value = if let Some(ref hash_mat) = cur_hash {
-                                let hash_bytes: [u8; 8] = (0..hash_mat.cols())
-                                    .map(|i| *hash_mat.at::<u8>(i).unwrap())
-                                    .collect::<Vec<u8>>()
-                                    .try_into()
-                                    .unwrap();
-                                u64::from_be_bytes(hash_bytes)
-                            } else {
-                                0
-                            };
-
-                            if let Err(err) = image_sender
-                                .send((jpeg_data, pts, image_same, hash_value, hamming))
-                                .await
-                            {
-                                log::error!("Failed to send image data through channel: {}", err);
-                                break;
-                            }
-
-                            // Clear the filmstrip images for the next set
-                            if frame_increment > 1 {
-                                let increment = if frame_increment as usize > filmstrip_length {
-                                    filmstrip_length
-                                } else {
-                                    frame_increment.into()
-                                };
-                                // remove the number of frames by frame_increment
-                                if filmstrip_images.len() > increment as usize {
-                                    filmstrip_images.drain(0..increment as usize);
-                                } else {
-                                    filmstrip_images.clear();
-                                }
-                            } else {
-                                filmstrip_images.clear();
-                            }
-                        }
-                    } else {
-                        log::error!(
-                            "Received image data with unexpected length: {}",
-                            scaled_data.len()
-                        );
-                    }
-                }
-            }
-
-            // Sleep for a short time to prevent a busy loop
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
-    });
 }
 
 // constant for PAT PID
@@ -466,30 +90,14 @@ pub struct StreamData {
     pub packet: Arc<Vec<u8>>, // The actual MPEG-TS packet data
     pub packet_start: usize,    // Offset into the data
     pub packet_len: usize,      // Offset into the data
-    // SMPTE 2110 fields
-    pub rtp_timestamp: u32,
-    pub rtp_payload_type: u8,
-    pub rtp_payload_type_name: String,
-    pub rtp_line_number: u16,
-    pub rtp_line_offset: u16,
-    pub rtp_line_length: u16,
-    pub rtp_field_id: u8,
-    pub rtp_line_continuation: u8,
-    pub rtp_extended_sequence_number: u16,
     pub stream_type_number: u8,
     pub capture_time: u64,
     pub capture_iat: u64,
     pub source_ip: String,
     pub source_port: i32,
-    pub has_image: u8,
-    pub image_pts: u64,
     pub capture_iat_max: u64,
-    pub log_message: String,
     pub probe_id: String,
-    pub captions: String,
     pub pid_map: String,
-    pub scte35: String,
-    pub audio_loudness: String,
     pub pts: u64,
     pub pcr: u64,
 }
@@ -522,29 +130,14 @@ impl Clone for StreamData {
             packet: Arc::clone(&self.packet),
             packet_start: self.packet_start,
             packet_len: self.packet_len,
-            rtp_timestamp: self.rtp_timestamp,
-            rtp_payload_type: self.rtp_payload_type,
-            rtp_payload_type_name: self.rtp_payload_type_name.to_owned(),
-            rtp_line_number: self.rtp_line_number,
-            rtp_line_offset: self.rtp_line_offset,
-            rtp_line_length: self.rtp_line_length,
-            rtp_field_id: self.rtp_field_id,
-            rtp_line_continuation: self.rtp_line_continuation,
-            rtp_extended_sequence_number: self.rtp_extended_sequence_number,
             stream_type_number: self.stream_type_number,
             capture_time: self.capture_time,
             capture_iat: self.capture_iat,
             source_ip: self.source_ip.to_owned(),
             source_port: self.source_port,
-            has_image: self.has_image,
-            image_pts: self.image_pts,
             capture_iat_max: self.capture_iat_max,
-            log_message: self.log_message.to_owned(),
             probe_id: self.probe_id.to_owned(),
-            captions: self.captions.to_owned(),
             pid_map: self.pid_map.to_owned(),
-            scte35: self.scte35.to_owned(),
-            audio_loudness: self.audio_loudness.to_owned(),
             pts: self.pts,
             pcr: self.pcr,
         }
@@ -599,58 +192,19 @@ impl StreamData {
             packet,
             packet_start,
             packet_len,
-            // SMPTE 2110 fields
-            rtp_timestamp: 0,
-            rtp_payload_type: 0,
-            rtp_payload_type_name: "".to_string(),
-            rtp_line_number: 0,
-            rtp_line_offset: 0,
-            rtp_line_length: 0,
-            rtp_field_id: 0,
-            rtp_line_continuation: 0,
-            rtp_extended_sequence_number: 0,
             stream_type_number,
             capture_time: capture_timestamp,
             capture_iat,
             source_ip,
             source_port,
-            // Initialize system stats fields from the SystemStats instance
-            has_image: 0,
-            image_pts: 0,
             capture_iat_max: capture_iat,
-            log_message: "".to_string(),
             probe_id,
-            captions: "".to_string(),
             pid_map: "".to_string(),
-            scte35: "".to_string(),
-            audio_loudness: "".to_string(),
             pts: 0,
             pcr: 0,
         }
     }
-    // set RTP fields
-    pub fn set_rtp_fields(
-        &mut self,
-        rtp_timestamp: u32,
-        rtp_payload_type: u8,
-        rtp_payload_type_name: String,
-        rtp_line_number: u16,
-        rtp_line_offset: u16,
-        rtp_line_length: u16,
-        rtp_field_id: u8,
-        rtp_line_continuation: u8,
-        rtp_extended_sequence_number: u16,
-    ) {
-        self.rtp_timestamp = rtp_timestamp;
-        self.rtp_payload_type = rtp_payload_type;
-        self.rtp_payload_type_name = rtp_payload_type_name;
-        self.rtp_line_number = rtp_line_number;
-        self.rtp_line_offset = rtp_line_offset;
-        self.rtp_line_length = rtp_line_length;
-        self.rtp_field_id = rtp_field_id;
-        self.rtp_line_continuation = rtp_line_continuation;
-        self.rtp_extended_sequence_number = rtp_extended_sequence_number;
-    }
+    
     pub fn update_stream_type(&mut self, stream_type: String) {
         self.stream_type = stream_type;
     }
@@ -824,330 +378,6 @@ impl StreamData {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct Tr101290Errors {
-    // p1 errors
-    pub ts_sync_byte_errors: u32,
-    pub sync_byte_errors: u32,
-    pub continuity_counter_errors: u32,
-    pub pat_errors: u32,
-    pub pmt_errors: u32,
-    pub pid_map_errors: u32,
-    // p2 errors
-    pub transport_error_indicator_errors: u32,
-    pub crc_errors: u32,
-    pub pcr_repetition_errors: u32,
-    pub pcr_discontinuity_indicator_errors: u32,
-    pub pcr_accuracy_errors: u32,
-    pub pts_errors: u32,
-    pub cat_errors: u32,
-}
-
-impl fmt::Display for Tr101290Errors {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "\
-            TS Sync Byte Errors: {}, \
-            Sync Byte Errors: {}, \
-            Continuity Counter Errors: {}, \
-            PAT Errors: {}, \
-            PMT Errors: {}, \
-            PID Map Errors: {}, \
-            Transport Error Indicator Errors: {}, \
-            CRC Errors: {}, \
-            PCR Repetition Errors: {}, \
-            PCR Discontinuity Indicator Errors: {}, \
-            PCR Accuracy Errors: {}, \
-            PTS Errors: {}, \
-            CAT Errors: {}",
-            self.ts_sync_byte_errors,
-            self.sync_byte_errors,
-            self.continuity_counter_errors,
-            self.pat_errors,
-            self.pmt_errors,
-            self.pid_map_errors,
-            // p2 errors
-            self.transport_error_indicator_errors,
-            self.crc_errors,
-            self.pcr_repetition_errors,
-            self.pcr_discontinuity_indicator_errors,
-            self.pcr_accuracy_errors,
-            self.pts_errors,
-            self.cat_errors
-        )
-    }
-}
-
-impl Tr101290Errors {
-    pub fn new() -> Self {
-        Tr101290Errors {
-            ts_sync_byte_errors: 0,
-            sync_byte_errors: 0,
-            continuity_counter_errors: 0,
-            pat_errors: 0,
-            pmt_errors: 0,
-            pid_map_errors: 0,
-            // p2
-            transport_error_indicator_errors: 0,
-            crc_errors: 0,
-            pcr_repetition_errors: 0,
-            pcr_discontinuity_indicator_errors: 0,
-            pcr_accuracy_errors: 0,
-            pts_errors: 0,
-            cat_errors: 0,
-        }
-    }
-}
-
-// TR 101 290 Priority 1 Check
-pub fn tr101290_p1_check(
-    packet: &[u8],
-    errors: &mut Tr101290Errors,
-    pid: u16,
-    stream_data: &mut StreamData,
-) {
-    // TS sync byte error
-    if packet[0] != 0x47 {
-        errors.ts_sync_byte_errors += 1;
-    }
-
-    // Sync byte error
-    if packet[0] != 0x47 {
-        errors.sync_byte_errors += 1;
-    }
-
-    // Continuity counter error
-    if pid != 0x1FFF {
-        errors.continuity_counter_errors = stream_data.error_count;
-    }
-
-    // PAT error
-    if pid == 0 {
-        let section_syntax_indicator = (packet[1] & 0x80) != 0;
-        let section_length = (((packet[1] & 0x0F) as u16) << 8) | packet[2] as u16;
-        if section_syntax_indicator && section_length >= 13 && packet.len() >= 8 {
-            let table_id = packet[5];
-            let section_number = packet[6];
-            let last_section_number = packet[7];
-            if table_id == 0x00 && section_number == 0x00 && last_section_number == 0x00 {
-                let program_count = (section_length - 9) / 4;
-                let mut i = 8;
-                let mut valid_programs = 0;
-                while i < packet.len() - 4 && valid_programs < program_count {
-                    let program_number = (packet[i] as u16) << 8 | packet[i + 1] as u16;
-                    if program_number != 0 {
-                        valid_programs += 1;
-                    }
-                    i += 4;
-                }
-                if valid_programs == 0 {
-                    errors.pat_errors += 1;
-                }
-            } else {
-                errors.pat_errors += 1;
-            }
-        } else if packet.len() >= 8 && packet[5] == 0x00 {
-            // Ignore PAT packets with section length less than 13
-        } else {
-            errors.pat_errors += 1;
-        }
-    }
-
-    // PMT error
-    if pid == stream_data.pmt_pid
-        && stream_data.pmt_pid != 0
-        && stream_data.pmt_pid != 0x1FFF
-        && stream_data.pmt_pid != 0xFFFF
-    {
-        let section_syntax_indicator = (packet[1] & 0x80) != 0;
-        let section_length = (((packet[1] & 0x0F) as u16) << 8) | packet[2] as u16;
-        if section_syntax_indicator && packet.len() >= 4 && section_length >= 13 {
-            let table_id = packet[3];
-            if table_id == 0x02 {
-                let program_number = (packet[4] as u16) << 8 | packet[5] as u16;
-                let _version_number = (packet[6] & 0x3E) >> 1;
-                let current_next_indicator = (packet[6] & 0x01) != 0;
-                let section_number = packet[7];
-                let last_section_number = packet[8];
-                let program_info_length = (((packet[10] & 0x0F) as u16) << 8) | packet[11] as u16;
-
-                if program_number == stream_data.program_number
-                    && current_next_indicator
-                    && section_number == 0
-                    && last_section_number == 0
-                    && program_info_length + 12 <= section_length
-                {
-                    // PMT is valid, don't increment the error counter
-                } else {
-                    errors.pmt_errors += 1;
-                }
-            } else {
-                errors.pmt_errors += 1;
-            }
-        } else {
-            errors.pmt_errors += 1;
-        }
-    }
-
-    // PID map error
-    if pid > 0
-        && pid < 0x1FFF
-        && pid != stream_data.pmt_pid
-        && !PID_MAP.read().unwrap().contains_key(&pid)
-    {
-        errors.pid_map_errors += 1;
-    }
-}
-
-// TR 101 290 Priority 2 Check
-pub fn tr101290_p2_check(packet: &[u8], errors: &mut Tr101290Errors, stream_data: &mut StreamData) {
-    // Transport error indicator
-    if (packet[1] & 0x80) != 0 {
-        errors.transport_error_indicator_errors += 1;
-    }
-
-    // CRC error
-    let has_adaptation_field = (packet[3] & 0x20) != 0;
-    let has_payload = (packet[3] & 0x10) != 0;
-    if has_adaptation_field && has_payload {
-        let adaptation_field_length = packet[4] as usize;
-        let payload_start = 5 + adaptation_field_length;
-        if payload_start + 4 <= packet.len() {
-            let crc32_valid = (packet[1] & 0x80) != 0;
-            if crc32_valid {
-                let crc32 = u32::from_be_bytes([
-                    packet[payload_start - 4],
-                    packet[payload_start - 3],
-                    packet[payload_start - 2],
-                    packet[payload_start - 1],
-                ]);
-                let crc32_calculator = Crc::<u32>::new(&CRC_32_ISO_HDLC);
-                let calculated_crc32 =
-                    crc32_calculator.checksum(&packet[payload_start..packet.len() - 4]);
-                if crc32 != calculated_crc32 {
-                    errors.crc_errors += 1;
-                }
-            }
-        }
-    }
-
-    // Check if the packet has an adaptation field
-    let adaptation_field_control = (packet[3] & 0x30) >> 4;
-    let has_adaptation_field = adaptation_field_control == 0b11 || adaptation_field_control == 0b10;
-
-    let mut has_pcr = false;
-    if has_adaptation_field && packet.len() >= 6 {
-        let adaptation_field_length = packet[4] as usize;
-        if packet.len() >= 6 + adaptation_field_length {
-            // Check if the PCR flag is set in the adaptation field
-            has_pcr = (packet[5] & 0x10) != 0;
-        }
-    }
-
-    // PCR accuracy error
-    if has_pcr {
-        let pcr_base = u64::from_be_bytes([
-            0,
-            0,
-            packet[6],
-            packet[7],
-            packet[8],
-            packet[9],
-            packet[10] & 0xFE,
-            0,
-        ]);
-        let pcr_ext = (((packet[10] & 0x01) as u64) << 8) | (packet[11] as u64);
-        let pcr = pcr_base * 300 + pcr_ext;
-        if pcr != 0 {
-            let max_pcr_accuracy_error = 500; // 500 nanoseconds
-            let prev_pcr = stream_data.pcr;
-            if (pcr as i64 - prev_pcr as i64).abs() > max_pcr_accuracy_error {
-                errors.pcr_accuracy_errors += 1;
-            }
-            stream_data.pcr = pcr;
-        }
-    }
-
-    // PCR repetition error
-    if has_pcr {
-        let pcr_base = u64::from_be_bytes([
-            0,
-            0,
-            packet[6],
-            packet[7],
-            packet[8],
-            packet[9],
-            packet[10] & 0xFE,
-            0,
-        ]);
-        let pcr_ext = (((packet[10] & 0x01) as u64) << 8) | (packet[11] as u64);
-        let pcr = pcr_base * 300 + pcr_ext;
-        if pcr != 0 {
-            let max_pcr_repetition_interval = 40_000; // 40 ms in PCR units (27 MHz)
-            let prev_pcr = stream_data.pcr;
-            if pcr - prev_pcr > max_pcr_repetition_interval {
-                errors.pcr_repetition_errors += 1;
-            }
-            stream_data.pcr = pcr;
-        }
-    }
-
-    // PCR discontinuity indicator error
-    let has_discontinuity_indicator = (packet[5] & 0x80) != 0;
-    if has_discontinuity_indicator {
-        let prev_discontinuity_state = stream_data.pcr & 0x01;
-        if prev_discontinuity_state == 1 {
-            errors.pcr_discontinuity_indicator_errors += 1;
-        }
-    }
-
-    // PTS error
-    let has_pts = (packet[7] & 0x80) != 0;
-    if has_pts {
-        let pts_high = u64::from_be_bytes([
-            0,
-            0,
-            0,
-            packet[9] & 0x0E,
-            packet[10],
-            packet[11],
-            packet[12],
-            packet[13] & 0xFE,
-        ]);
-        let pts_low = (((packet[13] & 0x01) as u64) << 8) | (packet[14] as u64);
-        let pts = pts_high | pts_low;
-
-        if pts != 0 {
-            let max_pts_interval = 700_000; // 700 ms in PTS units (90 kHz)
-            let prev_pts = stream_data.pts;
-
-            if pts < prev_pts {
-                // PTS is not monotonically increasing
-                errors.pts_errors += 1;
-            } else if pts - prev_pts > max_pts_interval {
-                // PTS discontinuity exceeds the maximum allowed interval
-                let max_pts_gap = 90_000; // 1 second in PTS units (90 kHz)
-                if pts - prev_pts > max_pts_gap {
-                    errors.pts_errors += 1;
-                }
-            }
-
-            stream_data.pts = pts;
-        }
-    }
-
-    // CAT error
-    let has_cat = packet[3] == 0x01;
-    if has_cat {
-        let section_syntax_indicator = (packet[1] & 0x80) != 0;
-        let section_length = (((packet[1] & 0x0F) as u16) << 8) | (packet[2] as u16);
-        if !section_syntax_indicator || section_length < 9 {
-            errors.cat_errors += 1;
-        }
-    }
-}
-
 // Implement a function to extract PID from a packet
 pub fn extract_pid(packet: &[u8]) -> u16 {
     if packet.len() < TS_PACKET_SIZE {
@@ -1278,24 +508,13 @@ pub fn parse_pmt(packet: &[u8]) -> Pmt {
 // Invoke this function for each MPEG-TS packet
 pub fn process_packet(
     stream_data_packet: &mut StreamData,
-    errors: &mut Tr101290Errors,
     pmt_pid: u16,
     probe_id: String,
 ) {
     let packet: &[u8] = &stream_data_packet.packet[stream_data_packet.packet_start
         ..stream_data_packet.packet_start + stream_data_packet.packet_len];
 
-    let mut updated_stream_data = stream_data_packet.clone();
-
-    if stream_data_packet.pid != 0x1FFF {
-        tr101290_p1_check(
-            packet,
-            errors,
-            stream_data_packet.pid,
-            &mut updated_stream_data,
-        );
-        tr101290_p2_check(packet, errors, &mut updated_stream_data);
-    }
+    let updated_stream_data = stream_data_packet.clone();
 
     // copy the pts and pcr values back to the original stream_data_packet
     stream_data_packet.pts = updated_stream_data.pts;

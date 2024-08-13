@@ -8,7 +8,6 @@
  */
 
 use ahash::AHashMap;
-use base64::{engine::general_purpose, Engine as _};
 #[cfg(feature = "dpdk_enabled")]
 use capsule::config::{load_config, DPDKConfig};
 #[cfg(feature = "dpdk_enabled")]
@@ -18,35 +17,18 @@ use capsule::prelude::*;
 use clap::Parser;
 use env_logger::{Builder as LogBuilder, Env};
 use futures::stream::StreamExt;
-#[cfg(feature = "gst")]
-use gstreamer as gst;
-#[cfg(feature = "gst")]
-use gstreamer::prelude::*;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use pcap::{Active, Capture, Device, PacketCodec};
-use rdkafka::admin::{AdminClient, AdminOptions, NewTopic};
-use rdkafka::client::DefaultClientContext;
-use rdkafka::config::ClientConfig;
-use rdkafka::error::KafkaError;
-use rdkafka::producer::{FutureProducer, FutureRecord};
-use rdkafka::types::RDKafkaErrorCode;
-use rsprobe::get_system_stats;
 use rsprobe::stream_data::process_mpegts_packet;
 use rsprobe::stream_data::{
     cleanup_stale_streams, get_pid_map, identify_video_pid, parse_and_store_pat, process_packet,
-    update_pid_map, Codec, ImageData, PmtInfo, StreamData, Tr101290Errors, PAT_PID,
+    update_pid_map, Codec, PmtInfo, StreamData, PAT_PID,
 };
-#[cfg(feature = "gst")]
-use rsprobe::stream_data::{initialize_pipeline, process_video_packets, pull_images};
-use rsprobe::watch_file::watch_daemon;
 use rsprobe::{current_unix_timestamp_ms, hexdump};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::fs::File;
-use std::sync::mpsc::channel;
 use std::sync::RwLock;
-use std::thread;
 use std::{
     error::Error as StdError,
     fmt, io,
@@ -58,7 +40,6 @@ use std::{
 };
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::{self};
-use tokio::time::Duration;
 
 lazy_static! {
     static ref PROBE_DATA: RwLock<AHashMap<String, ProbeData>> = RwLock::new(AHashMap::new());
@@ -435,67 +416,12 @@ fn init_pcap(
     Ok((cap, socket))
 }
 
-async fn create_kafka_producer(kafka_config: &ClientConfig) -> FutureProducer {
-    kafka_config
-        .create()
-        .expect("Failed to create Kafka producer")
-}
-
-async fn send_to_kafka(
-    producer: &FutureProducer,
-    topic: &str,
-    key: &str,
-    payload: &str,
-    timeout: Duration,
-    retry_attempts: usize,
-    retry_delay: Duration,
-) -> Result<(), KafkaError> {
-    let mut attempt = 0;
-    loop {
-        let record = FutureRecord::to(topic).payload(payload).key(key);
-
-        match producer.send(record, timeout).await {
-            Ok((partition, offset)) => {
-                log::debug!(
-                    "Message sent successfully to topic: {}, partition: {}, offset: {}",
-                    topic,
-                    partition,
-                    offset
-                );
-                return Ok(());
-            }
-            Err((KafkaError::MessageProduction(RDKafkaErrorCode::QueueFull), _)) => {
-                attempt += 1;
-                if attempt >= retry_attempts {
-                    log::error!(
-                        "Failed to send message after {} retries. Giving up.",
-                        attempt
-                    );
-                    return Err(KafkaError::MessageProduction(RDKafkaErrorCode::QueueFull));
-                } else {
-                    log::warn!(
-                        "Queue is full. Retrying in {} ms... (attempt {}/{})",
-                        retry_delay.as_millis(),
-                        attempt,
-                        retry_attempts
-                    );
-                    tokio::time::sleep(retry_delay).await;
-                }
-            }
-            Err((err, _)) => {
-                log::error!("Failed to send message: {:?}", err);
-                return Err(err);
-            }
-        }
-    }
-}
-
 /// RsProbe Configuration
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.7.6",
-    about = "MpegTS Stream Analysis Probe with Kafka and GStreamer"
+    version = "0.8.0",
+    about = "MpegTS Stream Analysis Probe PID Mapper"
 )]
 struct Args {
     /// probe ID - ID for the probe to send with the messages
@@ -558,10 +484,6 @@ struct Args {
     #[clap(long, env = "PROMISCUOUS", default_value_t = false)]
     promiscuous: bool,
 
-    /// Show the TR101290 p1, p2 and p3 errors if any
-    #[clap(long, env = "SHOW_TR101290", default_value_t = false)]
-    show_tr101290: bool,
-
     /// Sets the pcap buffer size
     #[clap(long, env = "BUFFER_SIZE", default_value_t = 1 * 1_358 * 1_000)]
     buffer_size: usize,
@@ -610,59 +532,6 @@ struct Args {
     #[clap(long, env = "LOGLEVEL", default_value = "info")]
     loglevel: String,
 
-    /// Extract Images from the video stream (requires feature gst)
-    #[clap(long, env = "EXTRACT_IMAGES", default_value_t = false)]
-    extract_images: bool,
-
-    /// Extract Captions from the video stream (requires feature gst)
-    #[clap(long, env = "EXTRACT_CAPTIONS", default_value_t = false)]
-    extract_captions: bool,
-
-    /// Save Images to disk
-    #[cfg(feature = "gst")]
-    #[clap(long, env = "SAVE_IMAGES", default_value_t = false)]
-    save_images: bool,
-
-    /// Image Sample Rate Ns - Image sample rate in nano seconds (fails to get images as frequently)
-    #[clap(long, env = "IMAGE_SAMPLE_RATE_NS", default_value_t = 0)]
-    image_sample_rate_ns: u64,
-
-    /// Scale Images using gstreamer - Scale the images with gstreamer instead of separately
-    #[clap(long, env = "SCALE_IMAGES_AFTER_GSTREAMER", default_value_t = false)]
-    scale_images_after_gstreamer: bool,
-
-    /// Jpeg Quality - Quality of the Jpeg images
-    #[clap(long, env = "JPEG_QUALITY", default_value_t = 75)]
-    jpeg_quality: u8,
-
-    /// Image Height - Image height in pixels of Thumbnail extracted images
-    #[clap(long, env = "IMAGE_HEIGHT", default_value_t = 96)]
-    image_height: u32,
-
-    /// filmstrip length
-    #[clap(long, env = "FILMSTRIP_LENGTH", default_value_t = 8)]
-    filmstrip_length: usize,
-
-    /// Gstreamer Queue Buffers
-    #[clap(long, env = "GST_QUEUE_BUFFERS", default_value_t = 2)]
-    gst_queue_buffers: u32,
-
-    /// image framerate - Framerate of the images extracted in 1/1 format
-    #[clap(long, env = "IMAGE_FRAMERATE", default_value = "1/1")]
-    image_framerate: String,
-
-    /// image_frame_increment - Increment the frame number by this amount for jpeg image strip, 0 matches filmstrip-length
-    #[clap(long, env = "IMAGE_FRAME_INCREMENT", default_value_t = 0)]
-    image_frame_increment: u8,
-
-    /// Image buffer size - Size of the buffer for the images from gstreamer
-    #[clap(long, env = "IMAGE_BUFFER_SIZE", default_value_t = 10)]
-    image_buffer_size: usize,
-
-    /// Video buffer size - Size of the buffer for the video to gstreamer
-    #[clap(long, env = "VIDEO_BUFFER_SIZE", default_value_t = 100000)]
-    video_buffer_size: usize,
-
     /// Kafka Broker
     #[clap(long, env = "KAFKA_BROKER", default_value = "")]
     kafka_broker: String,
@@ -682,10 +551,6 @@ struct Args {
     /// Kafka sending interval in milliseconds
     #[clap(long, env = "KAFKA_INTERVAL", default_value_t = 1000)]
     kafka_interval: u64,
-
-    /// System Stats Interval in milliseconds
-    #[clap(long, env = "SYSTEM_STATS_INTERVAL", default_value_t = 5000)]
-    system_stats_interval: u64,
 
     /// Dump Packets - Dump packets to the console in hex
     #[clap(long, env = "DUMP_PACKETS", default_value_t = false)]
@@ -713,11 +578,6 @@ async fn main() {
 async fn rsprobe(running: Arc<AtomicBool>) {
     let running_capture = running.clone();
     let running_kafka = running.clone();
-    #[cfg(feature = "gst")]
-    let running_gstreamer_process = running.clone();
-    #[cfg(feature = "gst")]
-    let running_gstreamer_pull = running.clone();
-    let running_watch_file = running.clone();
 
     dotenv::dotenv().ok(); // read .env file
 
@@ -943,27 +803,21 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     let mut probe_id = args.probe_id.clone();
     if probe_id_clone.is_empty() {
         // construct stream.source_ip and stream.source_port with stream.host
-        let system_stats = get_system_stats();
         probe_id = format!(
-            "{}:{}:{}",
-            system_stats.host_name, source_ip_clone1, args.source_port
+            "{}:{}",
+            source_ip_clone1, args.source_port
         );
     }
-    let probe_id_clone1 = probe_id.clone();
     let probe_id_clone2 = probe_id.clone();
 
     // Setup channel for passing stream_data for Kafka thread sending the stream data to monitor process
     let (ktx, mut krx) = mpsc::channel::<(
         Vec<Arc<StreamData>>,
-        Vec<String>,
-        Vec<ImageData>,
         AHashMap<u16, Arc<StreamData>>,
-        Tr101290Errors,
     )>(args.kafka_channel_size);
 
     let kafka_broker_clone = args.kafka_broker.clone();
     let kafka_topic_clone = args.kafka_topic.clone();
-    let kafka_topic_clone1 = args.kafka_topic.clone();
     let kafka_topic_clone2 = args.kafka_topic.clone();
     let kafka_broker_clone2 = args.kafka_broker.clone();
 
@@ -973,51 +827,10 @@ async fn rsprobe(running: Arc<AtomicBool>) {
             return;
         }
 
-        // Flatten the processes and insert them into the structure as an array of strings
-        let cpu_threshold = 5.0; // CPU usage threshold (in percentage)
-        let ram_threshold = 100 * 1024 * 1024; // RAM usage threshold (in bytes)
-
-        let mut output_file_counter: u32 = 0;
-        let mut last_system_stats = Instant::now();
-        let mut dot_last_file_write = Instant::now();
-        let mut log_messages = Vec::<String>::new();
-        let output_file_without_jpg = args.output_file.replace(".jpg", "");
-
-        // Now you can directly use the fields from `image_data`
-        let mut image_pts: u64 = 0;
-        let mut duplicates: u64 = 0;
-        let mut hash = 0;
-        let mut hamming: f64 = 0.0;
-
-        info!("Kafka publisher startup {}", args.kafka_broker);
-        let mut kafka_conf = ClientConfig::new();
-        kafka_conf.set("bootstrap.servers", &args.kafka_broker);
-        kafka_conf.set("client.id", "rsprobe");
-        kafka_conf.set("queue.buffering.max.messages", "10000");
-        kafka_conf.set("batch.num.messages", "1000");
-        kafka_conf.set("queue.buffering.max.ms", "500");
-
-        let admin_client: AdminClient<DefaultClientContext> =
-            kafka_conf.create().expect("Failed to create admin client");
-
-        // This code block tries to create the topic if it doesn't already exist
-        // ignoring errors that indicate existence.
-        let new_topic = NewTopic::new(
-            &args.kafka_topic,
-            1,
-            rdkafka::admin::TopicReplication::Fixed(1),
-        );
-        let _ = admin_client
-            .create_topics(&[new_topic], &AdminOptions::new())
-            .await;
-
-        // prime the system stats for the first time
-        let mut system_stats = get_system_stats();
         while running_kafka.load(Ordering::SeqCst) {
-            while let Some((mut batch, mut logs, mut images, pid_map, tr101290)) = krx.recv().await
+            while let Some((mut batch, pid_map)) = krx.recv().await
             {
                 debug!("Kafka received PID Map: {:#?}", pid_map);
-                debug!("Kafka TR101290 Errors: {:#?}", tr101290);
 
                 // create a single array structure for all the pids and stream_type_names and numbers to represent
                 // the mpegts stream as an mpegts analyzer would see it
@@ -1064,79 +877,11 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                     });
                 }
 
-                if logs.len() > 0 {
-                    for log in logs.iter() {
-                        log_messages.push(log.clone());
-                        log::info!("Got Log Message: {}", log);
-                    }
-                    logs.clear();
-                }
-
                 // Process and send messages
                 let batch_end = batch.len();
                 let mut batch_pos = 0;
                 for stream_data in batch.iter() {
                     batch_pos += 1;
-                    let mut force_kafka_send = false;
-                    let mut base64_image = String::new();
-
-                    // Check if we have any images to send on the final pid stream grouping
-                    if images.len() > 0 && batch_pos == batch_end {
-                        // Define default ImageData in case `images.pop()` returns None
-                        let default_image_data: ImageData = ImageData {
-                            image: Vec::new(),
-                            pts: 0,
-                            duplicates: 0,
-                            hash: 0,
-                            hamming: 0.0,
-                        };
-
-                        // Attempt to pop an image from the stack, or use the default
-                        let image_data: ImageData = images.pop().unwrap_or(default_image_data);
-
-                        // Now you can directly use the fields from `image_data`
-                        let image_bin = image_data.image;
-                        image_pts = image_data.pts;
-                        duplicates = image_data.duplicates;
-                        hash = image_data.hash;
-                        hamming = image_data.hamming;
-
-                        let output_file_incremental =
-                            format!("{}_{:08}.jpg", output_file_without_jpg, output_file_counter);
-
-                        output_file_counter += 1;
-
-                        let mut output_file_mut = if !args.output_file.is_empty() {
-                            Some(File::create(&output_file_incremental).unwrap())
-                        } else {
-                            None
-                        };
-
-                        // Write to file if output_file is provided
-                        if let Some(file) = output_file_mut.as_mut() {
-                            if !args.no_progress && dot_last_file_write.elapsed().as_secs() > 1 {
-                                log::debug!(
-                                    "Kafka Sender: [{}] Jpeg image saved: {} size {} pts saved to {}",
-                                    probe_id_clone1.clone(),
-                                    image_bin.len(),
-                                    stream_data.capture_time,
-                                    output_file_incremental
-                                );
-
-                                dot_last_file_write = Instant::now();
-                                print!("*");
-                                // flush stdout
-                                std::io::stdout().flush().unwrap();
-                            }
-                            file.write_all(&image_bin).unwrap();
-                        }
-
-                        // Encode the JPEG image as Base64
-                        base64_image = general_purpose::STANDARD.encode::<&[u8]>(&image_bin);
-
-                        // clear the image buffer
-                        images.clear();
-                    }
 
                     let pid = stream_data.pid;
                     {
@@ -1178,12 +923,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                     // Acquire write access to PROBE_DATA and Send to Kafka
                     {
                         let mut probe_data_map = PROBE_DATA.write().unwrap();
-                        if last_system_stats.elapsed().as_millis()
-                            >= args.system_stats_interval as u128
-                        {
-                            last_system_stats = Instant::now();
-                            system_stats = get_system_stats();
-                        }
 
                         // Process each probe's data
                         for (_probe_id, probe_data) in probe_data_map.iter_mut() {
@@ -1200,9 +939,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             let mut stream_count: u64 = 0;
                             let mut source_ip: String = String::new();
                             let mut source_port: u32 = 0;
-                            let mut captions: String = String::new();
-                            let mut scte35: String = String::new();
-                            let mut audio_loudness: String = String::new();
 
                             // Process each stream to accumulate averages
                             for (_, grouping) in stream_groupings.iter() {
@@ -1215,21 +951,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                         stream_data.current_error_count as u64;
                                     source_port = stream_data.source_port as u32;
                                     source_ip = stream_data.source_ip.clone();
-                                    if stream_data.captions != "" {
-                                        // concatenate captions
-                                        captions = format!("{}{}", captions, stream_data.captions);
-                                    }
-                                    if stream_data.scte35 != "" {
-                                        // concatenate scte35
-                                        scte35 = format!("{}{}", scte35, stream_data.scte35);
-                                    }
-                                    if stream_data.audio_loudness != "" {
-                                        // concatenate audio_loudness
-                                        audio_loudness = format!(
-                                            "{}{}",
-                                            audio_loudness, stream_data.audio_loudness
-                                        );
-                                    }
+                                    
                                     stream_count += 1;
                                 }
                             }
@@ -1289,51 +1011,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                 .insert("source_ip".to_string(), serde_json::json!(source_ip));
                             flattened_data
                                 .insert("source_port".to_string(), serde_json::json!(source_port));
-
-                            flattened_data
-                                .insert("captions".to_string(), serde_json::json!(captions));
-
-                            // Insert the base64_image field into the flattened_data map
-                            let base64_image_tag = if !base64_image.is_empty() {
-                                log::debug!("Got Image: {} bytes", base64_image.len());
-
-                                format!("data:image/jpeg;base64,{}", base64_image)
-                            } else {
-                                image_pts = 0;
-                                duplicates = 0;
-                                hash = 0;
-                                hamming = 0.0;
-
-                                "".to_string()
-                            };
-                            flattened_data
-                                .insert("image_pts".to_string(), serde_json::json!(image_pts));
-                            flattened_data.insert(
-                                "base64_image".to_string(),
-                                serde_json::json!(base64_image_tag),
-                            );
-                            // add image_pts, duplicates, hash, and hamming to the flattened_data map
-                            flattened_data
-                                .insert("duplicates".to_string(), serde_json::json!(duplicates));
-                            flattened_data.insert("hash".to_string(), serde_json::json!(hash));
-                            flattened_data
-                                .insert("hamming".to_string(), serde_json::json!(hamming));
-
-                            // Check if we have a log_message in log_messages Vector, if so add it to the flattened_data map
-                            if log_messages.len() > 0 {
-                                // remove one log message from the log_messages array
-                                let log_message = log_messages.pop().unwrap();
-                                flattened_data.insert(
-                                    "log_message".to_string(),
-                                    serde_json::json!(log_message),
-                                );
-                                // set force_kafka_send to true to force sending the log_message to kafka
-                                force_kafka_send = true;
-                            } else {
-                                flattened_data
-                                    .insert("log_message".to_string(), serde_json::json!(""));
-                            }
-
                             flattened_data
                                 .insert("id".to_string(), serde_json::json!(probe_id_clone2));
                             flattened_data
@@ -1364,166 +1041,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                 flattened_data.insert(bitrate_field, serde_json::json!(bitrate));
                             }
 
-                            flattened_data.insert(
-                                "tr101290_cat_errors".to_string(),
-                                serde_json::json!(tr101290.cat_errors),
-                            );
-                            flattened_data.insert(
-                                "tr101290_continuity_counter_errors".to_string(),
-                                serde_json::json!(tr101290.continuity_counter_errors),
-                            );
-                            flattened_data.insert(
-                                "tr101290_crc_errors".to_string(),
-                                serde_json::json!(tr101290.crc_errors),
-                            );
-                            flattened_data.insert(
-                                "tr101290_pat_errors".to_string(),
-                                serde_json::json!(tr101290.pat_errors),
-                            );
-                            flattened_data.insert(
-                                "tr101290_pcr_accuracy_errors".to_string(),
-                                serde_json::json!(tr101290.pcr_accuracy_errors),
-                            );
-                            flattened_data.insert(
-                                "tr101290_pcr_discontinuity_indicator_errors".to_string(),
-                                serde_json::json!(tr101290.pcr_discontinuity_indicator_errors),
-                            );
-                            flattened_data.insert(
-                                "tr101290_pcr_repetition_errors".to_string(),
-                                serde_json::json!(tr101290.pcr_repetition_errors),
-                            );
-                            flattened_data.insert(
-                                "tr101290_pid_map_errors".to_string(),
-                                serde_json::json!(tr101290.pid_map_errors),
-                            );
-                            flattened_data.insert(
-                                "tr101290_pmt_errors".to_string(),
-                                serde_json::json!(tr101290.pmt_errors),
-                            );
-                            flattened_data.insert(
-                                "tr101290_pts_errors".to_string(),
-                                serde_json::json!(tr101290.pts_errors),
-                            );
-                            flattened_data.insert(
-                                "tr101290_transport_error_indicator_errors".to_string(),
-                                serde_json::json!(tr101290.transport_error_indicator_errors),
-                            );
-                            flattened_data.insert(
-                                "tr101290_ts_sync_byte_errors".to_string(),
-                                serde_json::json!(tr101290.ts_sync_byte_errors),
-                            );
-
-                            flattened_data.insert("scte35".to_string(), serde_json::json!(scte35));
-                            flattened_data.insert(
-                                "audio_loudness".to_string(),
-                                serde_json::json!(audio_loudness),
-                            );
-
-                            // Add system stats fields to the flattened structure
-                            flattened_data
-                                .insert(format!("total_memory"), json!(system_stats.total_memory));
-                            flattened_data
-                                .insert(format!("used_memory"), json!(system_stats.used_memory));
-                            flattened_data
-                                .insert(format!("total_swap"), json!(system_stats.total_swap));
-                            flattened_data
-                                .insert(format!("used_swap"), json!(system_stats.used_swap));
-                            flattened_data
-                                .insert(format!("cpu_usage"), json!(system_stats.cpu_usage));
-                            flattened_data
-                                .insert(format!("cpu_count"), json!(system_stats.cpu_count));
-                            flattened_data
-                                .insert(format!("core_count"), json!(system_stats.core_count));
-                            flattened_data
-                                .insert(format!("boot_time"), json!(system_stats.boot_time));
-                            flattened_data
-                                .insert(format!("load_avg_one"), json!(system_stats.load_avg.one));
-                            flattened_data.insert(
-                                format!("load_avg_five"),
-                                json!(system_stats.load_avg.five),
-                            );
-                            flattened_data.insert(
-                                format!("load_avg_fifteen"),
-                                json!(system_stats.load_avg.fifteen),
-                            );
-                            flattened_data
-                                .insert(format!("host_name"), json!(system_stats.host_name));
-                            flattened_data.insert(
-                                format!("kernel_version"),
-                                json!(system_stats.kernel_version),
-                            );
-                            flattened_data
-                                .insert(format!("os_version"), json!(system_stats.os_version));
-
-                            flattened_data.insert(
-                                format!("process_count"),
-                                json!(system_stats.process_count),
-                            );
-                            flattened_data.insert(format!("uptime"), json!(system_stats.uptime));
-                            flattened_data
-                                .insert(format!("system_name"), json!(system_stats.system_name));
-
-                            // Flatten the network stats and insert them into the structure
-                            for network in &system_stats.network_stats {
-                                flattened_data.insert(
-                                    format!("network.{}.received", network.name),
-                                    json!(network.received),
-                                );
-                                flattened_data.insert(
-                                    format!("network.{}.transmitted", network.name),
-                                    json!(network.transmitted),
-                                );
-                                flattened_data.insert(
-                                    format!("network.{}.packets_received", network.name),
-                                    json!(network.packets_received),
-                                );
-                                flattened_data.insert(
-                                    format!("network.{}.packets_transmitted", network.name),
-                                    json!(network.packets_transmitted),
-                                );
-                                flattened_data.insert(
-                                    format!("network.{}.errors_on_received", network.name),
-                                    json!(network.errors_on_received),
-                                );
-                                flattened_data.insert(
-                                    format!("network.{}.errors_on_transmitted", network.name),
-                                    json!(network.errors_on_transmitted),
-                                );
-                            }
-
-                            // Flatten the disk stats and insert them into the structure
-                            for (i, disk) in system_stats.disk_stats.iter().enumerate() {
-                                flattened_data
-                                    .insert(format!("disk_stats.{}.name", i), json!(disk.name));
-                                flattened_data.insert(
-                                    format!("disk_stats.{}.total_space", i),
-                                    json!(disk.total_space),
-                                );
-                                flattened_data.insert(
-                                    format!("disk_stats.{}.available_space", i),
-                                    json!(disk.available_space),
-                                );
-                                flattened_data.insert(
-                                    format!("disk_stats.{}.is_removable", i),
-                                    json!(disk.is_removable),
-                                );
-                            }
-
-                            let processes: Vec<String> = system_stats
-                                    .processes
-                                    .iter()
-                                    .filter(|process| {
-                                        process.cpu_usage > cpu_threshold || process.memory > ram_threshold
-                                    })
-                                    .map(|process| {
-                                        format!(
-                                            "{{\"name\":\"{}\",\"pid\":{},\"cpu_usage\":{},\"memory\":{},\"virtual_memory\":{},\"start_time\":{}}}",
-                                            process.name, process.pid, process.cpu_usage, process.memory, process.virtual_memory, process.start_time
-                                        )
-                                    })
-                                    .collect();
-
-                            flattened_data.insert(format!("processes"), json!(processes));
 
                             // Merge the probe-specific flattened data with the global data
                             flattened_data.extend(probe_data.global_data.clone());
@@ -1540,19 +1057,17 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                     }
 
                     // Inside the loop
-                    for (_probe_id, probe_data) in averaged_probe_data.iter() {
-                        if !force_kafka_send && batch_pos != batch_end {
+                    for (_probe_id, _probe_data) in averaged_probe_data.iter() {
+                        if batch_pos != batch_end {
                             continue;
                         }
-                        let json_data = serde_json::to_string(probe_data)
-                            .expect("Failed to serialize probe data for Kafka");
+                        // TODO: Add collector send here
 
-                        // Clone the values before moving them into the async block
-                        let kafka_conf_clone = kafka_conf.clone();
-                        let kafka_topic_clone = kafka_topic_clone1.clone();
-                        let kafka_key_clone = args.kafka_key.clone();
+                        //let json_data = serde_json::to_string(probe_data)
+                        //    .expect("Failed to serialize probe data for Kafka");
 
-                        tokio::spawn(async move {
+
+                        /*tokio::spawn(async move {
                             let producer_local = create_kafka_producer(&kafka_conf_clone).await;
                             let timeout = Duration::from_secs(30);
                             let retry_attempts = 3;
@@ -1571,7 +1086,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             {
                                 log::error!("Failed to send message to Kafka: {:?}", e);
                             }
-                        });
+                        });*/
                     }
                 }
                 batch.clear();
@@ -1580,90 +1095,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
     });
-
-    // Create channels for sending video packets and receiving images
-    #[cfg(feature = "gst")]
-    let (video_packet_sender, video_packet_receiver) = mpsc::channel(args.video_buffer_size);
-    #[cfg(feature = "gst")]
-    let (image_sender, mut image_receiver) = mpsc::channel(args.image_buffer_size);
-
-    // Initialize GStreamer
-    #[cfg(feature = "gst")]
-    gstreamer::init().expect("Failed to initialize GStreamer");
-
-    // Initialize the pipeline
-    #[cfg(feature = "gst")]
-    let (pipeline, appsrc, appsink) = match initialize_pipeline(
-        &args.input_codec,
-        args.image_height,
-        args.gst_queue_buffers,
-        !args.scale_images_after_gstreamer,
-        &args.image_framerate,
-        args.extract_images,
-    ) {
-        Ok((pipeline, appsrc, appsink)) => (pipeline, appsrc, appsink),
-        Err(err) => {
-            eprintln!("Failed to initialize the pipeline: {}", err);
-            return;
-        }
-    };
-
-    // Start the pipeline
-    #[cfg(feature = "gst")]
-    if args.extract_images {
-        match pipeline.set_state(gst::State::Playing) {
-            Ok(_) => (),
-            Err(err) => {
-                eprintln!("Failed to set the pipeline state to Playing: {}", err);
-                return;
-            }
-        }
-    }
-
-    // Spawn separate tasks for processing video packets and pulling images
-    #[cfg(feature = "gst")]
-    if args.extract_images {
-        process_video_packets(
-            appsrc,
-            video_packet_receiver,
-            running_gstreamer_process.clone(),
-        );
-    }
-    #[cfg(feature = "gst")]
-    if args.extract_images {
-        pull_images(
-            appsink,
-            image_sender,
-            args.save_images,
-            args.image_sample_rate_ns,
-            args.image_height,
-            args.filmstrip_length,
-            args.jpeg_quality,
-            args.image_frame_increment,
-            args.extract_captions,
-            running_gstreamer_pull,
-        );
-    }
-
-    // Watch file thread and sender/receiver for log file input
-    let (watch_file_sender, watch_file_receiver) = channel();
-    let watch_file_sender_clone = watch_file_sender.clone();
-
-    if args.watch_file != "" {
-        let watch_file_clone = args.watch_file.clone();
-        thread::spawn(move || {
-            watch_daemon(
-                &watch_file_clone,
-                watch_file_sender_clone,
-                running_watch_file,
-            );
-        });
-    } else {
-        info!("No watch file provided, skipping watch file thread.");
-    }
-
-    // Perform TR 101 290 checks
-    let mut tr101290_errors = Tr101290Errors::new();
 
     // start time
     let start_time = current_unix_timestamp_ms().unwrap_or(0);
@@ -1690,12 +1121,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
     let mut dot_last_sent_ts = Instant::now();
     let mut x_last_sent_ts = Instant::now();
-
-    // vector of images and logs
-    let mut images: Vec<ImageData> = Vec::new();
-
-    let mut logs = Vec::<String>::new();
-
+    
     let mut last_kafka_send_time = Instant::now();
 
     loop {
@@ -1835,63 +1261,9 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                     // Check for TR 101 290 errors
                     process_packet(
                         &mut stream_data,
-                        &mut tr101290_errors,
                         pmt_info.pid,
                         probe_id_clone.clone(),
                     );
-
-                    // Check if this is a video PID and if so parse NALS and decode video
-                    // Process video packets
-                    #[cfg(feature = "gst")]
-                    if args.extract_images {
-                        #[cfg(feature = "gst")]
-                        let video_packet = Arc::new(
-                            stream_data.packet[stream_data.packet_start
-                                ..stream_data.packet_start + stream_data.packet_len]
-                                .to_vec(),
-                        );
-
-                        // Send the video packet to the processing task
-                        if let Err(_) = video_packet_sender
-                            .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
-                        {
-                            // If the channel is full, drop the packet
-                            log::warn!("Video packet channel is full. Dropping packet.");
-                        }
-
-                        // Receive and process images
-                        #[cfg(feature = "gst")]
-                        if let Ok((image_data, pts, duplicates, hash, hamming)) =
-                            image_receiver.try_recv()
-                        {
-                            log::info!(
-                                "Probe: [{}] Received jpeg image of {} bytes repeated[{}] perceptual hash[{:016X}] hamming difference[{}].",
-                                pts,
-                                image_data.len(),
-                                duplicates,
-                                hash,
-                                hamming,
-                            );
-
-                            // Process the received image data
-                            images.push(ImageData {
-                                image: image_data,
-                                pts: pts,
-                                duplicates: duplicates,
-                                hash: hash,
-                                hamming: hamming,
-                            });
-                        }
-                    }
-
-                    // Watch file
-                    if args.watch_file != "" {
-                        if let Ok(line) = watch_file_receiver.try_recv() {
-                            info!("WatchFile Received line: {}", line);
-                            // push line into logs vector
-                            logs.push(line.clone());
-                        }
-                    }
 
                     // release the packet Arc so it can be reused
                     stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
@@ -1903,8 +1275,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         // If Kafka is not enabled, print the batch to stdout
                         // Print the batch to stdout
                         log::debug!("Stream data: {:?}", stream_data);
-                        images = Vec::new(); // Reset the images
-                        logs = Vec::new(); // Reset the logs
                     } else if last_kafka_send_time.elapsed().as_millis()
                         >= args.kafka_interval as u128
                     {
@@ -1925,10 +1295,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         if ktx_clone1
                             .send((
                                 batch.clone(),
-                                logs.clone(),
-                                images.clone(),
                                 pid_map.clone(),
-                                tr101290_errors.clone(),
                             ))
                             .await
                             .is_err()
@@ -1936,9 +1303,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             // If the channel is full, drop the batch and log a warning
                             log::warn!("Batch channel is full. Dropping batch.");
                         }
-                        images = Vec::new(); // Reset the images
-                        logs = Vec::new(); // Reset the logs
-                                           // Update last send time
+                        // Update last send time
                         last_kafka_send_time = Instant::now();
                     }
                 }
@@ -1968,26 +1333,10 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
     println!("\nSending stop signals to threads...");
 
-    // Stop the pipeline when done
-    #[cfg(feature = "gst")]
-    if args.extract_images {
-        match pipeline.set_state(gst::State::Null) {
-            Ok(_) => (),
-            Err(err) => {
-                eprintln!("Failed to set the pipeline state to Null: {}", err);
-            }
-        }
-    }
-
-    println!("\nWaiting for threads to finish...");
-
     // Send Kafka stop signal
     let _ = ktx_clone2.try_send((
         Vec::new(),
-        Vec::new(),
-        Vec::new(),
         AHashMap::new(),
-        Tr101290Errors::new(),
     ));
     drop(ktx_clone2);
 
