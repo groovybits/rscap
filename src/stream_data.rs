@@ -493,39 +493,38 @@ pub fn process_packet(stream_data_packet: &mut StreamData, pmt_pid: u16, probe_i
     match pid_map.get_mut(&pid) {
         Some(stream_data_arc) => {
             // Existing StreamData instance found, update it
-            let mut stream_data = Arc::clone(stream_data_arc);
-            Arc::make_mut(&mut stream_data).update_capture_time(stream_data_packet.capture_time);
-            Arc::make_mut(&mut stream_data)
-                .update_stream_type_number(stream_data_packet.stream_type_number);
-            Arc::make_mut(&mut stream_data).update_stats(packet.len());
-            Arc::make_mut(&mut stream_data).update_capture_iat(stream_data_packet.capture_iat);
+            let stream_data = Arc::make_mut(stream_data_arc);
+            stream_data.update_capture_time(stream_data_packet.capture_time);
+            stream_data.update_stream_type_number(stream_data_packet.stream_type_number);
+            stream_data.update_stats(packet.len());
+            stream_data.update_capture_iat(stream_data_packet.capture_iat);
             if stream_data.pid != 0x1FFF {
-                Arc::make_mut(&mut stream_data)
-                    .set_continuity_counter(stream_data_packet.continuity_counter);
+                stream_data.set_continuity_counter(stream_data_packet.continuity_counter);
             }
 
             if stream_data_packet.timestamp != 0 {
-                Arc::make_mut(&mut stream_data).timestamp = stream_data_packet.timestamp;
+                stream_data.timestamp = stream_data_packet.timestamp;
             }
 
-            // update the pmt_pid from the stream_data_packet to stream_data
-            Arc::make_mut(&mut stream_data).pmt_pid = pmt_pid;
+            // Update the pmt_pid from the stream_data_packet to stream_data
+            stream_data.pmt_pid = pmt_pid;
 
-            // update the program_number from the stream_data_packet to stream_data
-            Arc::make_mut(&mut stream_data).program_number = stream_data_packet.program_number;
+            // Update the program_number from the stream_data_packet to stream_data
+            stream_data.program_number = stream_data_packet.program_number;
 
-            // write the current pts and pcr values to the stream_data
-            Arc::make_mut(&mut stream_data).pts = stream_data_packet.pts;
-            Arc::make_mut(&mut stream_data).pcr = stream_data_packet.pcr;
+            // Write the current pts and pcr values to the stream_data
+            stream_data.pts = stream_data_packet.pts;
+            stream_data.pcr = stream_data_packet.pcr;
 
-            // print out each field of structure
+            // Print out each field of the structure
             debug!("Modify PID: process_packet [{}] pid: {} stream_type: {} bitrate: {} bitrate_max: {} bitrate_min: {} bitrate_avg: {} iat: {} iat_max: {} iat_min: {} iat_avg: {} errors: {} continuity_counter: {} timestamp: {} uptime: {} packet_offset: {}, packet_len: {}",
                 stream_data.program_number, stream_data.pid, stream_data.stream_type,
                 stream_data.bitrate, stream_data.bitrate_max, stream_data.bitrate_min,
                 stream_data.bitrate_avg, stream_data.iat, stream_data.iat_max, stream_data.iat_min,
                 stream_data.iat_avg, stream_data.error_count, stream_data.continuity_counter,
-                stream_data.timestamp, 0/*uptime*/, stream_data_packet.packet_start, stream_data_packet.packet_len);
+                stream_data.timestamp, 0 /*uptime*/, stream_data_packet.packet_start, stream_data_packet.packet_len);
 
+            // Update the stream_data_packet with the stream_data values
             stream_data_packet.bitrate = stream_data.bitrate;
             stream_data_packet.bitrate_avg = stream_data.bitrate_avg;
             stream_data_packet.bitrate_max = stream_data.bitrate_max;
@@ -550,8 +549,7 @@ pub fn process_packet(stream_data_packet: &mut StreamData, pmt_pid: u16, probe_i
             }
             stream_data_packet.probe_id = probe_id.clone();
 
-            // write the stream_data back to the pid_map with modified values
-            pid_map.insert(pid, stream_data);
+            // No need to insert it back; it's already mutable and in place.
         }
         None => {
             // No StreamData instance found for this PID, possibly no PMT yet
@@ -559,8 +557,7 @@ pub fn process_packet(stream_data_packet: &mut StreamData, pmt_pid: u16, probe_i
                 debug!("ProcessPacket: New PID {} Found, adding to PID map.", pid);
             } else {
                 // PMT packet not found yet, add the stream_data_packet to the pid_map
-                // OS and Network stats
-                let mut stream_data = Arc::new(StreamData::new(
+                let mut new_stream_data = Arc::new(StreamData::new(
                     Arc::new(Vec::new()), // Ensure packet_data is Arc<Vec<u8>>
                     0,
                     0,
@@ -577,26 +574,29 @@ pub fn process_packet(stream_data_packet: &mut StreamData, pmt_pid: u16, probe_i
                     stream_data_packet.source_port,
                     probe_id.clone(),
                 ));
-                Arc::make_mut(&mut stream_data).update_stats(packet.len());
-                Arc::make_mut(&mut stream_data).update_capture_iat(stream_data_packet.capture_iat);
-                // update continuity counter
+
+                // Update statistics
+                Arc::make_mut(&mut new_stream_data).update_stats(packet.len());
+                Arc::make_mut(&mut new_stream_data)
+                    .update_capture_iat(stream_data_packet.capture_iat);
                 if stream_data_packet.pid != 0x1FFF {
-                    Arc::make_mut(&mut stream_data)
+                    Arc::make_mut(&mut new_stream_data)
                         .set_continuity_counter(stream_data_packet.continuity_counter);
                 }
 
                 info!(
                     "[{}] Adding PID: {} [{}][{}][{}] StreamType: [{}] {}",
-                    stream_data.program_number,
-                    stream_data.pid,
-                    stream_data.capture_time,
-                    stream_data.capture_iat,
-                    stream_data.continuity_counter,
-                    stream_data.stream_type_number,
-                    stream_data.stream_type
+                    new_stream_data.program_number,
+                    new_stream_data.pid,
+                    new_stream_data.capture_time,
+                    new_stream_data.capture_iat,
+                    new_stream_data.continuity_counter,
+                    new_stream_data.stream_type_number,
+                    new_stream_data.stream_type
                 );
 
-                pid_map.insert(pid, stream_data);
+                // Insert the Arc-wrapped StreamData into the map
+                pid_map.insert(pid, new_stream_data);
             }
         }
     }

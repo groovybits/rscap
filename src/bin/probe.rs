@@ -839,7 +839,9 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                         current_iat_avg = stream_data.capture_iat;
                                         iat_count += 1;
                                     }
-                                    if stream_data.capture_iat_max > 0 && stream_data.capture_iat_max > iat_max {
+                                    if stream_data.capture_iat_max > 0
+                                        && stream_data.capture_iat_max > iat_max
+                                    {
                                         iat_max = stream_data.capture_iat_max;
                                     }
                                     total_cc_errors += stream_data.error_count as u64;
@@ -892,11 +894,9 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                 "current_iat_avg_global".to_string(),
                                 serde_json::json!(global_current_iat_avg),
                             );
-                        
-                            flattened_data.insert(
-                                "iat_max_global".to_string(),
-                                serde_json::json!(iat_max),
-                            );
+
+                            flattened_data
+                                .insert("iat_max_global".to_string(), serde_json::json!(iat_max));
 
                             flattened_data.insert(
                                 "cc_errors_global".to_string(),
@@ -1165,7 +1165,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         );
                     }
 
-                    // Check for TR 101 290 errors
+                    // Process the packet
                     process_packet(&mut stream_data, pmt_info.pid, probe_id_clone.clone());
 
                     // release the packet Arc so it can be reused
