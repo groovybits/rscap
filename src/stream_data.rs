@@ -14,7 +14,7 @@ use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fmt, sync::Arc, sync::Mutex};
 
-const IAT_CAPTURE_WINDOW_SIZE: usize = 100;
+const IAT_CAPTURE_WINDOW_SIZE: usize = 3;
 
 lazy_static! {
     static ref PID_MAP: RwLock<AHashMap<u16, Arc<StreamData>>> = RwLock::new(AHashMap::new());
