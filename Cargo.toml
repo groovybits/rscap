@@ -1,6 +1,6 @@
 [package]
-name = "rscap"
-description = "MpegTS Stream Analysis Probe for PID MAP information"
+name = "rs_pid_mapper"
+description = "MpegTS Stream Analysis PCAP Probe for PID MAP information"
 keywords = ["broadcast", "mpegts", "pcap"]
 categories = ["command-line-utilities"]
 readme = "README.md"

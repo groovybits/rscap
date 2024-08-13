@@ -19,10 +19,6 @@ if [ -f ".env" ]; then
     source "./.env"
 fi
 
-if [ "$OUTPUT_FILE" == "" ]; then
-    OUTPUT_FILE=images/test.jpg
-fi
-
 if [ "$KAFKA_BROKER" == "" ]; then
     KAFKA_BROKER=localhost:9092
 fi
@@ -33,9 +29,6 @@ fi
 
 if [ "$BUILD" == "" ]; then
     BUILD=release-with-debug
-fi
-if [ "$GST_DEBUG_LEVEL" == "" ]; then
-    GST_DEBUG_LEVEL=1
 fi
 if [ "$SOURCE_IP" == "" ]; then
     SOURCE_IP=224.0.0.200
@@ -55,9 +48,6 @@ else
     exit 1
 fi
 
-EXTRACT_IMAGES_ARG=
-#EXTRACT_IMAGES_ARG=--extract-images
-
 echo "Using $PROBE_BIN"
 
 $PROBE_BIN -V
@@ -67,7 +57,6 @@ $PROBE_BIN -V
 CPU_BIND=0
 MEM_BIND=0
 # NUMACTL="numactl --cpubind=$CPU_BIND --membind=$MEM_BIND"
-#    --kafka-broker $KAFKA_BROKER \
 
 #run_command \ #FIXME 
 GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
@@ -76,11 +65,11 @@ GST_PLUGIN_PATH=$GST_PLUGIN_PATH \
     RUST_BACKTRACE=$BACKTRACE \
     RUST_LOG=$RUST_LOG \
     $VALGRIND $NUMACTL $PROBE_BIN \
-    $EXTRACT_IMAGES_ARG \
     --source-device $SOURCE_DEVICE \
     --pcap-stats \
     --source-ip $SOURCE_IP \
     --source-port $SOURCE_PORT \
     --kafka-topic "rsprobe" \
+    --kafka-broker $KAFKA_BROKER \
     --output-file $OUTPUT_FILE \
     $@

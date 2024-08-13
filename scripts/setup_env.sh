@@ -1,5 +1,4 @@
 export PREFIX=/opt/rsprobe
-export GST_PLUGIN_PATH=$PREFIX/lib64/gstreamer-1.0
 export LD_LIBRARY_PATH=$PREFIX/lib64:$PREFIX/lib:$LD_LIBRARY_PATH
 export PATH=$PREFIX/bin:$PATH
 
