@@ -443,6 +443,10 @@ struct Args {
     /// Dump Packets - Dump packets to the console in hex
     #[clap(long, env = "DUMP_PACKETS", default_value_t = false)]
     dump_packets: bool,
+
+    /// Remove stale streams - Clear any streams that have not been updated in the last N seconds
+    #[clap(long, env = "REMOVE_STALE_STREAMS", default_value_t = 0)]
+    remove_stale_streams: u64,
 }
 
 // MAIN Function
@@ -711,6 +715,10 @@ async fn rsprobe(running: Arc<AtomicBool>) {
             return;
         }
 
+        let mut iat_max: u64 = 0;
+        let mut iat_avg: u64 = 0;
+        let mut iat_count: u64 = 0;
+
         while running_kafka.load(Ordering::SeqCst) {
             while let Some((mut batch, pid_map)) = krx.recv().await {
                 debug!("Kafka received PID Map: {:#?}", pid_map);
@@ -815,20 +823,25 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
                             // Initialize variables to accumulate global averages
                             let mut total_bitrate_avg: u64 = 0;
-                            let mut total_iat_avg: u64 = 0;
-                            let mut total_iat_max: u64 = 0;
                             let mut total_cc_errors: u64 = 0;
                             let mut total_cc_errors_current: u64 = 0;
                             let mut stream_count: u64 = 0;
                             let mut source_ip: String = String::new();
                             let mut source_port: u32 = 0;
+                            let mut current_iat_avg: u64 = 0;
 
                             // Process each stream to accumulate averages
                             for (_, grouping) in stream_groupings.iter() {
                                 for stream_data in &grouping.stream_data_list {
                                     total_bitrate_avg += stream_data.bitrate_avg as u64;
-                                    total_iat_avg += stream_data.capture_iat;
-                                    total_iat_max += stream_data.capture_iat_max;
+                                    if stream_data.capture_iat > 0 {
+                                        iat_avg += stream_data.capture_iat;
+                                        current_iat_avg = stream_data.capture_iat;
+                                        iat_count += 1;
+                                    }
+                                    if stream_data.capture_iat_max > 0 && stream_data.capture_iat_max > iat_max {
+                                        iat_max = stream_data.capture_iat_max;
+                                    }
                                     total_cc_errors += stream_data.error_count as u64;
                                     total_cc_errors_current +=
                                         stream_data.current_error_count as u64;
@@ -843,16 +856,16 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                             let global_cc_errors = total_cc_errors;
                             let global_cc_errors_current = total_cc_errors_current;
 
-                            // avg IAT
-                            let global_iat_avg = if stream_count > 0 {
-                                total_iat_avg as f64 / stream_count as f64
+                            // long-running avg IAT
+                            let global_iat_avg = if iat_count > 0 {
+                                iat_avg as f64 / iat_count as f64
                             } else {
                                 0.0
                             };
 
-                            // max IAT
-                            let global_iat_max = if stream_count > 0 {
-                                total_iat_max as f64 / stream_count as f64
+                            // current avg IAT
+                            let global_current_iat_avg = if iat_count > 0 {
+                                current_iat_avg as f64 / stream_count as f64
                             } else {
                                 0.0
                             };
@@ -874,10 +887,17 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                 "iat_avg_global".to_string(),
                                 serde_json::json!(global_iat_avg),
                             );
+
+                            flattened_data.insert(
+                                "current_iat_avg_global".to_string(),
+                                serde_json::json!(global_current_iat_avg),
+                            );
+                        
                             flattened_data.insert(
                                 "iat_max_global".to_string(),
-                                serde_json::json!(global_iat_max),
+                                serde_json::json!(iat_max),
                             );
+
                             flattened_data.insert(
                                 "cc_errors_global".to_string(),
                                 serde_json::json!(global_cc_errors),
@@ -1074,7 +1094,9 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                     pmt_pid = Some(pid);
                                 }
                                 // Update PID_MAP with new stream types
-                                cleanup_stale_streams();
+                                if args.remove_stale_streams > 0 {
+                                    cleanup_stale_streams(args.remove_stale_streams.clone());
+                                }
                                 let program_number_result = update_pid_map(
                                     &packet_chunk,
                                     &pmt_info.packet,

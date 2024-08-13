@@ -9,18 +9,12 @@ use ahash::AHashMap;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
 use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::{fmt, sync::Arc, sync::Mutex};
-
-const IAT_CAPTURE_WINDOW_SIZE: usize = 3;
+use std::{fmt, sync::Arc};
 
 lazy_static! {
     static ref PID_MAP: RwLock<AHashMap<u16, Arc<StreamData>>> = RwLock::new(AHashMap::new());
-    static ref IAT_CAPTURE_WINDOW: Mutex<VecDeque<u64>> =
-        Mutex::new(VecDeque::with_capacity(IAT_CAPTURE_WINDOW_SIZE));
-    static ref IAT_CAPTURE_PEAK: Mutex<u64> = Mutex::new(0);
 }
 
 // constant for PAT PID
@@ -127,9 +121,9 @@ impl Clone for StreamData {
             total_bits: self.total_bits,
             total_bits_sample: self.total_bits_sample,
             count: self.count,
-            packet: Arc::clone(&self.packet),
-            packet_start: self.packet_start,
-            packet_len: self.packet_len,
+            packet: Arc::new(Vec::new()), // Initialize as empty with Arc
+            packet_start: 0,
+            packet_len: 0,
             stream_type_number: self.stream_type_number,
             capture_time: self.capture_time,
             capture_iat: self.capture_iat,
@@ -224,32 +218,13 @@ impl StreamData {
     pub fn update_capture_iat(&mut self, capture_iat: u64) {
         self.capture_iat = capture_iat;
 
-        // Store the IAT capture value in the global rolling window
-        let mut iat_capture_window = IAT_CAPTURE_WINDOW.lock().unwrap();
-        iat_capture_window.push_back(capture_iat);
-        if iat_capture_window.len() > IAT_CAPTURE_WINDOW_SIZE {
-            iat_capture_window.pop_front();
-        }
-
-        // Calculate the peak IAT within the global rolling window
-        let peak_iat = *iat_capture_window.iter().max().unwrap_or(&0);
-        *IAT_CAPTURE_PEAK.lock().unwrap() = peak_iat;
-
         // Update the capture_iat_max field based on the peak IAT value
-        if peak_iat > self.capture_iat_max {
-            self.capture_iat_max = peak_iat;
-        } else if peak_iat < self.capture_iat_max {
+        if capture_iat > self.capture_iat_max {
+            self.capture_iat_max = capture_iat;
+        } else if capture_iat < self.capture_iat_max {
             // If the peak IAT value is less than the current capture_iat_max,
             // update capture_iat_max to the new peak value
-            self.capture_iat_max = peak_iat;
-        }
-
-        // If the global rolling window is full and the oldest value is equal to capture_iat_max,
-        // recalculate capture_iat_max by finding the new maximum value in the window
-        if iat_capture_window.len() == IAT_CAPTURE_WINDOW_SIZE
-            && *iat_capture_window.front().unwrap() == self.capture_iat_max
-        {
-            self.capture_iat_max = *iat_capture_window.iter().max().unwrap_or(&0);
+            self.capture_iat_max = capture_iat;
         }
     }
     pub fn update_source_ip(&mut self, source_ip: String) {
@@ -357,11 +332,11 @@ impl StreamData {
                     }
 
                     // Adjustments specific to IAT max startup handling
-                    if iat < self.iat_min {
+                    if iat < self.iat_min && iat > 0 {
                         self.iat_min = iat;
                     }
                 } else {
-                    if (self.iat_min > iat) || (self.count == 1) {
+                    if (self.iat_min > iat && iat > 0) || (self.count == 1) {
                         self.iat_min = iat;
                     }
                     self.iat_max = 0;
@@ -627,19 +602,17 @@ pub fn process_packet(stream_data_packet: &mut StreamData, pmt_pid: u16, probe_i
     }
 }
 
-pub fn cleanup_stale_streams() {
+pub fn cleanup_stale_streams(max_age: u64) {
     let current_time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("Time went backwards")
         .as_millis() as u64;
 
-    let one_minute = 60_000; // 1 minute in milliseconds
-
     let mut pid_map = PID_MAP.write().unwrap();
     let stale_pids: Vec<u16> = pid_map
         .iter()
         .filter_map(|(&pid, stream_data)| {
-            if current_time.saturating_sub(stream_data.last_arrival_time) > one_minute {
+            if current_time.saturating_sub(stream_data.last_arrival_time) > max_age {
                 Some(pid)
             } else {
                 None
