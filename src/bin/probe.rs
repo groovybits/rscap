@@ -27,7 +27,7 @@ use rsprobe::stream_data::{
 };
 use rsprobe::{current_unix_timestamp_ms, hexdump};
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::sync::RwLock;
 use std::{
     error::Error as StdError,
@@ -62,118 +62,6 @@ struct PidStreamType {
     media_type: String, // audio, video, data
     ccerrors: u32,
     bitrate: u64,
-}
-
-fn flatten_streams(
-    stream_groupings: &AHashMap<u16, StreamGrouping>,
-    probe_id: String,
-) -> serde_json::Map<String, Value> {
-    let mut flat_structure: serde_json::Map<String, Value> = serde_json::Map::new();
-
-    for (pid, grouping) in stream_groupings.iter() {
-        let stream_data = grouping.stream_data_list.last().unwrap(); // Assuming last item is representative
-
-        let prefix = format!("streams.{}", pid);
-
-        flat_structure.insert(format!("{}.id", prefix), json!(probe_id.clone()));
-        flat_structure.insert(
-            format!("{}.program_number", prefix),
-            json!(stream_data.program_number),
-        );
-        flat_structure.insert(format!("{}.pid", prefix), json!(stream_data.pid));
-        flat_structure.insert(format!("{}.pmt_pid", prefix), json!(stream_data.pmt_pid));
-        flat_structure.insert(
-            format!("{}.stream_type", prefix),
-            json!(stream_data.stream_type),
-        );
-        flat_structure.insert(
-            format!("{}.capture_time", prefix),
-            json!(stream_data.capture_time),
-        );
-        flat_structure.insert(
-            format!("{}.capture_iat", prefix),
-            json!(stream_data.capture_iat),
-        );
-        flat_structure.insert(
-            format!("{}.capture_iat_max", prefix),
-            json!(stream_data.capture_iat_max),
-        );
-        flat_structure.insert(format!("{}.iat", prefix), json!(stream_data.iat));
-        flat_structure.insert(format!("{}.iat_max", prefix), json!(stream_data.iat_max));
-        flat_structure.insert(format!("{}.iat_min", prefix), json!(stream_data.iat_min));
-        flat_structure.insert(format!("{}.iat_avg", prefix), json!(stream_data.iat_avg));
-        flat_structure.insert(
-            format!("{}.packet_count", prefix),
-            json!(grouping.stream_data_list.len()),
-        );
-        flat_structure.insert(
-            format!("{}.continuity_counter", prefix),
-            json!(stream_data.continuity_counter),
-        );
-        flat_structure.insert(
-            format!("{}.timestamp", prefix),
-            json!(stream_data.timestamp),
-        );
-        flat_structure.insert(format!("{}.bitrate", prefix), json!(stream_data.bitrate));
-        flat_structure.insert(
-            format!("{}.bitrate_max", prefix),
-            json!(stream_data.bitrate_max),
-        );
-        flat_structure.insert(
-            format!("{}.bitrate_min", prefix),
-            json!(stream_data.bitrate_min),
-        );
-        flat_structure.insert(
-            format!("{}.bitrate_avg", prefix),
-            json!(stream_data.bitrate_avg),
-        );
-        flat_structure.insert(
-            format!("{}.error_count", prefix),
-            json!(stream_data.error_count),
-        );
-        flat_structure.insert(
-            format!("{}.current_error_count", prefix),
-            json!(stream_data.current_error_count),
-        );
-        flat_structure.insert(
-            format!("{}.last_arrival_time", prefix),
-            json!(stream_data.last_arrival_time),
-        );
-        flat_structure.insert(
-            format!("{}.last_sample_time", prefix),
-            json!(stream_data.last_sample_time),
-        );
-        flat_structure.insert(
-            format!("{}.start_time", prefix),
-            json!(stream_data.start_time),
-        );
-        flat_structure.insert(
-            format!("{}.total_bits", prefix),
-            json!(stream_data.total_bits),
-        );
-        flat_structure.insert(
-            format!("{}.total_bits_sample", prefix),
-            json!(stream_data.total_bits_sample),
-        );
-        flat_structure.insert(format!("{}.count", prefix), json!(stream_data.count));
-        flat_structure.insert(
-            format!("{}.packet_start", prefix),
-            json!(stream_data.packet_start),
-        );
-        flat_structure.insert(
-            format!("{}.packet_len", prefix),
-            json!(stream_data.packet_len),
-        );
-        flat_structure.insert(
-            format!("{}.stream_type_number", prefix),
-            json!(stream_data.stream_type_number),
-        );
-        // pcr and pts
-        flat_structure.insert(format!("{}.pcr", prefix), json!(stream_data.pcr));
-        flat_structure.insert(format!("{}.pts", prefix), json!(stream_data.pts));
-    }
-
-    flat_structure
 }
 
 // Define your custom PacketCodec
@@ -803,18 +691,14 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     let mut probe_id = args.probe_id.clone();
     if probe_id_clone.is_empty() {
         // construct stream.source_ip and stream.source_port with stream.host
-        probe_id = format!(
-            "{}:{}",
-            source_ip_clone1, args.source_port
-        );
+        probe_id = format!("{}:{}", source_ip_clone1, args.source_port);
     }
     let probe_id_clone2 = probe_id.clone();
 
     // Setup channel for passing stream_data for Kafka thread sending the stream data to monitor process
-    let (ktx, mut krx) = mpsc::channel::<(
-        Vec<Arc<StreamData>>,
-        AHashMap<u16, Arc<StreamData>>,
-    )>(args.kafka_channel_size);
+    let (ktx, mut krx) = mpsc::channel::<(Vec<Arc<StreamData>>, AHashMap<u16, Arc<StreamData>>)>(
+        args.kafka_channel_size,
+    );
 
     let kafka_broker_clone = args.kafka_broker.clone();
     let kafka_topic_clone = args.kafka_topic.clone();
@@ -828,8 +712,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
         }
 
         while running_kafka.load(Ordering::SeqCst) {
-            while let Some((mut batch, pid_map)) = krx.recv().await
-            {
+            while let Some((mut batch, pid_map)) = krx.recv().await {
                 debug!("Kafka received PID Map: {:#?}", pid_map);
 
                 // create a single array structure for all the pids and stream_type_names and numbers to represent
@@ -927,8 +810,8 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         // Process each probe's data
                         for (_probe_id, probe_data) in probe_data_map.iter_mut() {
                             let stream_groupings = &probe_data.stream_groupings;
-                            let mut flattened_data =
-                                flatten_streams(&stream_groupings, probe_id_clone2.clone());
+                            let mut flattened_data: serde_json::Map<String, Value> =
+                                serde_json::Map::new();
 
                             // Initialize variables to accumulate global averages
                             let mut total_bitrate_avg: u64 = 0;
@@ -951,7 +834,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                         stream_data.current_error_count as u64;
                                     source_port = stream_data.source_port as u32;
                                     source_ip = stream_data.source_ip.clone();
-                                    
+
                                     stream_count += 1;
                                 }
                             }
@@ -1041,7 +924,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                 flattened_data.insert(bitrate_field, serde_json::json!(bitrate));
                             }
 
-
                             // Merge the probe-specific flattened data with the global data
                             flattened_data.extend(probe_data.global_data.clone());
 
@@ -1124,7 +1006,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
     let mut dot_last_sent_ts = Instant::now();
     let mut x_last_sent_ts = Instant::now();
-    
+
     let mut last_kafka_send_time = Instant::now();
 
     loop {
@@ -1262,11 +1144,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                     }
 
                     // Check for TR 101 290 errors
-                    process_packet(
-                        &mut stream_data,
-                        pmt_info.pid,
-                        probe_id_clone.clone(),
-                    );
+                    process_packet(&mut stream_data, pmt_info.pid, probe_id_clone.clone());
 
                     // release the packet Arc so it can be reused
                     stream_data.packet = Arc::new(Vec::new()); // Create a new Arc<Vec<u8>> for the next packet
@@ -1296,10 +1174,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         }
 
                         if ktx_clone1
-                            .send((
-                                batch.clone(),
-                                pid_map.clone(),
-                            ))
+                            .send((batch.clone(), pid_map.clone()))
                             .await
                             .is_err()
                         {
@@ -1337,10 +1212,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     println!("\nSending stop signals to threads...");
 
     // Send Kafka stop signal
-    let _ = ktx_clone2.try_send((
-        Vec::new(),
-        AHashMap::new(),
-    ));
+    let _ = ktx_clone2.try_send((Vec::new(), AHashMap::new()));
     drop(ktx_clone2);
 
     // Wait for the kafka thread to finish

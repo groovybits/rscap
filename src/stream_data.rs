@@ -204,7 +204,7 @@ impl StreamData {
             pcr: 0,
         }
     }
-    
+
     pub fn update_stream_type(&mut self, stream_type: String) {
         self.stream_type = stream_type;
     }
@@ -506,11 +506,7 @@ pub fn parse_pmt(packet: &[u8]) -> Pmt {
 }
 
 // Invoke this function for each MPEG-TS packet
-pub fn process_packet(
-    stream_data_packet: &mut StreamData,
-    pmt_pid: u16,
-    probe_id: String,
-) {
+pub fn process_packet(stream_data_packet: &mut StreamData, pmt_pid: u16, probe_id: String) {
     let packet: &[u8] = &stream_data_packet.packet[stream_data_packet.packet_start
         ..stream_data_packet.packet_start + stream_data_packet.packet_len];
 
