@@ -1057,15 +1057,18 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                     }
 
                     // Inside the loop
-                    for (_probe_id, _probe_data) in averaged_probe_data.iter() {
+                    for (_probe_id, probe_data) in averaged_probe_data.iter() {
                         if batch_pos != batch_end {
                             continue;
                         }
                         // TODO: Add collector send here
 
-                        //let json_data = serde_json::to_string(probe_data)
-                        //    .expect("Failed to serialize probe data for Kafka");
+                        let json_data = serde_json::to_string(probe_data)
+                            .expect("Failed to serialize probe data for Kafka");
 
+                        // print out json_data in a neat way to compare each output easily by humans
+                        println!("{}", json_data);
+                        println!("------------------------------------------------------");
 
                         /*tokio::spawn(async move {
                             let producer_local = create_kafka_producer(&kafka_conf_clone).await;
