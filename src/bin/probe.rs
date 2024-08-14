@@ -882,28 +882,26 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
                             // Directly insert global statistics and timestamp into the flattened_data map
                             flattened_data.insert(
-                                "bitrate_avg_global".to_string(),
+                                "bitrate_avg".to_string(),
                                 serde_json::json!(global_bitrate_avg),
                             );
-                            flattened_data.insert(
-                                "iat_avg_global".to_string(),
-                                serde_json::json!(global_iat_avg),
-                            );
+                            flattened_data
+                                .insert("iat_avg".to_string(), serde_json::json!(global_iat_avg));
 
                             flattened_data.insert(
-                                "current_iat_avg_global".to_string(),
+                                "iat".to_string(),
                                 serde_json::json!(global_current_iat_avg),
                             );
 
                             flattened_data
-                                .insert("iat_max_global".to_string(), serde_json::json!(iat_max));
+                                .insert("iat_max".to_string(), serde_json::json!(iat_max));
 
                             flattened_data.insert(
-                                "cc_errors_global".to_string(),
+                                "cc_errors".to_string(),
                                 serde_json::json!(global_cc_errors),
                             );
                             flattened_data.insert(
-                                "current_cc_errors_global".to_string(),
+                                "current_cc_errors".to_string(),
                                 serde_json::json!(global_cc_errors_current),
                             );
                             flattened_data.insert(
