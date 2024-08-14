@@ -864,7 +864,7 @@ pub fn process_mpegts_packet(
             let stream_type = determine_stream_type(pid);
             let stream_type_number = determine_stream_type_number(pid);
             let stream_program_number = determine_stream_program_number(pid);
-            let timestamp = extract_timestamp(chunk);
+            let timestamp = 0;
             let continuity_counter = chunk[3] & 0x0F;
 
             let mut stream_data = StreamData::new(
@@ -895,29 +895,4 @@ pub fn process_mpegts_packet(
     }
 
     streams
-}
-
-fn extract_timestamp(chunk: &[u8]) -> u64 {
-    let adaptation_field_control = (chunk[3] & 0x30) >> 4;
-
-    if adaptation_field_control == 0b10 || adaptation_field_control == 0b11 {
-        // Adaptation field is present
-        let adaptation_field_length = chunk[4] as usize;
-
-        if adaptation_field_length > 0 && (chunk[5] & 0x10) != 0 {
-            // PCR is present
-            let pcr_base = ((chunk[6] as u64) << 25)
-                | ((chunk[7] as u64) << 17)
-                | ((chunk[8] as u64) << 9)
-                | ((chunk[9] as u64) << 1)
-                | ((chunk[10] as u64) >> 7);
-            let pcr_ext = (((chunk[10] as u64) & 0x01) << 8) | (chunk[11] as u64);
-            let pcr = pcr_base * 300 + pcr_ext;
-            pcr
-        } else {
-            0 // Default value when PCR is not present
-        }
-    } else {
-        0 // Default value when adaptation field is not present
-    }
 }
