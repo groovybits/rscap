@@ -5,15 +5,16 @@
 */
 
 use crate::current_unix_timestamp_ms;
-use dashmap::DashMap;
+use ahash::AHashMap;
 use lazy_static::lazy_static;
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
+use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fmt, sync::Arc};
 
 lazy_static! {
-    static ref PID_MAP: DashMap<u16, Arc<StreamData>> = DashMap::new();
+    static ref PID_MAP: RwLock<AHashMap<u16, Arc<StreamData>>> = RwLock::new(AHashMap::new());
 }
 
 // constant for PAT PID
@@ -486,13 +487,12 @@ pub fn process_packet(stream_data_packet: &mut StreamData, pmt_pid: u16, probe_i
 
     let pid = stream_data_packet.pid;
 
-    // Check if the PID map already has an entry for this PID
-    match PID_MAP.get_mut(&pid) {
-        Some(mut stream_data_entry) => {
-            // Extract the mutable reference to the Arc<StreamData>
-            let stream_data_arc = stream_data_entry.value_mut();
+    let mut pid_map = PID_MAP.write().unwrap();
 
-            // Make a mutable reference to the StreamData inside the Arc
+    // Check if the PID map already has an entry for this PID
+    match pid_map.get_mut(&pid) {
+        Some(stream_data_arc) => {
+            // Existing StreamData instance found, update it
             let stream_data = Arc::make_mut(stream_data_arc);
             stream_data.update_capture_time(stream_data_packet.capture_time);
             stream_data.update_stream_type_number(stream_data_packet.stream_type_number);
@@ -596,7 +596,7 @@ pub fn process_packet(stream_data_packet: &mut StreamData, pmt_pid: u16, probe_i
                 );
 
                 // Insert the Arc-wrapped StreamData into the map
-                PID_MAP.insert(pid, new_stream_data);
+                pid_map.insert(pid, new_stream_data);
             }
         }
     }
@@ -608,12 +608,12 @@ pub fn cleanup_stale_streams(max_age: u64) {
         .expect("Time went backwards")
         .as_millis() as u64;
 
-    let stale_pids: Vec<u16> = PID_MAP
+    let mut pid_map = PID_MAP.write().unwrap();
+    let stale_pids: Vec<u16> = pid_map
         .iter()
-        .filter_map(|entry| {
-            let (pid, stream_data) = entry.pair();
+        .filter_map(|(&pid, stream_data)| {
             if current_time.saturating_sub(stream_data.last_arrival_time) > max_age {
-                Some(*pid)
+                Some(pid)
             } else {
                 None
             }
@@ -621,12 +621,12 @@ pub fn cleanup_stale_streams(max_age: u64) {
         .collect();
 
     for pid in stale_pids {
-        if let Some(removed_stream) = PID_MAP.remove(&pid) {
+        if let Some(removed_stream) = pid_map.remove(&pid) {
             info!(
                 "Removed stale stream: PID {}, Program {}, Last seen {} ms ago",
                 pid,
-                removed_stream.1.program_number,
-                current_time.saturating_sub(removed_stream.1.last_arrival_time)
+                removed_stream.program_number,
+                current_time.saturating_sub(removed_stream.last_arrival_time)
             );
         }
     }
@@ -642,6 +642,7 @@ pub fn update_pid_map(
     source_port: i32,
     probe_id: String,
 ) -> u16 {
+    let mut pid_map = PID_MAP.write().unwrap();
     let mut program_number_result = 0;
 
     // Process the stored PAT packet to find program numbers and corresponding PMT PIDs
@@ -714,7 +715,7 @@ pub fn update_pid_map(
 
                 let timestamp = current_unix_timestamp_ms().unwrap_or(0);
 
-                if !PID_MAP.contains_key(&stream_pid) {
+                if !pid_map.contains_key(&stream_pid) {
                     let mut stream_data = Arc::new(StreamData::new(
                         Arc::new(Vec::new()), // Ensure packet_data is Arc<Vec<u8>>
                         0,
@@ -742,11 +743,11 @@ pub fn update_pid_map(
                         stream_data.pid, stream_data.stream_type, stream_data.stream_type_number,
                         stream_data.continuity_counter);
 
-                    PID_MAP.insert(stream_pid, stream_data);
+                    pid_map.insert(stream_pid, stream_data);
                 } else {
                     // get the stream data so we can update it
-                    let stream_data_arc = PID_MAP.get_mut(&stream_pid).unwrap();
-                    let mut stream_data = Arc::clone(&stream_data_arc);
+                    let stream_data_arc = pid_map.get_mut(&stream_pid).unwrap();
+                    let mut stream_data = Arc::clone(stream_data_arc);
                     let stream_len = stream_data.packet_len;
 
                     // update the stream type
@@ -762,7 +763,7 @@ pub fn update_pid_map(
                         stream_data.continuity_counter);
 
                     // write the stream_data back to the pid_map with modified values
-                    PID_MAP.insert(stream_pid, stream_data);
+                    pid_map.insert(stream_pid, stream_data);
                 }
             }
         } else {
@@ -773,41 +774,48 @@ pub fn update_pid_map(
 }
 
 pub fn determine_stream_type(pid: u16) -> String {
+    let pid_map = PID_MAP.read().unwrap();
+
     // check if pid already is mapped, if so return the stream type already stored
-    if let Some(stream_data) = PID_MAP.get(&pid) {
+    if let Some(stream_data) = pid_map.get(&pid) {
         return stream_data.stream_type.clone();
     }
 
-    PID_MAP
+    pid_map
         .get(&pid)
         .map(|stream_data| stream_data.stream_type.clone())
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-pub fn get_pid_map() -> DashMap<u16, Arc<StreamData>> {
+pub fn get_pid_map() -> AHashMap<u16, Arc<StreamData>> {
+    let pid_map = PID_MAP.read().unwrap();
     // clone the pid_map so we can return it
-    PID_MAP.clone()
+    pid_map.clone()
 }
 
 pub fn determine_stream_type_number(pid: u16) -> u8 {
+    let pid_map = PID_MAP.read().unwrap();
+
     // check if pid already is mapped, if so return the stream type already stored
-    if let Some(stream_data) = PID_MAP.get(&pid) {
+    if let Some(stream_data) = pid_map.get(&pid) {
         return stream_data.stream_type_number.clone();
     }
 
-    PID_MAP
+    pid_map
         .get(&pid)
         .map(|stream_data| stream_data.stream_type_number.clone())
         .unwrap_or_else(|| 0)
 }
 
 pub fn determine_stream_program_number(pid: u16) -> u16 {
+    let pid_map = PID_MAP.read().unwrap();
+
     // check if pid already is mapped, if so return the stream type already stored
-    if let Some(stream_data) = PID_MAP.get(&pid) {
+    if let Some(stream_data) = pid_map.get(&pid) {
         return stream_data.program_number.clone();
     }
 
-    PID_MAP
+    pid_map
         .get(&pid)
         .map(|stream_data| stream_data.program_number.clone())
         .unwrap_or_else(|| 0)

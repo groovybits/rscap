@@ -1186,8 +1186,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
                         // get all the pids and push each into the batch
                         let mut batch = Vec::new();
-                        for entry in pid_map.iter() {
-                            let (pid, pid_stream_data) = entry.pair();
+                        for (pid, pid_stream_data) in pid_map.iter() {
                             debug!(
                                 "Got PID: {} stream type: {}",
                                 pid, pid_stream_data.stream_type
@@ -1197,13 +1196,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         }
 
                         if ktx_clone1
-                            .send((
-                                batch.clone(),
-                                pid_map
-                                    .iter()
-                                    .map(|entry| (*entry.key(), Arc::clone(entry.value())))
-                                    .collect::<AHashMap<u16, Arc<StreamData>>>(),
-                            ))
+                            .send((batch.clone(), pid_map.clone()))
                             .await
                             .is_err()
                         {
