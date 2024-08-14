@@ -574,14 +574,13 @@ pub fn process_packet(stream_data_packet: &mut StreamData, pmt_pid: u16, probe_i
                     stream_data_packet.source_port,
                     probe_id.clone(),
                 ));
+                let stream_data = Arc::make_mut(&mut new_stream_data);
 
                 // Update statistics
-                Arc::make_mut(&mut new_stream_data).update_stats(packet.len());
-                Arc::make_mut(&mut new_stream_data)
-                    .update_capture_iat(stream_data_packet.capture_iat);
+                stream_data.update_stats(packet.len());
+                stream_data.update_capture_iat(stream_data_packet.capture_iat);
                 if stream_data_packet.pid != 0x1FFF {
-                    Arc::make_mut(&mut new_stream_data)
-                        .set_continuity_counter(stream_data_packet.continuity_counter);
+                    stream_data.set_continuity_counter(stream_data_packet.continuity_counter);
                 }
 
                 info!(
@@ -642,7 +641,6 @@ pub fn update_pid_map(
     source_port: i32,
     probe_id: String,
 ) -> u16 {
-    let mut pid_map = PID_MAP.write().unwrap();
     let mut program_number_result = 0;
 
     // Process the stored PAT packet to find program numbers and corresponding PMT PIDs
@@ -715,6 +713,7 @@ pub fn update_pid_map(
 
                 let timestamp = current_unix_timestamp_ms().unwrap_or(0);
 
+                let mut pid_map = PID_MAP.write().unwrap();
                 if !pid_map.contains_key(&stream_pid) {
                     let mut stream_data = Arc::new(StreamData::new(
                         Arc::new(Vec::new()), // Ensure packet_data is Arc<Vec<u8>>

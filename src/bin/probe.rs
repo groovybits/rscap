@@ -709,7 +709,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     let kafka_topic_clone2 = args.kafka_topic.clone();
     let kafka_broker_clone2 = args.kafka_broker.clone();
 
-    let kafka_thread = tokio::spawn(async move {
+    let collector_thread = tokio::spawn(async move {
         // exit thread if kafka_broker is not set
         if kafka_broker_clone.is_empty() || kafka_topic_clone.is_empty() {
             return;
@@ -1237,7 +1237,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
     // Wait for the kafka thread to finish
     capture_task.await.unwrap();
-    kafka_thread.await.unwrap();
+    collector_thread.await.unwrap();
 
     println!("\nThreads finished, exiting rsprobe");
 }
