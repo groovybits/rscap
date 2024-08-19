@@ -494,7 +494,7 @@ async fn send_to_kafka(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.7.6",
+    version = "0.7.7",
     about = "MpegTS Stream Analysis Probe with Kafka and GStreamer"
 )]
 struct Args {
@@ -1677,6 +1677,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     let mut pmt_info: PmtInfo = PmtInfo {
         pid: 0xFFFF,
         packet: Vec::new(),
+        program_number: 0,
     };
     let mut pmt_pid: Option<u16> = Some(0xFFFF);
     let mut program_number: Option<u16> = Some(0xFFFF);
