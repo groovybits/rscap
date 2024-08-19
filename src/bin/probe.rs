@@ -1011,6 +1011,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     let mut pmt_info: PmtInfo = PmtInfo {
         pid: 0xFFFF,
         packet: Vec::new(),
+        program_number: 0,
     };
     let mut pmt_pid: Option<u16> = Some(0xFFFF);
     let mut program_number: Option<u16> = Some(0xFFFF);
