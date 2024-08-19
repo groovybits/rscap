@@ -141,6 +141,11 @@ pub fn initialize_pipeline(
         .downcast::<gst_app::AppSink>()
         .map_err(|_| anyhow::anyhow!("AppSink casting failed"))?;
 
+    // Set properties on AppSrc to control buffer build-up
+    appsrc.set_property("max-bytes", buffer_count as u64 * 1024 * 1024);
+    appsrc.set_property("block", true);
+    appsrc.set_property("emit-signals", true);
+
     appsink.set_property("max-buffers", buffer_count);
     appsink.set_property("drop", true);
 
@@ -149,7 +154,7 @@ pub fn initialize_pipeline(
 
 #[cfg(feature = "gst")]
 pub fn process_video_packets(
-    appsrc: AppSrc,
+    appsrc: gst_app::AppSrc,
     mut video_packet_receiver: mpsc::Receiver<Vec<u8>>,
     running: Arc<AtomicBool>,
 ) {
@@ -160,8 +165,9 @@ pub fn process_video_packets(
             }
             let buffer = gst::Buffer::from_slice(packet);
 
+            // Push buffer only if not full
             if let Err(err) = appsrc.push_buffer(buffer) {
-                log::error!("Failed to push buffer to appsrc: {}", err);
+                log::warn!("Buffer full, dropping packet: {}", err);
             }
         }
     });
@@ -1507,7 +1513,7 @@ pub fn cleanup_stale_streams() {
         .expect("Time went backwards")
         .as_millis() as u64;
 
-    let one_minute = 60_000; // 1 minute in milliseconds
+    let one_minute = 60 * 60000; // 1 minute in milliseconds
 
     let mut pid_map = PID_MAP.write().unwrap();
     let stale_pids: Vec<u16> = pid_map

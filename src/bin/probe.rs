@@ -1764,7 +1764,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                     pmt_pid = Some(pid);
                                 }
                                 // Update PID_MAP with new stream types
-                                cleanup_stale_streams();
+                                //cleanup_stale_streams();
                                 let program_number_result = update_pid_map(
                                     &packet_chunk,
                                     &pmt_info.packet,
