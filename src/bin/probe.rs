@@ -308,7 +308,7 @@ fn init_pcap(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.8.0",
+    version = "0.8.1",
     about = "MpegTS Stream Analysis Probe PID Mapper"
 )]
 struct Args {
