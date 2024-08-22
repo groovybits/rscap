@@ -168,7 +168,7 @@ pub fn process_video_packets(
 
             // Push buffer only if not full
             if let Err(err) = appsrc.push_buffer(buffer) {
-                log::warn!("Buffer full, dropping packet: {}", err);
+                eprintln!("Buffer full with {} errors, dropping packet: {}", errors, err);
                 errors += 1;
                 if errors > 1000 {
                     break;

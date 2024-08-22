@@ -1862,7 +1862,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                         let video_codec_clone = video_codec.clone();
                         if Codec::H264 != video_codec_clone.clone().expect("Video Codec failed") && Codec::NONE != video_codec_clone.clone().expect("Video Codec failed") {
                             if gstreamer_playing == true {
-                                error!("Probe: Codec {} is not H264, pausing gstramer", video_codec_clone.clone().expect("Video Codec failed").to_string());
+                                eprintln!("Probe: Codec {} is not H264, pausing gstramer", video_codec_clone.clone().expect("Video Codec failed").to_string());
                                 match pipeline.set_state(gst::State::Paused) {
                                     Ok(_) => (),
                                     Err(err) => {
@@ -1897,10 +1897,10 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                     .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
                                 {
                                     // If the channel is full, drop the packet
-                                    log::warn!("Video packet channel is full. Dropping packet.");
+                                    eprintln!("Video packet channel is full. Dropping packet.");
                                     video_packet_errors += 1;
                                     if video_packet_errors > 32 {
-                                        error!("Probe: Video packet channel has {} errors, exiting.", video_packet_errors);
+                                        eprintln!("Probe: Video packet channel has {} errors, exiting.", video_packet_errors);
                                         running.store(false, Ordering::SeqCst);
                                         break;
                                     }
