@@ -108,7 +108,7 @@ pub fn initialize_pipeline(
     // Create a pipeline to extract video frames
     let pipeline = match stream_type_number {
         0x02 => create_pipeline(
-           &format!("appsrc name=src ! tsdemux |capsfiter caps=video/mpeg ! \
+           &format!("appsrc name=src ! tsdemux ! \
                mpeg2dec ! videorate ! video/x-raw,framerate={} ! videoconvert ! video/x-raw,format=RGB {} ! \
                appsink name=sink", framerate, scale_string),
         )?,
@@ -118,7 +118,7 @@ pub fn initialize_pipeline(
                   videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
         )?,
         0x24 => create_pipeline(
-                &format!("appsrc name=src ! tsdemux ! capsfilter caps=video/x-h265 ! \
+                &format!("appsrc name=src ! tsdemux ! \
                     h265parse ! avdec_h265 ! videorate ! video/x-raw,framerate={} ! \
                     videoconvert ! video/x-raw,format=RGB {} ! appsink name=sink", framerate, scale_string),
         )?,
@@ -159,6 +159,7 @@ pub fn process_video_packets(
     running: Arc<AtomicBool>,
 ) {
     tokio::spawn(async move {
+        let mut errors = 0;
         while let Some(packet) = video_packet_receiver.recv().await {
             if !running.load(Ordering::SeqCst) {
                 break;
@@ -168,6 +169,12 @@ pub fn process_video_packets(
             // Push buffer only if not full
             if let Err(err) = appsrc.push_buffer(buffer) {
                 log::warn!("Buffer full, dropping packet: {}", err);
+                errors += 1;
+                if errors > 100 {
+                    break;
+                }
+            } else {
+                errors = 0;
             }
         }
     });
@@ -1507,19 +1514,17 @@ pub fn process_packet(
     }
 }
 
-pub fn cleanup_stale_streams() {
+pub fn cleanup_stale_streams(clear_stream_timeout: u64) {
     let current_time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("Time went backwards")
         .as_millis() as u64;
 
-    let one_minute = 60 * 60000; // 1 minute in milliseconds
-
     let mut pid_map = PID_MAP.write().unwrap();
     let stale_pids: Vec<u16> = pid_map
         .iter()
         .filter_map(|(&pid, stream_data)| {
-            if current_time.saturating_sub(stream_data.last_arrival_time) > one_minute {
+            if current_time.saturating_sub(stream_data.last_arrival_time) > clear_stream_timeout{
                 Some(pid)
             } else {
                 None

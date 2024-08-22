@@ -690,6 +690,10 @@ struct Args {
     /// Dump Packets - Dump packets to the console in hex
     #[clap(long, env = "DUMP_PACKETS", default_value_t = false)]
     dump_packets: bool,
+
+    /// Clear Stream Timeout - Clear the streams that are not changing after this amout of time in ms
+    #[clap(long, env = "CLEAR_STREAM_TIMEOUT", default_value_t = 0)]
+    clear_stream_timeout: u64,
 }
 
 // MAIN Function
@@ -1607,6 +1611,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
             return;
         }
     };
+    let mut gstreamer_playing = false;
 
     // Start the pipeline
     #[cfg(feature = "gst")]
@@ -1618,6 +1623,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                 return;
             }
         }
+        gstreamer_playing = true;
     }
 
     // Spawn separate tasks for processing video packets and pulling images
@@ -1699,6 +1705,10 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
     let mut last_kafka_send_time = Instant::now();
 
+    #[cfg(feature = "gst")]
+    let mut video_packet_errors = 0;
+    #[cfg(feature = "gst")]
+
     loop {
         match prx.try_recv() {
             Ok((packet, timestamp, iat)) => {
@@ -1764,7 +1774,9 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                     pmt_pid = Some(pid);
                                 }
                                 // Update PID_MAP with new stream types
-                                //cleanup_stale_streams();
+                                if args.clear_stream_timeout > 0 {
+                                    cleanup_stale_streams(args.clear_stream_timeout);
+                                }
                                 let program_number_result = update_pid_map(
                                     &packet_chunk,
                                     &pmt_info.packet,
@@ -1844,44 +1856,80 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                     // Check if this is a video PID and if so parse NALS and decode video
                     // Process video packets
                     #[cfg(feature = "gst")]
-                    if args.extract_images {
-                        #[cfg(feature = "gst")]
-                        let video_packet = Arc::new(
-                            stream_data.packet[stream_data.packet_start
-                                ..stream_data.packet_start + stream_data.packet_len]
-                                .to_vec(),
-                        );
+                    {
+                        let video_codec_clone = video_codec.clone();
+                        if Codec::H264 != video_codec_clone.clone().expect("Video Codec failed") && Codec::NONE != video_codec_clone.clone().expect("Video Codec failed") {
+                            if gstreamer_playing == true {
+                                error!("Probe: Codec {} is not H264, pausing gstramer", video_codec_clone.clone().expect("Video Codec failed").to_string());
+                                match pipeline.set_state(gst::State::Paused) {
+                                    Ok(_) => (),
+                                    Err(err) => {
+                                        eprintln!("Failed to set the pipeline state to Paused: {}", err);
+                                        return;
+                                    }
+                                }
+                                gstreamer_playing = false;
+                            }
+                        } else {
+                            if gstreamer_playing == false {
+                                info!("Probe: Starting Gstreamer pipeline for images");
+                                match pipeline.set_state(gst::State::Playing) {
+                                    Ok(_) => (),
+                                    Err(err) => {
+                                        eprintln!("Failed to set the pipeline state to Playing: {}", err);
+                                        return;
+                                    }
+                                }
+                                gstreamer_playing = true;
+                            }
+                            if args.extract_images && video_packet_errors <= 32 {
+                                #[cfg(feature = "gst")]
+                                let video_packet = Arc::new(
+                                    stream_data.packet[stream_data.packet_start
+                                        ..stream_data.packet_start + stream_data.packet_len]
+                                        .to_vec(),
+                                );
 
-                        // Send the video packet to the processing task
-                        if let Err(_) = video_packet_sender
-                            .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
-                        {
-                            // If the channel is full, drop the packet
-                            log::warn!("Video packet channel is full. Dropping packet.");
-                        }
+                                // Send the video packet to the processing task
+                                if let Err(_) = video_packet_sender
+                                    .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
+                                {
+                                    // If the channel is full, drop the packet
+                                    log::warn!("Video packet channel is full. Dropping packet.");
+                                    video_packet_errors += 1;
+                                    if video_packet_errors > 32 {
+                                        error!("Probe: Video packet channel has {} errors, exiting.", video_packet_errors);
+                                        running.store(false, Ordering::SeqCst);
+                                        break;
+                                    }
+                                } else {
+                                    video_packet_errors = 0;
+                                }
 
-                        // Receive and process images
-                        #[cfg(feature = "gst")]
-                        if let Ok((image_data, pts, duplicates, hash, hamming)) =
-                            image_receiver.try_recv()
-                        {
-                            log::info!(
-                                "Probe: [{}] Received jpeg image of {} bytes repeated[{}] perceptual hash[{:016X}] hamming difference[{}].",
-                                pts,
-                                image_data.len(),
-                                duplicates,
-                                hash,
-                                hamming,
-                            );
+                                // Receive and process images
+                                #[cfg(feature = "gst")]
+                                if let Ok((image_data, pts, duplicates, hash, hamming)) =
+                                    image_receiver.try_recv()
+                                {
+                                    log::info!(
+                                        "Probe: [{}] Received jpeg image of {} bytes repeated[{}] perceptual hash[{:016X}] hamming difference[{}].",
+                                        pts,
+                                        image_data.len(),
+                                        duplicates,
+                                        hash,
+                                        hamming,
+                                    );
 
-                            // Process the received image data
-                            images.push(ImageData {
-                                image: image_data,
-                                pts: pts,
-                                duplicates: duplicates,
-                                hash: hash,
-                                hamming: hamming,
-                            });
+                                    // Process the received image data
+                                    images.push(ImageData {
+                                        image: image_data,
+                                        pts: pts,
+                                        duplicates: duplicates,
+                                        hash: hash,
+                                        hamming: hamming,
+                                    });
+                                }
+                            }
                         }
                     }
 
