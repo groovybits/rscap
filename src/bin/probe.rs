@@ -969,7 +969,9 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     let kafka_topic_clone = args.kafka_topic.clone();
     let kafka_topic_clone1 = args.kafka_topic.clone();
     let kafka_topic_clone2 = args.kafka_topic.clone();
+    let kafka_topic_clone3 = args.kafka_topic.clone();
     let kafka_broker_clone2 = args.kafka_broker.clone();
+    let kafka_broker_clone3 = args.kafka_broker.clone();
 
     let kafka_thread = tokio::spawn(async move {
         // exit thread if kafka_broker is not set
@@ -2020,10 +2022,12 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     // Stop the pipeline when done
     #[cfg(feature = "gst")]
     if args.extract_images {
-        match pipeline.set_state(gst::State::Null) {
-            Ok(_) => (),
-            Err(err) => {
-                eprintln!("Failed to set the pipeline state to Null: {}", err);
+        if gstreamer_playing == true {
+            match pipeline.set_state(gst::State::Null) {
+                Ok(_) => (),
+                Err(err) => {
+                    eprintln!("Failed to set the pipeline state to Null: {}", err);
+                }
             }
         }
     }
@@ -2031,18 +2035,20 @@ async fn rsprobe(running: Arc<AtomicBool>) {
     println!("\nWaiting for threads to finish...");
 
     // Send Kafka stop signal
-    let _ = ktx_clone2.try_send((
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        AHashMap::new(),
-        Tr101290Errors::new(),
-    ));
-    drop(ktx_clone2);
+    if !kafka_broker_clone3.is_empty() &&  !kafka_topic_clone3.is_empty() {
+        let _ = ktx_clone2.try_send((
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            AHashMap::new(),
+            Tr101290Errors::new(),
+        ));
+        drop(ktx_clone2);
+        // Wait for the kafka thread to finish
+        kafka_thread.await.unwrap();
+    }
 
-    // Wait for the kafka thread to finish
     capture_task.await.unwrap();
-    kafka_thread.await.unwrap();
 
     println!("\nThreads finished, exiting rsprobe");
 }

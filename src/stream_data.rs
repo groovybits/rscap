@@ -170,7 +170,7 @@ pub fn process_video_packets(
             if let Err(err) = appsrc.push_buffer(buffer) {
                 log::warn!("Buffer full, dropping packet: {}", err);
                 errors += 1;
-                if errors > 100 {
+                if errors > 1000 {
                     break;
                 }
             } else {
