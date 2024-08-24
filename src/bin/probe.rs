@@ -1897,13 +1897,13 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                     .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
                                 {
                                     // If the channel is full, drop the packet
-                                    eprintln!("Video packet channel is full. Dropping packet.");
+                                    eprintln!("Video packet channel is full. Dropping packet. {} errors so far.", video_packet_errors);
                                     video_packet_errors += 1;
-                                    if video_packet_errors > 32 {
+                                    /*if video_packet_errors > 32 {
                                         eprintln!("Probe: Video packet channel has {} errors, exiting.", video_packet_errors);
                                         running.store(false, Ordering::SeqCst);
                                         break;
-                                    }
+                                    }*/
                                 } else {
                                     video_packet_errors = 0;
                                 }
