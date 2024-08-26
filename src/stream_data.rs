@@ -1209,7 +1209,7 @@ pub fn parse_and_store_pat(packet: &[u8]) -> PmtInfo {
     // look for the PMT Pid and Program Number that are greater zero and less than 0x1FFF for PMT PID
     for entry in pat_entries {
         if entry.pmt_pid > 0 && entry.pmt_pid <= 0x1FFF {
-            if entry.pmt_pid > 0 && entry.pmt_pid <= 0x1FFF && entry.program_number > 0 {
+            if entry.pmt_pid > 0 && entry.pmt_pid <= 0x1FFF && entry.program_number >= 0 {
                 // TODO: return an array of all valid PMT PIDs and Program Numbers
                 pmt_info.pid = entry.pmt_pid;
                 pmt_info.program_number = entry.program_number;
@@ -1287,7 +1287,7 @@ pub fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
         let program_number = ((packet[offset] as u16) << 8) | (packet[offset + 1] as u16);
         let pmt_pid = (((packet[offset + 2] as u16) & 0x1F) << 8) | (packet[offset + 3] as u16);
 
-        if program_number > 0 && pmt_pid > 0 && pmt_pid <= 0x1FFF && program_number < 5000 {
+        if program_number >= 0 && pmt_pid > 0 && pmt_pid <= 0x1FFF && program_number < 5000 {
             entries.push(PatEntry {
                 program_number,
                 pmt_pid,
