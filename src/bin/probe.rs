@@ -1884,7 +1884,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                 }
                                 gstreamer_playing = true;
                             }
-                            if args.extract_images && video_packet_errors <= 32 {
+                            if args.extract_images {
                                 #[cfg(feature = "gst")]
                                 let video_packet = Arc::new(
                                     stream_data.packet[stream_data.packet_start
@@ -1899,11 +1899,32 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                     // If the channel is full, drop the packet
                                     eprintln!("Video packet channel is full. Dropping packet. {} errors so far.", video_packet_errors);
                                     video_packet_errors += 1;
-                                    /*if video_packet_errors > 32 {
-                                        eprintln!("Probe: Video packet channel has {} errors, exiting.", video_packet_errors);
-                                        running.store(false, Ordering::SeqCst);
-                                        break;
-                                    }*/
+                                    if video_packet_errors > 32 {
+                                        eprintln!("Probe: Video packet channel has {} errors, restarting Gstreamer.", video_packet_errors);
+                                        //running.store(false, Ordering::SeqCst);
+                                        //return;
+
+                                        // Pause Gstreamer
+                                        if gstreamer_playing == true {
+                                            eprintln!("Probe: Too many errors with gstreamer {}, pausing video images", video_packet_errors);
+                                            match pipeline.set_state(gst::State::Paused) {
+                                                Ok(_) => (),
+                                                Err(err) => {
+                                                    eprintln!("Failed to set the pipeline state to Paused: {}", err);
+                                                    running.store(false, Ordering::SeqCst);
+                                                    return;
+                                                }
+                                            }
+                                            match pipeline.set_state(gst::State::Playing) {
+                                                Ok(_) => (),
+                                                Err(err) => {
+                                                    eprintln!("Failed to set the pipeline state to Playing: {}", err);
+                                                    running.store(false, Ordering::SeqCst);
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                    }
                                 } else {
                                     video_packet_errors = 0;
                                 }
