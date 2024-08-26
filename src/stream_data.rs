@@ -1283,11 +1283,13 @@ pub fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
     let pointer_field = packet[offset] as usize;
     offset += 1 + pointer_field;
 
-    while offset + 4 <= packet.len() {
+    let section_length = (((packet[offset + 1] & 0x0F) as usize) << 8) | (packet[offset + 2] as usize);
+
+    while offset + 4 <= packet.len() && offset < (pointer_field + 3 + section_length) {
         let program_number = ((packet[offset] as u16) << 8) | (packet[offset + 1] as u16);
         let pmt_pid = (((packet[offset + 2] as u16) & 0x1F) << 8) | (packet[offset + 3] as u16);
 
-        if program_number >= 0 && pmt_pid > 0 && pmt_pid <= 0x1FFF && program_number < 5000 {
+        if program_number != 0 && pmt_pid > 0 && pmt_pid <= 0x1FFF {
             entries.push(PatEntry {
                 program_number,
                 pmt_pid,
