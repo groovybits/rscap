@@ -494,7 +494,7 @@ async fn send_to_kafka(
 #[derive(Parser, Debug)]
 #[clap(
     author = "Chris Kennedy",
-    version = "0.7.8",
+    version = "0.7.9",
     about = "MpegTS Stream Analysis Probe with Kafka and GStreamer"
 )]
 struct Args {
@@ -660,7 +660,7 @@ struct Args {
     image_buffer_size: usize,
 
     /// Video buffer size - Size of the buffer for the video to gstreamer
-    #[clap(long, env = "VIDEO_BUFFER_SIZE", default_value_t = 100000)]
+    #[clap(long, env = "VIDEO_BUFFER_SIZE", default_value_t = 1000)]
     video_buffer_size: usize,
 
     /// Kafka Broker
@@ -1893,16 +1893,17 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                 );
 
                                 // Send the video packet to the processing task
+                                let mut exit_now = false;
                                 if let Err(_) = video_packet_sender
                                     .try_send(Arc::try_unwrap(video_packet).unwrap_or_default())
                                 {
                                     // If the channel is full, drop the packet
                                     eprintln!("Video packet channel is full. Dropping packet. {} errors so far.", video_packet_errors);
                                     video_packet_errors += 1;
-                                    if video_packet_errors > 32 {
+                                    if video_packet_errors > 300 {
                                         eprintln!("Probe: Video packet channel has {} errors, restarting Gstreamer.", video_packet_errors);
-                                        //running.store(false, Ordering::SeqCst);
-                                        //return;
+                                        running.store(false, Ordering::SeqCst);
+                                        exit_now = true;
 
                                         // Pause Gstreamer
                                         if gstreamer_playing == true {
@@ -1912,7 +1913,7 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                                 Err(err) => {
                                                     eprintln!("Failed to set the pipeline state to Paused: {}", err);
                                                     running.store(false, Ordering::SeqCst);
-                                                    return;
+                                                    exit_now = true;
                                                 }
                                             }
                                             match pipeline.set_state(gst::State::Playing) {
@@ -1920,13 +1921,17 @@ async fn rsprobe(running: Arc<AtomicBool>) {
                                                 Err(err) => {
                                                     eprintln!("Failed to set the pipeline state to Playing: {}", err);
                                                     running.store(false, Ordering::SeqCst);
-                                                    return;
+                                                    exit_now = true;
                                                 }
                                             }
                                         }
                                     }
                                 } else {
                                     video_packet_errors = 0;
+                                }
+
+                                if exit_now {
+                                    break;
                                 }
 
                                 // Receive and process images
