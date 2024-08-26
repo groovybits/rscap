@@ -459,27 +459,40 @@ pub fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
         return entries;
     }
 
+    // Check for payload unit start indicator (PUSI)
     let pusi = (packet[1] & 0x40) != 0;
     if !pusi {
         return entries;
     }
 
+    // Determine the adaptation field control value and initial offset
     let adaptation_field_control = (packet[3] & 0x30) >> 4;
     let mut offset = 4;
 
+    // Skip the adaptation field if present
     if adaptation_field_control == 0x02 || adaptation_field_control == 0x03 {
         let adaptation_field_length = packet[4] as usize;
         offset += 1 + adaptation_field_length;
     }
 
+    // Handle the pointer field and move to the start of the actual table data
     let pointer_field = packet[offset] as usize;
     offset += 1 + pointer_field;
 
-    while offset + 4 <= packet.len() {
+    // Verify that we have enough data to read the section header (table_id, section_length, etc.)
+    if offset + 3 > packet.len() {
+        return entries;
+    }
+
+    // Section length calculation
+    let section_length = (((packet[offset + 1] & 0x0F) as usize) << 8) | (packet[offset + 2] as usize);
+    let end_offset = offset + 3 + section_length - 4; // Calculate the end of the valid section
+
+    while offset + 4 <= end_offset && offset + 4 <= packet.len() {
         let program_number = ((packet[offset] as u16) << 8) | (packet[offset + 1] as u16);
         let pmt_pid = (((packet[offset + 2] as u16) & 0x1F) << 8) | (packet[offset + 3] as u16);
 
-        if program_number > 0 && pmt_pid > 0 && pmt_pid <= 0x1FFF && program_number < 5000 {
+        if program_number > 0 && pmt_pid > 0 && pmt_pid <= 0x1FFF {
             entries.push(PatEntry {
                 program_number,
                 pmt_pid,
@@ -489,25 +502,18 @@ pub fn parse_pat(packet: &[u8]) -> Vec<PatEntry> {
                 program_number, pmt_pid
             );
         } else {
-            if program_number <= 0 {
-                debug!(
-                    "ParsePAT: Skipping Program Number <= 0: {} PMT PID: {}",
-                    program_number, pmt_pid
-                );
-            } else if pmt_pid <= 0 {
-                debug!(
-                    "ParsePAT: Skipping PMT PID <= 0: {} Program Number: {}",
-                    pmt_pid, program_number
-                );
-            } else if pmt_pid > 0x1FFF {
-                debug!(
-                    "ParsePAT: Skipping PMT PID >= 0x1FFF: {} Program Number: {}",
-                    pmt_pid, program_number
-                );
-            }
+            debug!(
+                "ParsePAT: Skipping invalid Program Number: {} or PMT PID: {}",
+                program_number, pmt_pid
+            );
         }
 
         offset += 4;
+
+        // Exit loop if offset exceeds packet length or end offset
+        if offset >= end_offset || offset >= packet.len() {
+            break;
+        }
     }
 
     entries
