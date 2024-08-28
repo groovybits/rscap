@@ -170,9 +170,7 @@ pub fn process_video_packets(
             if let Err(err) = appsrc.push_buffer(buffer) {
                 eprintln!("process_video_packets: Gstreamer Buffer full with {} errors, dropping packet: {}", errors, err);
                 errors += 1;
-                if errors > 1000 && errors < 1010 {
-                    eprintln!("process_video_packerts: Too many errors in a row with gstreamer {}!", errors);
-                }
+                break;
             } else {
                 errors = 0;
             }
