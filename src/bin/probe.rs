@@ -1713,8 +1713,6 @@ async fn rsprobe(running: Arc<AtomicBool>) {
 
     #[cfg(feature = "gst")]
     let mut video_packet_errors = 0;
-    #[cfg(feature = "gst")]
-
     let mut exit_now = false;
     loop {
         if !running.load(Ordering::SeqCst) {
