@@ -58,3 +58,6 @@ opencv = { version = "0.91.1", default-features = false, optional = true, featur
     "rgb",
     "imgcodecs",
 ] }
+mpeg2ts-reader = "0.16.0"
+scte35-reader = "0.15.0"
+h264-reader = "0.7.0"
