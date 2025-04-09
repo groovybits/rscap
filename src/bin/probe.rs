@@ -1,7 +1,7 @@
 /*
  * rsprobe: probe.rs - MpegTS Stream Analysis Probe with Kafka and GStreamer
  *
- * Written in 2024 by Chris Kennedy (C)
+ * Written in 2024 by c (C)
  *
  * License: MIT
  *
@@ -493,7 +493,7 @@ async fn send_to_kafka(
 /// RsProbe Configuration
 #[derive(Parser, Debug)]
 #[clap(
-    author = "Chris Kennedy",
+    author = "c",
     version = "0.7.9",
     about = "MpegTS Stream Analysis Probe with Kafka and GStreamer"
 )]
