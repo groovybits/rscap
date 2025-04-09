@@ -402,5 +402,5 @@ rm -rf %{buildroot}
 rm -rf %{_builddir}/*
 
 %changelog
-* Mon Apr 08 2024 Chris Kennedy <chris@rsprobe.example>
+* Mon Apr 08 2024 C <c@rsprobe.example>
 - Initial RPM release
