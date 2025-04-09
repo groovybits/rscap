@@ -97,4 +97,4 @@ Running VTune [scripts/vtune.sh](scripts/vtune.sh)
 ./scripts/vtune.sh
 ```
 
-### Chris Kennedy (C) 2024 MIT License
+### C (C) 2024 MIT License
