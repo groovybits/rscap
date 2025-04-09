@@ -7,7 +7,7 @@ readme = "README.md"
 license-file = "LICENSE"
 homepage = "https://github.com/groovybits/rscap"
 repository = "https://github.com/groovybits/rscap"
-authors = ["Chris Kennedy"]
+authors = ["C"]
 version = "0.7.9"
 edition = "2021"
 
